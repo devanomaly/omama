@@ -17,6 +17,15 @@ validators, and scripts with exit codes — not CLAUDE.md prose an agent can rat
 around under pressure. Every piece ships with a fixture that proves it fails red before it passes
 green, and every README documents its own known gaps instead of hiding them.
 
+**The smallest sufficient harness.** Omama bets that the best harness is the least harness
+that still holds: the common path per task is one slim card (a dozen lines of YAML), ONE
+`verify` command, and a receipt written at close — nothing else. Rigor is bought by tier, not
+paid by default: only S3 cards require a review artifact before VERIFIED. Verification is the
+cheapest sufficient proof for the risk, never a fixed ritual. This shape is subtractive by
+construction — an adversarial review killed most of what was originally built, and the cut
+pieces ([05, 06, 07](#piece-numbers-nn-legend)) are named, not hidden. If a piece here costs
+more attention than the failure it prevents, that's a bug in Omama — file it.
+
 **No efficacy claim is made here.** What's proven is the mechanics (red-green fixtures, an
 external adversarial review process that converged on what to measure) and nothing more. Where a
 piece's README quotes a vote tally (e.g. "4/5", "5/5"), that's the count from a five-member panel

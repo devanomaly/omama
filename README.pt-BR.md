@@ -16,6 +16,16 @@ hooks, validadores e scripts com exit code — não prosa de CLAUDE.md que um ag
 racionalizar sob pressão. Cada peça carrega uma fixture que prova que ela falha no vermelho antes
 de passar no verde, e cada README documenta suas próprias lacunas conhecidas em vez de escondê-las.
 
+**O menor harness suficiente.** A aposta do Omama é que o melhor harness é o menor que ainda
+segura: o caminho comum por task é um card slim (uma dúzia de linhas de YAML), UM comando
+`verify` e um recibo escrito no fechamento — nada além. Rigor é comprado por tier, não pago por
+default: só cards S3 exigem artefato de revisão antes do VERIFIED. A verificação é a prova
+suficiente mais barata para aquele risco, nunca um ritual fixo. Essa forma é subtrativa por
+construção — uma revisão adversarial matou a maior parte do que foi originalmente construído, e
+as peças cortadas ([05, 06, 07](#numeração-das-peças-legenda-nn)) estão nomeadas, não
+escondidas. Se uma peça daqui custar mais atenção do que a falha que ela previne, isso é um bug
+do Omama — abra uma issue.
+
 **Nenhuma alegação de eficácia é feita aqui.** O que está provado é a mecânica (fixtures
 red-green, um processo externo de revisão adversarial que convergiu sobre o que medir) e nada
 além disso. Onde o README de uma peça cita um placar de votação (ex.: "4/5", "5/5"), essa é a
