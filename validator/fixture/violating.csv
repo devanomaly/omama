@@ -1,0 +1,4 @@
+item_id,category,priority,notes
+ITEM-201,bug,urgent,missing enum value in priority
+ITEM-202,feature,low,
+ITEM-203,,medium,missing required category

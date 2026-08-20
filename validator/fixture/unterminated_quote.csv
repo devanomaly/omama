@@ -1,0 +1,4 @@
+item_id,category,priority,notes
+ITEM-001,bug,high,"oops unterminated
+ITEM-002,WRONG,urgent,x
+ITEM-003,ALSOWRONG,nope,y

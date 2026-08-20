@@ -1,0 +1,8 @@
+# Planted violation: bugfix without an attached repro -- you don't fix what
+# you haven't reproduced (behavior preserved from the legacy schema).
+goal: "fix crash on large file upload"
+non_goals: ["don't touch the configured size limit"]
+tier: S2
+task_type: bugfix
+done_when: ["100MB upload completes without crashing"]
+verify: "pytest tests/upload/test_large_files.py"

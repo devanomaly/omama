@@ -1,0 +1,19 @@
+# Planted violation: task_type with the wrong type (list) -- crashed the
+# validator with a TypeError (unhashable) instead of producing a VIOLATION;
+# malformed config has to fail CLOSED with a named reason, never a traceback
+# (5th external review, 2026-08-18).
+task_type: [bugfix]
+observed_failure: x
+hypothesis: y
+reproduction:
+  required: true
+  evidence: ["cmd -> FAILED"]
+allowed:
+  files: ["src/a.py"]
+  commands: ["pytest"]
+forbidden_effects: [none]
+acceptance_tests: [t]
+required_evidence_artifacts: [x]
+budget: {tokens: 1}
+rollback: z
+completion_rule: w

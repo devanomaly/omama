@@ -1,0 +1,18 @@
+# Planted violation: budget with "limits" that limit nothing -- false, an
+# empty list, and "infinite" counted as a real bound (5th external review,
+# 2026-08-18: `budget: {tokens: false, wall_time: [], tool_calls: "infinite"}` -> OK, exit 0).
+task_type: bugfix
+observed_failure: x
+hypothesis: y
+reproduction:
+  required: true
+  evidence: ["cmd -> FAILED"]
+allowed:
+  files: ["src/a.py"]
+  commands: ["pytest"]
+forbidden_effects: [none]
+acceptance_tests: [t]
+required_evidence_artifacts: [x]
+budget: {tokens: false, wall_time: [], tool_calls: "infinite"}
+rollback: z
+completion_rule: w

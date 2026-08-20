@@ -1,0 +1,39 @@
+#!/bin/sh
+# privacy-hook pre-commit wrapper -- see README.md
+#
+# scan_staged.py is committed at the ADOPTING REPO ROOT (README: Como
+# adotar, step 1), while this wrapper lives in .git/hooks/ (step 2) --
+# those are two different directories, so `dirname "$0"` would look for
+# the scanner next to itself and fail. Resolve the repo root the same
+# way scan_staged.py's own repo_root() does, so the wrapper and the
+# script it invokes agree on where things live regardless of which repo
+# adopts this hook.
+dir="$(git rev-parse --show-toplevel)" || {
+  echo "BLOCKED hook-error not-a-git-repo" >&2
+  exit 1
+}
+
+# Interpreter selection is done by PROBING for the interpreter, never by
+# reacting to the scanner's exit code. The previous form was
+#   python3 "$dir/scan_staged.py" 2>/dev/null || python "$dir/scan_staged.py"
+# and it was wrong twice:
+#   1. `2>/dev/null` discarded stderr -- which is exactly where the
+#      fail-closed config diagnostics go (`missing-config`,
+#      `missing-tokens-file`, `bad-config`). A dev with a missing config
+#      saw only "python: command not found" and went to debug PATH, while
+#      the real cause was the message that had just been thrown away.
+#   2. `||` fires on ANY non-zero exit, including exit 1 = "blocked
+#      successfully", so every blocked commit re-scanned the whole index
+#      and printed each finding twice.
+# Probing fixes both, and the no-interpreter branch now fails CLOSED with
+# a message in the same `BLOCKED <rule>` shape as every other finding.
+if command -v py >/dev/null 2>&1; then
+  exec py -3 "$dir/scan_staged.py"
+elif command -v python3 >/dev/null 2>&1; then
+  exec python3 "$dir/scan_staged.py"
+elif command -v python >/dev/null 2>&1; then
+  exec python "$dir/scan_staged.py"
+else
+  echo "BLOCKED hook-error no-python-interpreter (privacy-hook needs py, python3 or python on PATH)" >&2
+  exit 1
+fi

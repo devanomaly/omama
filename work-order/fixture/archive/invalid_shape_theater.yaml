@@ -1,0 +1,13 @@
+task_type: bugfix
+observed_failure: x
+hypothesis: y
+reproduction:
+  required: true
+  evidence: true
+allowed: unrestricted
+forbidden_effects: [none]
+acceptance_tests: true
+required_evidence_artifacts: [x]
+budget: infinite
+rollback: z
+completion_rule: w

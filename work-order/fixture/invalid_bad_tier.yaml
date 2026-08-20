@@ -1,0 +1,8 @@
+# Planted violation: tier outside the enum -- S1|S2|S3 is closed; "S4" or
+# free prose routes nothing.
+goal: "whatever"
+non_goals: ["nothing"]
+tier: S4
+task_type: implementation
+done_when: ["something observable"]
+verify: "pytest tests/"

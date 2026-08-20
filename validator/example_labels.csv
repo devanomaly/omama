@@ -1,0 +1,5 @@
+item_id,category,priority,notes
+ITEM-001,bug,high,crashes on empty input
+ITEM-002,feature,medium,requested by three customers
+ITEM-003,chore,low,update dependency pins
+ITEM-004,bug,medium,intermittent timeout

@@ -1,0 +1,37 @@
+# Planted violation: bugfix with required: true but WITHOUT attached evidence (must fail).
+observed_failure: "POST /checkout returns 500 when the cart has an item with an expired discount"
+hypothesis: "discount validation code doesn't handle expired discounts, lets a negative value through"
+task_type: bugfix
+
+reproduction:
+  required: true
+  acceptable_evidence: [failing_test]
+  evidence: []
+
+allowed:
+  files:
+    - src/checkout/discount_validator.py
+    - tests/checkout/test_discount_validator.py
+  commands:
+    - "pytest tests/checkout/test_discount_validator.py"
+
+forbidden_effects:
+  - "direct deploy to production"
+  - "change the database schema"
+
+acceptance_tests:
+  - "pytest tests/checkout/test_discount_validator.py::test_expired_discount_rejected"
+
+required_evidence_artifacts:
+  - "output of the failing test before the fix"
+  - "output of the passing test after the fix"
+  - "final diff"
+
+budget:
+  tokens: 200000
+  wall_time: "30m"
+  tool_calls: 40
+
+rollback: "git revert of the fix commit; no data migration involved"
+
+completion_rule: "all acceptance_tests green AND no file outside allowed.files was touched"

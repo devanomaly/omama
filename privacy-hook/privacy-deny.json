@@ -1,0 +1,17 @@
+{
+  "_comment": "Sample deny-list. Edit for your team; this file ships committed to the repo, unlike secrets. deny_filenames and tokens_file are the two layers this hook is actually best at -- no off-the-shelf scanner knows your codenames. deny_filenames: regex matched against EVERY COMPONENT of the staged path, not only the basename, so ^\\.env$ also catches a *directory* named .env. deny_regexes: regex matched against staged file CONTENT (bytes). tokens_file (optional): a plain-text file, one literal string per line, byte-exact, for client names, internal hostnames and project aliases -- keep that file out of the repo if the literals are sensitive.",
+
+  "deny_regexes": [
+    { "id": "internal-hostname", "pattern": "internal\\.example\\.corp" },
+    { "id": "todo-secret-placeholder", "pattern": "FIXME-REPLACE-WITH-REAL-SECRET" }
+  ],
+
+  "deny_filenames": [
+    "^credentials\\.json$",
+    "^\\.env$",
+    "^id_rsa$",
+    "^id_ed25519$"
+  ],
+
+  "tokens_file": "privacy-tokens.txt"
+}

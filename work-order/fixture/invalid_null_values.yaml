@@ -1,0 +1,8 @@
+# Planted violation: all keys present, all values null -- a key's presence
+# with a null value contains nothing (containment theater).
+goal:
+non_goals:
+tier:
+task_type:
+done_when:
+verify:

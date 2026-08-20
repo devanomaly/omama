@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"C:\\absolute\\path\\to\\python.exe\" \"<REPO_ROOT>\\.claude\\hooks\\receipt_gate.py\""
+          }
+        ]
+      }
+    ]
+  }
+}

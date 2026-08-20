@@ -1,0 +1,20 @@
+# Planted violation: unknown key ("filez", a typo for "files") inside
+# allowed, plus an unknown top-level key -- the open schema let the typo
+# through AND let the files scope silently vanish (5th external review,
+# 2026-08-18: bugfix with `allowed: {filez: [...], commands: [...]}` -> OK).
+task_type: bugfix
+observed_failure: x
+hypothesis: y
+reproduction:
+  required: true
+  evidence: ["cmd -> FAILED"]
+allowed:
+  filez: ["src/a.py"]
+  commands: ["pytest"]
+forbidden_effects: [none]
+acceptance_tests: [t]
+required_evidence_artifacts: [x]
+budget: {tokens: 1}
+rollback: z
+completion_rule: w
+notes: "top-level key outside the schema"

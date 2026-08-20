@@ -1,0 +1,9 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "rm tests/test_billing.py"
+  },
+  "session_id": "fixture-violation-001",
+  "cwd": "/tmp/fixture-repo",
+  "permission_mode": "default"
+}

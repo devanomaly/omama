@@ -1,0 +1,15 @@
+task_type: bugfix
+observed_failure: x
+hypothesis: y
+reproduction:
+  required: true
+  evidence: ["cmd -> FAILED"]
+allowed:
+  files: ["./**/*"]
+  commands: ["pytest"]
+forbidden_effects: [none]
+acceptance_tests: [t]
+required_evidence_artifacts: [x]
+budget: {tokens: 1}
+rollback: z
+completion_rule: w

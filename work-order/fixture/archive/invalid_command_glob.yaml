@@ -1,0 +1,19 @@
+# Planted violation: glob in allowed.commands -- the docstring promised "no
+# globs" for both files AND commands, but the code only rejected literal
+# "*"/"**" in commands (5th external review, 2026-08-18:
+# `commands: ["rm -rf *"]` -> OK, exit 0).
+task_type: bugfix
+observed_failure: x
+hypothesis: y
+reproduction:
+  required: true
+  evidence: ["cmd -> FAILED"]
+allowed:
+  files: ["src/a.py"]
+  commands: ["rm -rf *", "pytest tests/*"]
+forbidden_effects: [none]
+acceptance_tests: [t]
+required_evidence_artifacts: [x]
+budget: {tokens: 1}
+rollback: z
+completion_rule: w

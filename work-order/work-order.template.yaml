@@ -1,0 +1,37 @@
+# Card slim (CARD-01, 2026-08-19): one task, one card, one proof command.
+# The agent may report the card is wrong/incomplete; it MAY NOT redefine
+# the card mid-execution. If the card is wrong, stop, warn, and wait for
+# human review.
+#
+# ROUTING INVARIANT: tier S3 => plan approval BEFORE implementation AND a
+# review pass before close. Documented here; whoever reads `tier` and locks
+# it mechanically is the receipt gate (Stop-hook), not this file.
+
+# What this card changes, in one concrete sentence.
+goal:
+
+# What this card does NOT touch — non-empty list. This is what makes the diff
+# reviewable: the reviewer knows, before reading a line, what should not appear.
+non_goals: []
+
+# S1 | S2 | S3 — proposed by the agent, RATIFIED BY THE HUMAN. The validator
+# checks the value; the ratification is a human act, by design.
+tier:
+
+# One value among: bugfix | implementation | refactor | config | do-nothing | ask-first
+task_type:
+
+# Observable "done" conditions — non-empty list of concrete strings,
+# not a feeling of readiness.
+done_when: []
+
+# ONE shell command that proves done_when. The validator rejects vacuous
+# commands (empty, `true`, `:`, `echo ...`) — a command that cannot fail
+# proves nothing. The receipt gate re-runs THIS command at close.
+verify:
+
+# Required iff task_type: bugfix — the ATTACHED reproduction itself (command +
+# observed output, failing test, incident artifact), as a non-empty string or
+# list of non-empty strings. `repro: true` is a checkbox, not a reproduction.
+# You don't fix what you have not reproduced.
+# repro:

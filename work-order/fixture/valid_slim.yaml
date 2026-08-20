@@ -1,0 +1,21 @@
+# Clean case of the slim schema (should pass the validator).
+goal: "fix 500 on POST /checkout when the cart has an expired discount"
+
+non_goals:
+  - "don't touch the database schema"
+  - "don't refactor the discounts module beyond what's needed"
+
+# Proposed by the agent, RATIFIED by the human -- the validator checks the value,
+# not the ratification. S3 => plan approval + review pass before close
+# (routing invariant; whoever reads `tier` and gates is the receipt gate).
+tier: S2
+
+task_type: bugfix
+
+done_when:
+  - "pytest tests/checkout/test_discount_validator.py::test_expired_discount_rejected green"
+  - "no file outside the card's scope touched"
+
+verify: "pytest tests/checkout/test_discount_validator.py"
+
+repro: "pytest tests/checkout/test_discount_validator.py::test_expired_discount_rejected -> FAILED (AssertionError: negative value accepted)"

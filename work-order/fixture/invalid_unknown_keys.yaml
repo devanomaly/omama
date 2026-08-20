@@ -1,0 +1,10 @@
+# Planted violation: unknown top-level keys -- closed schema; a typo
+# (`goals:`) or an extra field (`notes:`) is a named violation, never a no-op.
+goal: "whatever"
+goals: "goal typo that an open schema would swallow"
+non_goals: ["nothing"]
+tier: S1
+task_type: implementation
+done_when: ["something observable"]
+verify: "pytest tests/"
+notes: "extra field the closed schema rejects"

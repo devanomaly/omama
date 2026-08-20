@@ -1,0 +1,15 @@
+task_type: bugfix
+observed_failure: x
+hypothesis: y
+reproduction:
+  required: true
+  evidence: ["cmd -> FAILED"]
+allowed:
+  files: ["src/a.py"]
+  commands: ["pytest"]
+forbidden_effects: [none]
+acceptance_tests: [t]
+required_evidence_artifacts: [x]
+budget: {tokens: null, wall_time: null, tool_calls: null}
+rollback: z
+completion_rule: w

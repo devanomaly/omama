@@ -1,0 +1,7 @@
+# eol=lf for EVERYTHING text: `git archive` applies eol conversion at archive
+# time, so with core.autocrlf=true on Windows an artifact built here shipped
+# CRLF in every .py/.yaml entry while only .sh and the pre-commit were pinned.
+# LF everywhere makes the archive byte-identical across platforms.
+* text=auto eol=lf
+*.sh text eol=lf
+privacy-hook/pre-commit text eol=lf

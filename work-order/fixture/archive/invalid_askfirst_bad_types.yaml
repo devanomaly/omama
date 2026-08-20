@@ -1,0 +1,18 @@
+# Planted violation: wrong-typed entries in allowed.* on a non-code-touching
+# task_type -- the per-entry type checks only ran inside the CODE_TOUCHING
+# branch; ask-first is exempt from SUBSTANCE, never from FORM
+# (5th external review, 2026-08-18: files: [true], commands: [42] -> OK, exit 0).
+task_type: ask-first
+observed_failure: x
+hypothesis: y
+reproduction:
+  required: false
+allowed:
+  files: [true]
+  commands: [42]
+forbidden_effects: [none]
+acceptance_tests: [t]
+required_evidence_artifacts: [x]
+budget: {tokens: 1}
+rollback: z
+completion_rule: w

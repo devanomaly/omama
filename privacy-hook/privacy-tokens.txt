@@ -1,0 +1,6 @@
+# One literal token per line. Lines starting with # are comments.
+# Example only -- replace with your team's real deny-listed literals
+# (client codenames, internal project names, etc). Keep this file itself
+# out of version control if the literals are sensitive: add it to
+# .gitignore and distribute it to the team out-of-band.
+EXAMPLE-DENY-TOKEN

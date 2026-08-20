@@ -1,0 +1,10 @@
+# Planted violation: repro present but as a checkbox (`true`) -- a
+# reproduction is the attached artifact (command + output, failing test), not
+# an agreement boolean.
+goal: "fix crash on large file upload"
+non_goals: ["don't touch the configured size limit"]
+tier: S2
+task_type: bugfix
+done_when: ["100MB upload completes without crashing"]
+verify: "pytest tests/upload/test_large_files.py"
+repro: true

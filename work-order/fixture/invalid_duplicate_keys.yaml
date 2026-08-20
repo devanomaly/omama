@@ -1,0 +1,10 @@
+# Planted violation: duplicate YAML key -- the standard parser would stay
+# silent and keep the last occurrence (a weaker second `verify:` at the end
+# of the file would win without a trace).
+goal: "whatever"
+non_goals: ["nothing"]
+tier: S1
+task_type: implementation
+done_when: ["something observable"]
+verify: "pytest tests/"
+verify: "true"

@@ -1,0 +1,4 @@
+# Planted violation: required keys absent (goal, done_when, verify).
+non_goals: ["nothing"]
+tier: S1
+task_type: implementation

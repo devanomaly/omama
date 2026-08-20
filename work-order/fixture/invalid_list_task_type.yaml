@@ -1,0 +1,8 @@
+# Planted violation: task_type is a list -- must become a named VIOLATION,
+# never a traceback (fail-closed).
+goal: "whatever"
+non_goals: ["nothing"]
+tier: S1
+task_type: [bugfix, refactor]
+done_when: ["something observable"]
+verify: "pytest tests/"

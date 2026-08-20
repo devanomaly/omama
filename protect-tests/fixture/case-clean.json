@@ -1,0 +1,11 @@
+{
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "src/billing.py",
+    "old_string": "def charge(amount):\n    return amount",
+    "new_string": "def charge(amount):\n    if amount < 0:\n        raise ValueError(\"amount must be positive\")\n    return amount"
+  },
+  "session_id": "fixture-clean-001",
+  "cwd": "/tmp/fixture-repo",
+  "permission_mode": "default"
+}

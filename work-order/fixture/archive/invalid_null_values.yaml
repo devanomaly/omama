@@ -1,0 +1,12 @@
+task_type: bugfix
+observed_failure:
+hypothesis:
+reproduction:
+  required: true
+allowed:
+forbidden_effects:
+acceptance_tests:
+required_evidence_artifacts:
+budget:
+rollback:
+completion_rule:

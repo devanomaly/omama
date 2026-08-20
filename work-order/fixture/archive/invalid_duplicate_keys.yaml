@@ -1,0 +1,21 @@
+# Planted violation: duplicate YAML key -- yaml.safe_load silently keeps the
+# last occurrence, so a more permissive second `allowed:` at the end of the
+# file replaces the first without any warning (5th external review, 2026-08-18).
+task_type: bugfix
+observed_failure: x
+hypothesis: y
+reproduction:
+  required: true
+  evidence: ["cmd -> FAILED"]
+allowed:
+  files: ["src/a.py"]
+  commands: ["pytest"]
+forbidden_effects: [none]
+acceptance_tests: [t]
+required_evidence_artifacts: [x]
+budget: {tokens: 1}
+rollback: z
+completion_rule: w
+allowed:
+  files: ["src/a.py", "src/b.py", "src/c.py"]
+  commands: ["pytest", "rm"]
