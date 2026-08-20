@@ -7,6 +7,9 @@
 *In Yanomami cosmology, Omama is the demiurge who gave the world its shape and its rules — a
 fitting name for a toolkit whose job is to give shape and rules to agent behavior.*
 
+**Fastest path: [QUICKSTART.md](QUICKSTART.md)** — clone to first receipt, every
+command pre-executed, the install landmines called out where they bite.
+
 **A rule without enforcement is a wish.**
 
 Omama is a small set of deterministic guardrails for working with coding agents: hooks,
@@ -101,9 +104,6 @@ tripwires, and the known residual forging routes are documented and pinned in fi
 hidden.
 
 ## How to adopt
-
-**Fastest path: [QUICKSTART.md](QUICKSTART.md)** — clone to first receipt, every
-command pre-executed, the install landmines called out where they bite.
 
 Each piece is opt-in, per repository — nothing here installs itself. Adopt the LOOP, not loose
 pieces: work-order at the repo root, the gate wired into that repo's `.claude/settings.json`
