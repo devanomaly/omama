@@ -33,9 +33,11 @@ jobs:
         with:
           # Ancestry mode reads origin/master..<head> and other remote
           # branches' full history -- a shallow (default depth-1) checkout
-          # would hide exactly what it needs to read. Push/dispatch don't
-          # need it, so leave those at the default.
-          fetch-depth: ${{ github.event_name == 'pull_request' && 0 || 1 }}
+          # would hide exactly what it needs to read. Unconditional because
+          # the `cond && 0 || 1` expression trick returns 1 when the wanted
+          # value is the falsy 0 -- exactly the shallow checkout the checker
+          # then refuses (exit 2) as not runnable.
+          fetch-depth: 0
 
       # fetch-depth: 0 unshallows the ref actually being built (the
       # synthetic refs/pull/N/merge on pull_request events); it does not by
