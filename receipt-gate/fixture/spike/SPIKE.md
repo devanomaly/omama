@@ -5,7 +5,7 @@ Every fact below was OBSERVED on this machine (Windows 11, `claude --version` =
 stdin payloads) + the headless run's result JSON (final reply text).
 
 Setup: scratch dir with `.claude/settings.json` declaring a Stop hook →
-`py -3 spike_stop_hook.py` (this directory), which logs stdin and exits 2 with the
+`python3 spike_stop_hook.py` (this directory), which logs stdin and exits 2 with the
 stderr instruction "include the exact token RESUMED-AFTER-BLOCK in your reply" on its
 FIRST invocation, 0 afterwards. Run: `claude -p "say READY" --output-format json`.
 

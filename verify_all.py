@@ -5,8 +5,8 @@ This exists because a release once shipped with a broken artifact (CRLF in
 privacy-hook's pre-commit) that any full fixture pass would have caught. Run
 this before packaging anything:
 
-    py -3 verify_all.py            # Windows;  python3 verify_all.py on POSIX
-    py -3 verify_all.py --fast     # skip privacy-hook's slow real-git corpus
+    python3 verify_all.py            # POSIX;  py -3 verify_all.py on Windows
+    python3 verify_all.py --fast     # skip privacy-hook's slow real-git corpus
 
 Tri-state, composed honestly:
 

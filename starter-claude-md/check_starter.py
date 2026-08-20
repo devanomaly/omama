@@ -39,7 +39,7 @@ CLAUDE.starter.md in this piece). Checks three things:
      fixture/run_fixture.py).
 
 Usage:
-    py -3 check_starter.py <path-to-claude-md-file> [--allow-vocab TOK1,TOK2,...]
+    python3 check_starter.py <path-to-claude-md-file> [--allow-vocab TOK1,TOK2,...]
 
     --allow-vocab is a comma-separated, case-insensitive list of exact
     forbidden-vocab matches to exempt for this run only (e.g.
@@ -305,7 +305,7 @@ def main():
     path_arg, allowlist = _parse_allow_vocab(sys.argv[1:])
     if path_arg is None:
         print(
-            "Usage: py -3 check_starter.py <path-to-claude-md-file> "
+            "Usage: python3 check_starter.py <path-to-claude-md-file> "
             "[--allow-vocab=TOK1,TOK2,...]",
             file=sys.stderr,
         )

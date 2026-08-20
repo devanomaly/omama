@@ -137,7 +137,7 @@ runs on every `git commit`. Direct invocation, from the adopting repo's
 root:
 
 ```
-py -3 scan_staged.py
+python3 scan_staged.py
 ```
 
 | Exit | State | Means |
@@ -147,7 +147,7 @@ py -3 scan_staged.py
 
 `git commit`'s own return code mirrors the hook's exit — that's what
 the corpus charges. Fixture:
-`py -3 fixture/check.py` (exit 0 = hook correct). Per-case detail,
+`python3 fixture/check.py` (exit 0 = hook correct). Per-case detail,
 probes, and mutations: [EVIDENCE.md](EVIDENCE.md).
 
 ## Scope and limits

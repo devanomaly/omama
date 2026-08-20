@@ -16,7 +16,7 @@ installed in any real repository.
    in `~/.claude/settings.json`**: the broken-configuration blocks
    (BAD-INPUT, CARD-CONFIGURED-BUT-MISSING) are acceptable precisely because
    the blast radius stays confined to repositories that opted into the gate.
-3. Use the **interpreter's absolute path** in the command (not `py -3` — if
+3. Use the **interpreter's absolute path** in the command (not `python3` — if
    the launcher doesn't exist on the host, the shell exits 9009/127, which
    does NOT block: the gate ends up silently absent forever).
 4. **Set the environment variables BEFORE the self-test** — this step is not

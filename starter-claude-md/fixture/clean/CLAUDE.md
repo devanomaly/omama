@@ -18,7 +18,7 @@ elsewhere.
 - When naming a top-level function, class, or module, choose a grep-unique
   name — before using a generic name (`process`, `handler`, `validate`), run
   `grep -rn "<name>" .` (or, since this repo has a naming-convention checker
-  installed, `py -3 tools/check_conventions.py .`, which already detects
+  installed, `python3 tools/check_conventions.py .`, which already detects
   top-level name collisions automatically) and confirm it doesn't collide
   with something already present elsewhere in the repo. [07]
 - At every public boundary (module API, endpoint, interface between layers),
@@ -39,7 +39,7 @@ elsewhere.
   task's `work-order.yaml`, using piece 02's `work-order.template.yaml`
   schema — don't start editing code from a loose "fix bug X" in prose. [02]
 - A bugfix without an attached reproduction doesn't run: run
-  `py -3 tools/work-order/validate_work_order.py <file>.yaml` before
+  `python3 tools/work-order/validate_work_order.py <file>.yaml` before
   editing any code; if `reproduction.required` is `true` and there is no
   reproduction evidence (failing test, recorded command, incident
   artifact), the validator rejects it — stop and ask for the reproduction

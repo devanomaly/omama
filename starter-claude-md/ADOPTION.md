@@ -1,7 +1,7 @@
 # 08 — starter CLAUDE.md · ADOPTION
 
-The mechanics and the limits are in the [README](README.md); receipts in
-[EVIDENCE.md](EVIDENCE.md).
+The mechanics and the limits are in the [README](README.md); the receipts are the
+fixture cases under `fixture/`, run by `fixture/run_fixture.py`.
 
 ## How to adopt (step by step)
 
@@ -14,7 +14,7 @@ The mechanics and the limits are in the [README](README.md); receipts in
    `check_starter.py` lives in this folder of the toolkit — run it from the
    root of the adopting repo, pointing at the script's path:
    ```
-   py -3 <path-to-the-toolkit>/starter-claude-md/check_starter.py CLAUDE.md
+   python3 <path-to-the-toolkit>/starter-claude-md/check_starter.py CLAUDE.md
    ```
    (A wrong path in either argument gives `ERROR: path does not exist` —
    check both before reporting a bug.) Exit `0` = form ok; `1` = fix what's

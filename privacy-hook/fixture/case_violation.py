@@ -6,7 +6,7 @@ fake AWS-shaped access key AND a file containing the deny-listed token
 from privacy-tokens.txt, then attempts a commit.
 
 Exit code mirrors `git commit`'s own exit code: this script exits
-NON-ZERO when the commit is (correctly) blocked, so `py -3
+NON-ZERO when the commit is (correctly) blocked, so `python3
 case_violation.py` failing IS the red proof the FIXTURE spec asks for.
 """
 import os

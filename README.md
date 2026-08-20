@@ -1,5 +1,7 @@
 # Omama
 
+[![verify](https://github.com/devanomaly/omama/actions/workflows/verify.yml/badge.svg)](https://github.com/devanomaly/omama/actions/workflows/verify.yml)
+
 *In Yanomami cosmology, Omama is the demiurge who gave the world its shape and its rules — a
 fitting name for a toolkit whose job is to give shape and rules to agent behavior.*
 
@@ -18,6 +20,10 @@ quoted in this repo's docs comes from a five-member phase of it. An internal pil
 step before any "this works" claim gets made — see [Honesty, by design](#honesty-by-design)
 below.
 
+*This repository is a seed extracted from a private working history; the process record — the
+adversarial review that killed most of what was built, and the reasoning behind each cut — lives
+there, not here. The initial commit is the extraction, not the work.*
+
 *[Leia em português](README.pt-BR.md)*
 
 ## The seed loop (card → receipt → structured artifact)
@@ -29,14 +35,14 @@ A task enters, runs, and closes like this:
    command, a repro attached if it's a bugfix. Closed-schema validator, preflight checked.
 2. **[receipt-gate](receipt-gate/README.md)** — a Stop hook that, on a DECLARED close, re-runs
    the card's own `verify` against the current tree, hashes before/after, and writes the
-   receipt — **only the gate emits VERIFIED**. Closing honestly as FAILED/UNVERIFIED is always
-   possible and always leaves a receipt. S3 cards require an approved review artifact before
-   VERIFIED.
+   receipt — **only the gate emits task-completion VERIFIED**. Closing honestly as
+   FAILED/UNVERIFIED is always possible and always leaves a receipt. S3 cards require an
+   approved review artifact before VERIFIED.
 3. **[output-discipline](output-discipline/README.md)** — plans/reviews with mandatory structure
    (verdict first, tier, done-when/verify, explicit non-findings) and **advisory-only line
    budgets** — structure is enforced; budgets just nudge.
 
-**Zero-cost passive layers (enabled alongside, outside the measured surface):**
+**Low-friction passive layers (enabled alongside, outside the measured per-task surface):**
 [privacy-hook](privacy-hook/README.md) (pre-commit secrets scan) and
 [protect-tests](protect-tests/README.md) (a PreToolUse guard against deleting/disabling/skipping
 a test — the only mechanical coverage against test-weakening until the receipt gate covers it).
@@ -47,7 +53,7 @@ skeleton that output-discipline and the receipt gate both inherit their exit con
 [starter-claude-md](starter-claude-md/README.md) — a `CLAUDE.md` starter plus a coherence
 checker (untagged/dangling rules, renamed headings, vocabulary bypasses).
 
-**On-demand ([skills/](skills/README.md), zero cost, outside the measured surface):**
+**On-demand ([skills/](skills/README.md), outside the measured per-task surface):**
 belief-check, triad-check, and concurrency-map — invocable in a session on this repo via the
 pointers in `.claude/skills/`.
 
@@ -62,17 +68,22 @@ every rule back to a piece via a `[NN]` tag. Here's what each number maps to in 
 | 02 | [work-order](work-order/README.md) |
 | 03 | [validator](validator/README.md) |
 | 04 | [protect-tests](protect-tests/README.md) |
-| 05 | *internal piece, not included in this toolkit* |
-| 06 | *internal piece, not included in this toolkit* |
+| 05 | *evaluation of a third-party tool; cut before adoption, not included* |
+| 06 | *evaluation of a third-party tool; cut before adoption, not included* |
 | 07 | code conventions, optional — not included in this toolkit |
 | 08 | [starter-claude-md](starter-claude-md/README.md) |
 | 09 | [output-discipline](output-discipline/README.md) |
 
 ## Prerequisites
 
-`py -3` on PATH. **work-order** and **receipt-gate** need PyYAML (`pip install pyyaml`);
-**receipt-gate** needs `git`; **protect-tests** needs Node.js. validator, starter-claude-md, and
-output-discipline run with just `py -3`.
+Python 3 on PATH — `python3` on macOS/Linux, `py -3` on Windows. Every command in this repo is
+written with `python3`; substitute `py -3` if you're on Windows. The code itself is
+launcher-agnostic (it shells out via `sys.executable`), but it is **developed and routinely
+exercised on Windows** — POSIX is supported by construction and covered by CI, not by daily use.
+
+**work-order** and **receipt-gate** need PyYAML (`pip install pyyaml`); **receipt-gate** needs
+`git`; **protect-tests** needs Node.js. validator, starter-claude-md, and output-discipline run
+with just Python 3.
 
 ## Principles (why these pieces)
 
@@ -102,8 +113,8 @@ PreToolUse). **Third-party code:** protect-tests vendors an MIT-licensed script
 ## Verification and packaging
 
 ```
-py -3 verify_all.py          # every active fixture (privacy-hook takes minutes — real git corpus)
-py -3 verify_all.py --fast   # skip privacy-hook's corpus (becomes NOT-RUN; exit 2)
+python3 verify_all.py        # every active fixture (privacy-hook takes minutes — real git corpus)
+python3 verify_all.py --fast # skip privacy-hook's corpus (becomes NOT-RUN; exit 2)
 ```
 
 End-to-end tri-state: `OK` / `FAILED` / `NOT-RUN` per entry; exit 0 only when everything ran and
@@ -112,4 +123,4 @@ passed.
 ## License
 
 MIT (`LICENSE` at the root — code and docs). Provenance exception: `protect-tests/vendor/`
-retains its upstream license.
+retains its upstream license — see [NOTICE.md](NOTICE.md).

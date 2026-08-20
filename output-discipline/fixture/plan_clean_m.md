@@ -2,7 +2,7 @@
 # Plan: migrate label store from CSV to SQLite
 
 - **Done when:** all 60 rows readable via new store; validator returns invalid: 0; old CSV path removed.
-- **Verify:** py -3 extractor/validate_labels.py --labels store.db
+- **Verify:** python3 extractor/validate_labels.py --labels store.db
 - **Tier:** M — durable-state write, detection easy, correction cheap pre-freeze.
 
 ## Approach

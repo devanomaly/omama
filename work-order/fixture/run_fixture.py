@@ -12,7 +12,7 @@ Exit code 1  -> at least one case behaved unexpectedly (validator is broken,
                 or someone weakened it).
 
 Usage:
-    py -3 run_fixture.py
+    python3 run_fixture.py
 """
 import subprocess
 import sys

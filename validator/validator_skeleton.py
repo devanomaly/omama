@@ -27,7 +27,7 @@ HOW TO ADOPT
 1. Copy this file into your project (keep the name or rename it, doesn't
    matter — it has no import dependency on this toolkit).
 2. Edit the SCHEMA dict below: one entry per CSV column you want gated.
-3. Run: py -3 validator_skeleton.py --csv path/to/artifact.csv
+3. Run: python3 validator_skeleton.py --csv path/to/artifact.csv
 4. Wire the exit code into your pipeline/CI/pre-commit gate: 0 = clean,
    1 = violations found, 2 = could not evaluate at all (treat exactly
    like a failure — never proceed past a 2).

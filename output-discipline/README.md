@@ -42,7 +42,7 @@ template guidance, **not** a mechanical check.
 ## Command and states
 
 ```
-py -3 scripts/check_artifact.py [--budgets-advisory] <artifact.md>
+python3 scripts/check_artifact.py [--budgets-advisory] <artifact.md>
 ```
 
 | Exit | State | Means |
@@ -59,7 +59,7 @@ Without the flag, behavior is byte-for-byte identical to before.
 
 Declaration: a **single** comment, exact `v1`, in the **first 5 non-empty lines** —
 buried, split, or with an unknown version (`v10`) becomes NOT-RUN. Fixture:
-`py -3 fixture/run_fixture.py` (exit 0 = checker correct).
+`python3 fixture/run_fixture.py` (exit 0 = checker correct).
 
 ## Scope and limits
 

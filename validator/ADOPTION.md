@@ -18,7 +18,7 @@ Instantiation, CI, and human decisions. The mechanics and limits are in the
    A typo here doesn't pass silently: `check_schema()` turns a malformed schema
    (e.g.: `"type": "integer"`) into a named `NOT-RUN`, exit 2, before any row
    is evaluated.
-3. Run: `py -3 validator_skeleton.py --csv path/to/artifact.csv`
+3. Run: `python3 validator_skeleton.py --csv path/to/artifact.csv`
 4. If you'd rather keep the schema in a file separate from the skeleton (common when the
    same schema is used in more than one place), import
    `run_cli`/`validate_rows`/`load_csv` in your own instantiation — see
@@ -29,7 +29,7 @@ Instantiation, CI, and human decisions. The mechanics and limits are in the
 Wire the exit code into your gate (CI, pre-commit hook, deploy script): `0` =
 `VERIFIED`, proceed; `1` = `FAILED`, stop — there's a named violation; `2` = `NOT-RUN`,
 stop — it couldn't even evaluate; treat it exactly as a failure, never as "no
-opinion". The piece's fixture (`py -3 fixture/run_fixture.py`, exit 0) can sit in the
+opinion". The piece's fixture (`python3 fixture/run_fixture.py`, exit 0) can sit in the
 CI as a regression test of the validator itself.
 
 Before wiring the validator's stdout into shared logging, confirm header

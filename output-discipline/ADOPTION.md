@@ -25,7 +25,7 @@ substance reviewed by the human. Nobody copies the template by hand.
    > followed by Findings/Non-findings. Line budgets (XS ≤5 ·
    > S ≤15 · M ≤40 · L no ceiling) are advisory — the checker warns, it does not fail.
    > XS floor: one line in chat (`Plan (XS): goal; done when X; verify: cmd`).
-   > Spot-check: `py -3 <path>/scripts/check_artifact.py --budgets-advisory <file>`.
+   > Spot-check: `python3 <path>/scripts/check_artifact.py --budgets-advisory <file>`.
 
    (The block the author runs in trial.)
 

@@ -4,7 +4,7 @@ script is the gate. It never re-implements validation logic; it only
 supplies SCHEMA to the shared validator_skeleton functions.
 
 Run:
-    py -3 example_instantiation.py --csv example_labels.csv
+    python3 example_instantiation.py --csv example_labels.csv
 """
 import os
 import sys

@@ -14,7 +14,7 @@ Integration and human decisions. The mechanics and the limits are in the
    test) BEFORE dispatching — the validator rejects a bugfix without it.
 5. Run the validator before dispatching the agent:
    ```
-   py -3 validate_work_order.py card-2451.yaml
+   python3 validate_work_order.py card-2451.yaml
    ```
    If it rejects, fix the flagged field — do not bypass the rule by editing the validator.
 6. Only dispatch after `OK`. The validated card freezes goal/non-goals — the agent may

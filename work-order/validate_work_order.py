@@ -2,7 +2,7 @@
 """Deterministic validator for slim work-order cards (CARD-01, 2026-08-19).
 
 Usage:
-    py -3 validate_work_order.py <path-to-card.yaml>
+    python3 validate_work_order.py <path-to-card.yaml>
 
 Exit code 0  -> valid.
 Exit code 1  -> invalid; violations printed to stderr, one per line,

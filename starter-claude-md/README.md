@@ -43,7 +43,7 @@ internal doctrine leaked into the file.
 ## Command and states
 
 ```
-py -3 check_starter.py <path-to-CLAUDE.md> [--allow-vocab=TOK1,TOK2,...]
+python3 check_starter.py <path-to-CLAUDE.md> [--allow-vocab=TOK1,TOK2,...]
 ```
 
 | Exit | State | Means |
@@ -52,7 +52,7 @@ py -3 check_starter.py <path-to-CLAUDE.md> [--allow-vocab=TOK1,TOK2,...]
 | 1 | FAIL | one line per violation, with line and named code |
 | 2 | not executable | usage error, nonexistent path, or a never-exemptable token in `--allow-vocab` |
 
-Fixture: `py -3 fixture/run_fixture.py` (exit 0 = checker correct) — the
+Fixture: `python3 fixture/run_fixture.py` (exit 0 = checker correct) — the
 case-by-case table is the runner itself.
 
 ## Scope and limits

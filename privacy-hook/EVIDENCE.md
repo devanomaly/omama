@@ -4,7 +4,7 @@ Probes, cases, and red-green history. The [README](README.md) carries
 the promise; this file carries the receipts. All are from real runs on
 2026-08-18: `fixture/check.py` with exit 0
 (`corpus: 55 cases (28 block / 27 pass), 0 failed`) and standalone
-probes (`py -3`, each in a temporary git repo with the hook installed
+probes (`python3`, each in a temporary git repo with the hook installed
 byte-for-byte by the same `lib.make_repo` used by the corpus). `rc` is
 always `git commit`'s own exit code — never an internal call inside the
 scanner.
@@ -13,9 +13,9 @@ scanner.
 
 ```
 cd privacy-hook/fixture
-py -3 check.py          # smoke cases + gitlink + full corpus
-py -3 case_corpus.py    # tabulated corpus only
-py -3 case_gitlink.py   # gitlink case only (both polarities)
+python3 check.py          # smoke cases + gitlink + full corpus
+python3 case_corpus.py    # tabulated corpus only
+python3 case_gitlink.py   # gitlink case only (both polarities)
 ```
 
 `check.py` runs four scripts and charges each one's polarity:

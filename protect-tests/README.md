@@ -45,7 +45,7 @@ editing a test's body (legitimate fix).
 
 ```
 cd fixture
-py -3 run_fixture.py <violation|skip|clean|all>
+python3 run_fixture.py <violation|skip|clean|all>
 ```
 
 The hook itself **always exits with exit 0**; the block is communicated only via the stdout JSON
@@ -62,7 +62,7 @@ below are from the RUNNER, which translates that decision:
 
 ### What it catches
 
-3-case fixture run on 2026-08-18 (`py -3 run_fixture.py all`, Node.js on PATH), all with
+3-case fixture run on 2026-08-18 (`python3 run_fixture.py all`, Node.js on PATH), all with
 the expected result, runner exit 0: deleting a test via Bash denied (`delete-test`), skip via
 Edit denied (`skip-test`), ordinary production edit allowed. Case-by-case receipts and
 the proof of non-vacuousness: the fixture itself. Rename-to-disabled and the

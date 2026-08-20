@@ -42,7 +42,7 @@ the receipt gate, not this validator.
 ## Command and states
 
 ```
-py -3 validate_work_order.py <card.yaml>
+python3 validate_work_order.py <card.yaml>
 ```
 
 | Exit | State | Means |
@@ -51,7 +51,7 @@ py -3 validate_work_order.py <card.yaml>
 | 1 | VIOLATION | one `VIOLATION: ...` line per reason on stderr (includes internal error — fail-closed) |
 | 2 | not runnable | pyyaml missing or wrong CLI usage |
 
-Fixture: `py -3 fixture/run_fixture.py` (exit 0 = validator correct).
+Fixture: `python3 fixture/run_fixture.py` (exit 0 = validator correct).
 
 ## Scope and limits
 

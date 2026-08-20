@@ -59,7 +59,7 @@ specific to the source project.
 ## Command and states
 
 ```
-py -3 validator_skeleton.py --csv path/to/artifact.csv
+python3 validator_skeleton.py --csv path/to/artifact.csv
 ```
 
 | Exit | State | Means |
@@ -71,7 +71,7 @@ py -3 validator_skeleton.py --csv path/to/artifact.csv
 The `2` must never be treated as "maybe it's fine" by the gate — treat it
 exactly as a failure.
 
-Fixture: `py -3 fixture/run_fixture.py` (exit 0 = correct validator) — the
+Fixture: `python3 fixture/run_fixture.py` (exit 0 = correct validator) — the
 case-by-case table is the runner itself.
 
 ## Scope and limits

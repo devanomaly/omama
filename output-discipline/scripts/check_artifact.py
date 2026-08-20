@@ -10,7 +10,7 @@ Exit codes (contract borrowed from the gating toolkit's validator skeleton):
                  never a pass: a checker that could not look at the
                  artifact has no business reporting it clean.
 
-Usage:  py -3 check_artifact.py [--budgets-advisory] <artifact.md>
+Usage:  python3 check_artifact.py [--budgets-advisory] <artifact.md>
 Prints one JSON summary line plus a human-readable verdict line.
 
 --budgets-advisory (CARD-03, 2026-08-19: structure mandatory, budgets

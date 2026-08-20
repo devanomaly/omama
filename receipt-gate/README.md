@@ -43,7 +43,7 @@ Install: see [adapt/README.md](adapt/README.md) (per-repo, mandatory
 self-test with the exact registered command string). Fixture:
 
 ```
-py -3 fixture/run_fixture.py        # exit 0 = gate correct (46 cases)
+python3 fixture/run_fixture.py        # exit 0 = gate correct (46 cases)
 ```
 
 | Gate exit | Means |

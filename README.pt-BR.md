@@ -1,5 +1,7 @@
 # Omama
 
+[![verify](https://github.com/devanomaly/omama/actions/workflows/verify.yml/badge.svg)](https://github.com/devanomaly/omama/actions/workflows/verify.yml)
+
 *Omama, na cosmologia Yanomami, é o demiurgo que deu forma e regra ao mundo — o nome certo para
 um toolkit cujo trabalho é dar forma e regra ao comportamento de agentes.*
 
@@ -18,6 +20,10 @@ sempre teve cinco membros, mas todo placar citado nos docs deste repositório ve
 cinco membros dele. Um piloto interno é o próximo passo antes de qualquer alegação de "isso
 funciona" — veja [Honestidade, por design](#honestidade-por-design) abaixo.
 
+*Este repositório é um seed extraído de um histórico de trabalho privado; o registro de processo —
+a revisão adversarial que matou a maior parte do que foi construído, e o porquê de cada corte —
+vive lá, não aqui. O commit inicial é a extração, não o trabalho.*
+
 *[Read in English](README.md)*
 
 Esta página de entrada é mantida em PT-BR; os READMEs de cada peça individual estão em inglês.
@@ -31,13 +37,14 @@ Uma tarefa entra, roda e fecha assim:
    repro anexada se bugfix. Validador de schema fechado, preflight.
 2. **[receipt-gate](receipt-gate/README.md)** — um Stop hook que, no close DECLARADO, re-roda o
    `verify` do card contra a árvore corrente, hasheia antes/depois e escreve o recibo — **só o
-   gate emite VERIFIED**. Fechar honestamente como FAILED/UNVERIFIED é sempre possível e sempre
-   deixa recibo. Cards S3 exigem review-artefato aprovado antes do VERIFIED.
+   gate emite o VERIFIED de conclusão de tarefa**. Fechar honestamente como FAILED/UNVERIFIED é
+   sempre possível e sempre deixa recibo. Cards S3 exigem review-artefato aprovado antes do
+   VERIFIED.
 3. **[output-discipline](output-discipline/README.md)** — planos/reviews com estrutura
    obrigatória (verdict primeiro, tier, done-when/verify, non-findings) e **orçamentos de linha
    só advisory** — a estrutura é obrigatória; os orçamentos só sinalizam.
 
-**Passivas de custo zero (habilitadas junto, fora da superfície medida):**
+**Passivas de baixo atrito (habilitadas junto, fora da superfície medida por tarefa):**
 [privacy-hook](privacy-hook/README.md) (pre-commit de segredos) e
 [protect-tests](protect-tests/README.md) (PreToolUse contra apagar/desativar/skipar teste — a
 única cobertura mecânica de enfraquecimento de teste até o receipt gate cobrir isso).
@@ -48,7 +55,7 @@ tri-estado do qual output-discipline e o receipt gate herdam o contrato de exit.
 [starter-claude-md](starter-claude-md/README.md) — starter de `CLAUDE.md` + checker de
 coerência (regra sem tag, heading renomeado, bypass de vocabulário).
 
-**On-demand ([skills/](skills/README.md), custo zero, fora da superfície medida):**
+**On-demand ([skills/](skills/README.md), fora da superfície medida por tarefa):**
 belief-check, triad-check e concurrency-map — invocáveis numa sessão neste repo via os
 ponteiros de `.claude/skills/`.
 
@@ -63,17 +70,22 @@ toda regra de volta a uma peça via tag `[NN]`. Eis o que cada número mapeia ne
 | 02 | [work-order](work-order/README.md) |
 | 03 | [validator](validator/README.md) |
 | 04 | [protect-tests](protect-tests/README.md) |
-| 05 | *peça interna, não incluída neste toolkit* |
-| 06 | *peça interna, não incluída neste toolkit* |
+| 05 | *avaliação de ferramenta de terceiro; cortada antes da adoção, não incluída* |
+| 06 | *avaliação de ferramenta de terceiro; cortada antes da adoção, não incluída* |
 | 07 | convenções de código, opcional — não incluída neste toolkit |
 | 08 | [starter-claude-md](starter-claude-md/README.md) |
 | 09 | [output-discipline](output-discipline/README.md) |
 
 ## Pré-requisitos
 
-`py -3` no PATH. **work-order** e **receipt-gate** precisam de PyYAML
-(`pip install pyyaml`); **receipt-gate** precisa de `git`; **protect-tests** precisa de Node.js.
-validator, starter-claude-md e output-discipline rodam só com `py -3`.
+Python 3 no PATH — `python3` no macOS/Linux, `py -3` no Windows. Todos os comandos deste repo
+estão escritos com `python3`; troque por `py -3` se estiver no Windows. O código em si independe
+do launcher (invoca via `sys.executable`), mas é **desenvolvido e exercitado no dia a dia em
+Windows** — POSIX é suportado por construção e coberto por CI, não por uso diário.
+
+**work-order** e **receipt-gate** precisam de PyYAML (`pip install pyyaml`); **receipt-gate**
+precisa de `git`; **protect-tests** precisa de Node.js. validator, starter-claude-md e
+output-discipline rodam só com Python 3.
 
 ## Princípios (por que essas peças)
 
@@ -101,8 +113,8 @@ PreToolUse). **Código de terceiros:** protect-tests vendoriza um script MIT
 ## Verificação e empacotamento
 
 ```
-py -3 verify_all.py          # toda fixture ativa (privacy-hook leva minutos — corpus git real)
-py -3 verify_all.py --fast   # pula o corpus da privacy-hook (vira NOT-RUN; exit 2)
+python3 verify_all.py        # toda fixture ativa (privacy-hook leva minutos — corpus git real)
+python3 verify_all.py --fast # pula o corpus da privacy-hook (vira NOT-RUN; exit 2)
 ```
 
 Tri-estado de ponta a ponta: `OK` / `FAILED` / `NOT-RUN` por entrada; exit 0 só quando tudo
@@ -111,4 +123,4 @@ rodou e passou.
 ## Licença
 
 MIT (`LICENSE` na raiz — código e documentação). Exceção de proveniência:
-`protect-tests/vendor/` mantém a licença upstream.
+`protect-tests/vendor/` mantém a licença upstream — ver [NOTICE.md](NOTICE.md).

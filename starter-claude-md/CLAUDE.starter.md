@@ -46,7 +46,7 @@ elsewhere.
   (XS ≤5 · S ≤15 · M ≤40 non-empty; L has no ceiling but summary first) are
   advisory — the checker warns, it does not fail. Use the templates at
   `<ADJUST: path to piece 09>/templates/`; anyone can audit the artifact with
-  `py -3 <ADJUST: path to piece 09>/scripts/check_artifact.py
+  `python3 <ADJUST: path to piece 09>/scripts/check_artifact.py
   --budgets-advisory <file>`.
   <ADJUST: if piece 09 was not adopted in this repo, remove this bullet.> [09]
 - The human dictates, you fill in: when the human describes a task or
@@ -70,7 +70,7 @@ claim a work-order contract that doesn't exist in this repo — and adjust
   task's `work-order.yaml`, using piece 02's `work-order.template.yaml`
   schema — don't start editing code from a loose "fix bug X" in prose. [02]
 - A bugfix without an attached reproduction doesn't run: run
-  `py -3 <ADJUST: path to the validator>/validate_work_order.py <file>.yaml`
+  `python3 <ADJUST: path to the validator>/validate_work_order.py <file>.yaml`
   before editing any code; if `reproduction.required` is `true` and there is
   no reproduction evidence (failing test, recorded command, incident
   artifact), the validator rejects it — stop and ask for the reproduction

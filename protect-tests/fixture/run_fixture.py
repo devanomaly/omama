@@ -24,10 +24,10 @@ and turns that into the runner's own exit code, per the requested convention:
     still non-zero, distinguishable via stderr text)
 
 Usage:
-  py -3 run_fixture.py violation   # expects the delete-test case to be denied
-  py -3 run_fixture.py skip        # expects the skip-marker case to be denied
-  py -3 run_fixture.py clean       # expects the benign edit to be allowed
-  py -3 run_fixture.py all         # runs all three, prints a summary,
+  python3 run_fixture.py violation   # expects the delete-test case to be denied
+  python3 run_fixture.py skip        # expects the skip-marker case to be denied
+  python3 run_fixture.py clean       # expects the benign edit to be allowed
+  python3 run_fixture.py all         # runs all three, prints a summary,
                                     # exits 0 only if every case matched
                                     # expectations (else exits 2)
 """

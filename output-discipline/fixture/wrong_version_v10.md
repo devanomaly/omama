@@ -7,6 +7,6 @@ Goal: prove v10 is NOT v1 -- the old grammar accepted `v10` because the
 
 Done when: the checker rejects this declaration as unknown.
 
-Verify: py -3 scripts/check_artifact.py fixture/wrong_version_v10.md
+Verify: python3 scripts/check_artifact.py fixture/wrong_version_v10.md
 
 Risks: none -- fixture.

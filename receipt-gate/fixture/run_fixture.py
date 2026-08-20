@@ -12,7 +12,7 @@ Exit 1  -> at least one case misbehaved (gate broken or weakened), OR a
            FAIL LOUDLY, never skip -- a silently-skipped fail-closed fixture
            recreates the silent-absence class inside the test suite).
 
-Usage:  py -3 run_fixture.py [case-name-substring]
+Usage:  python3 run_fixture.py [case-name-substring]
 """
 import json
 import os

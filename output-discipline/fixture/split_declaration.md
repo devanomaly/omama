@@ -9,6 +9,6 @@ non-alphabetic (5th external review, 2026-08-18).
 
 Done when: the checker treats this file as NOT declared.
 
-Verify: py -3 scripts/check_artifact.py fixture/split_declaration.md
+Verify: python3 scripts/check_artifact.py fixture/split_declaration.md
 
 Risks: none -- fixture.

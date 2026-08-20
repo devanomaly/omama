@@ -35,7 +35,7 @@ evaluate at all — a checker that could not look must never report a pass):
     NOT-RUN (checked separately below, not against example_instantiation.py)
 
 Run:
-    py -3 fixture/run_fixture.py
+    python3 fixture/run_fixture.py
 Exits 0 if every case behaves as expected, non-zero otherwise (so this
 file itself can sit in CI as the piece's own regression test).
 """

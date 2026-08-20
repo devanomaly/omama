@@ -35,7 +35,7 @@ Plain git repo (no `pre-commit` framework):
    hook itself, under `.git/hooks/`, **is not versioned by git** — each
    dev/clone needs to install steps 2 and 3). If the team uses the
    `pre-commit` framework (pre-commit.com), point a `repo: local` hook
-   at `python3 scan_staged.py` (Linux/Mac) or `py -3 scan_staged.py`
+   at `python3 scan_staged.py` (Linux/Mac) or `python3 scan_staged.py`
    (Windows — `python3` usually isn't on PATH on a standard Windows
    Python install, only the `py` launcher), with `language: system`,
    `pass_filenames: false`.
