@@ -2,6 +2,8 @@
 
 [![verify](https://github.com/devanomaly/omama/actions/workflows/verify.yml/badge.svg)](https://github.com/devanomaly/omama/actions/workflows/verify.yml)
 
+*[Leia em português](README.pt-BR.md)*
+
 *In Yanomami cosmology, Omama is the demiurge who gave the world its shape and its rules — a
 fitting name for a toolkit whose job is to give shape and rules to agent behavior.*
 
@@ -23,8 +25,6 @@ below.
 *This repository is a seed extracted from a private working history; the process record — the
 adversarial review that killed most of what was built, and the reasoning behind each cut — lives
 there, not here. The initial commit is the extraction, not the work.*
-
-*[Leia em português](README.pt-BR.md)*
 
 ## The seed loop (card → receipt → structured artifact)
 
