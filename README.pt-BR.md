@@ -102,6 +102,10 @@ rotas conhecidas de forja residual estão documentadas e fixadas em fixture, nã
 
 ## Como adotar
 
+**Caminho mais rápido: [QUICKSTART.pt-BR.md](QUICKSTART.pt-BR.md)** — do clone
+ao primeiro recibo, todo comando pré-executado, as armadilhas de instalação
+apontadas onde mordem.
+
 Cada peça é opt-in por repositório; nada aqui se instala sozinho. Adote o LOOP, não peças
 avulsas: work-order na raiz do repo, o gate no `.claude/settings.json` DO repo (por-repo, nunca
 global — self-test vermelho E verde obrigatório, ver

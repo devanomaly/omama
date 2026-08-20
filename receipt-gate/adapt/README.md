@@ -1,7 +1,9 @@
 # adapt/ — EXAMPLE — NOT INSTALLED
 
 Configuration snippet to copy and adapt (piece-04 pattern). Nothing here is
-installed in any real repository.
+installed in any real repository. The ordered happy path lives in
+[QUICKSTART.md](../../QUICKSTART.md); this file is the reference (env vars,
+troubleshooting, rationale).
 
 ## How a team would adopt it
 

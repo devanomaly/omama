@@ -1,0 +1,143 @@
+# Quickstart — the minimum loop, from clone to first receipt
+
+Every command below was executed on a scratch repository before this document
+was committed (on Windows, with the interpreter substitutions noted inline);
+the mechanical path — not counting reading — took the author's machine just
+over 6 minutes. Commands are written `python3` — on Windows substitute `py -3`
+(see [Prerequisites](README.md#prerequisites)).
+
+*[Versão em português](QUICKSTART.pt-BR.md)*
+
+## 1. Watch it refuse to overclaim (2 commands, no commitment)
+
+Install the dependencies FIRST — without PyYAML the fixtures report `FAILED`,
+which reads as "broken repo" when it means "missing dep" (the detail lines do
+say `pyyaml not installed`, but only if you read past the summary):
+
+```
+pip install pyyaml
+python3 verify_all.py --fast
+echo $?
+```
+
+Expected: `7 ok, 0 failed, 1 not-run` — and **exit code 2, not 0**. Seven
+passes plus one skipped check is not a pass; a verifier that reports success
+for coverage it skipped is lying. That exit code is this toolkit's entire
+posture in one observable bit. (`python3 verify_all.py` without `--fast` runs
+the skipped corpus too — takes minutes — and exits 0.)
+
+## 2. The minimum loop is three pieces
+
+- **[work-order](work-order/README.md)** — the task enters as a card: goal,
+  non-goals, human-ratified tier, observable done-when, ONE `verify` command
+  that can fail. Without it the gate has nothing to hold you to.
+- **[receipt-gate](receipt-gate/README.md)** — a Stop hook that re-runs the
+  card's own `verify` before a close may claim VERIFIED, and writes a receipt
+  either way. Without it the card is prose.
+- **[output-discipline](output-discipline/README.md)** — structure for
+  plans/reviews (verdict first, explicit non-findings). Needed from day one
+  only for S3 cards; adopt the templates when you get there.
+
+Everything else in the repo is optional and separable — see
+[How to adopt](README.md#how-to-adopt).
+
+## 3. Install into your repository
+
+From your repo root (`<OMAMA>` = your clone of this repo):
+
+```
+mkdir -p .claude/hooks tools
+cp <OMAMA>/receipt-gate/receipt_gate.py   .claude/hooks/
+cp <OMAMA>/work-order/validate_work_order.py  tools/
+cp <OMAMA>/work-order/work-order.template.yaml .
+```
+
+Register the hook: copy the `hooks` block from
+[receipt-gate/adapt/settings.example.json](receipt-gate/adapt/settings.example.json)
+into **your repository's** `.claude/settings.json`. Three rules, each of which
+prevents a gate that *looks* installed while being silently absent or
+permanently blocking:
+
+- **Per-repo, NEVER `~/.claude/settings.json`** — a broken global gate blocks
+  every repo you own; a broken per-repo gate blocks only the repo that opted in.
+- **Absolute interpreter path in the command, not `python3`** — if the
+  launcher is missing on the host the shell exits 127/9009, which does NOT
+  block: the gate is silently absent forever.
+- **Set the env vars BEFORE the self-test** — `OMAMA_CARD` (path to the
+  active card) and `OMAMA_VALIDATOR` (path to your copied
+  `validate_work_order.py`). Without them every close blocks with
+  `SCHEMA: validator unrunnable`. `OMAMA_CHECK_ARTIFACT` is only required
+  once you use S3 cards. Full table:
+  [receipt-gate/adapt/README.md](receipt-gate/adapt/README.md).
+
+The gate needs a git repo with at least one commit (an unborn HEAD
+fail-closes, by design).
+
+## 4. Prove the gate: red, then green (mandatory — do not skip)
+
+An install you haven't watched block is not installed. This section is the
+self-test that [adapt/README.md](receipt-gate/adapt/README.md) makes
+mandatory — run the gate via the EXACT command string you registered in
+`settings.json`, copy-pasted, not retyped.
+
+Write a first card, `CARD.yaml`, whose `verify` does not pass **yet** —
+e.g. for a repo where `app.js` still says `hi`:
+
+```yaml
+goal: app.js greets with "hello" instead of "hi"
+non_goals:
+  - any file other than app.js
+tier: S1
+task_type: implementation
+done_when:
+  - app.js source contains the string hello
+verify: python3 -c "exit(0 if 'hello' in open('app.js').read() else 1)"
+```
+
+(Write `verify` in whatever runs on YOUR machine — on Windows, `python`.)
+
+```
+python3 tools/validate_work_order.py CARD.yaml   # expect: OK ... valid card
+git add -A && git commit -m "card"
+echo "CLOSE" > CARD.close
+echo '{}' | <exact command string from your settings.json>
+```
+
+**Expected: `RECEIPT-GATE BLOCK[VERIFY-RED]` and exit 2.** That block is the
+product working. (The `{}` on stdin stands in for the Stop-hook payload
+Claude Code sends; empty stdin is itself a named block, by design.)
+
+Now do the work and close again:
+
+```
+# ...make app.js print hello...
+git add -A && git commit -m "greet with hello"
+echo "CLOSE" > CARD.close
+echo '{}' | <exact command string from your settings.json>
+```
+
+**Expected: exit 0, `VERIFIED ... receipt written`, and `CARD.receipt.json`
+on disk** with the verify command, exit code, and tree hashes bound together.
+`CARD.close` is gone — the gate consumes it on every allowed close; the
+receipt is the durable record. Honest closes (`FAILED: <reason>`,
+`UNVERIFIED: <reason>`) always pass and always leave a receipt too.
+
+If you saw the red BLOCK **and** the green VERIFIED, the loop is installed.
+One without the other means broken wiring — see the self-test section of
+[adapt/README.md](receipt-gate/adapt/README.md) for what each partial result
+means.
+
+## 5. You now have
+
+- Cards that freeze goal/non-goals/verify before dispatch, validated by
+  `tools/validate_work_order.py`.
+- A gate that re-runs the card's own proof before any close may claim
+  VERIFIED, and writes a receipt for every close, honest failures included.
+- A red self-test receipt proving the gate actually blocks on your machine.
+
+Next: tier semantics and what only a human decides —
+[work-order/ADOPTION.md](work-order/ADOPTION.md); S3 review artifacts —
+[output-discipline/ADOPTION.md](output-discipline/ADOPTION.md); what the gate
+does NOT catch — the residuals section of
+[receipt-gate/README.md](receipt-gate/README.md). No efficacy claim is made
+for any of this; see the [README](README.md).

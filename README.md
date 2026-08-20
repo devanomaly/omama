@@ -102,6 +102,9 @@ hidden.
 
 ## How to adopt
 
+**Fastest path: [QUICKSTART.md](QUICKSTART.md)** — clone to first receipt, every
+command pre-executed, the install landmines called out where they bite.
+
 Each piece is opt-in, per repository — nothing here installs itself. Adopt the LOOP, not loose
 pieces: work-order at the repo root, the gate wired into that repo's `.claude/settings.json`
 (per-repo, never global — self-test both red AND green required, see
