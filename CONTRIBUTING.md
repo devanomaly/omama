@@ -104,6 +104,15 @@ output, the green output, and the residual you added or amended. CI
 py3.8 — green on **all four** is the entry condition, not a nice-to-have. A NOT-RUN on any
 leg fails the job by design.
 
+**Branch off `master`'s tip, not off another PR branch.** A branch cut from an unmerged
+sibling silently carries that sibling's commits along; if this PR merges first, they land
+on `master` without having gone through their own review. `check_pr_base.py` fails the CI
+job (exit 1) when a PR's base ref isn't `master` — but it only checks the *base ref*, not
+where the branch was actually cut from: a branch aimed at `master` that was nonetheless
+forked from a stale local ref can still carry stray commits, and CI only sees them if they
+show up in the diff. Rebase (`git rebase origin/master`) before opening the PR if you are
+not sure your branch is current.
+
 ## Found a bypass?
 
 `privacy-hook` scans for secrets and `protect-tests` guards tests from deletion and

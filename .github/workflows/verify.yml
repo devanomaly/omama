@@ -35,6 +35,10 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
+      - name: PRs must branch off master
+        if: github.event_name == 'pull_request'
+        run: python check_pr_base.py "${{ github.event.pull_request.base.ref }}"
+
       # protect-tests' guard is a Node script; without node its runner
       # reports NOT-RUN, which this job treats as a failure.
       - uses: actions/setup-node@v4
