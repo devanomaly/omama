@@ -5,6 +5,10 @@
 *Omama, na cosmologia Yanomami, é o demiurgo que deu forma e regra ao mundo — o nome certo para
 um toolkit cujo trabalho é dar forma e regra ao comportamento de agentes.*
 
+**Caminho mais rápido: [QUICKSTART.pt-BR.md](QUICKSTART.pt-BR.md)** — do clone
+ao primeiro recibo, todo comando pré-executado, as armadilhas de instalação
+apontadas onde mordem.
+
 **Regra sem enforcement é desejo.**
 
 Omama é um pequeno conjunto de guardrails deterministas para trabalhar com agentes de código:
@@ -101,10 +105,6 @@ baratos. Uma alegação VERIFIED desonesta é cara — exige derrotar hash bindi
 rotas conhecidas de forja residual estão documentadas e fixadas em fixture, não escondidas.
 
 ## Como adotar
-
-**Caminho mais rápido: [QUICKSTART.pt-BR.md](QUICKSTART.pt-BR.md)** — do clone
-ao primeiro recibo, todo comando pré-executado, as armadilhas de instalação
-apontadas onde mordem.
 
 Cada peça é opt-in por repositório; nada aqui se instala sozinho. Adote o LOOP, não peças
 avulsas: work-order na raiz do repo, o gate no `.claude/settings.json` DO repo (por-repo, nunca
