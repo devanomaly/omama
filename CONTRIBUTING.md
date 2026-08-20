@@ -107,11 +107,17 @@ leg fails the job by design.
 **Branch off `master`'s tip, not off another PR branch.** A branch cut from an unmerged
 sibling silently carries that sibling's commits along; if this PR merges first, they land
 on `master` without having gone through their own review. `check_pr_base.py` fails the CI
-job (exit 1) when a PR's base ref isn't `master` — but it only checks the *base ref*, not
-where the branch was actually cut from: a branch aimed at `master` that was nonetheless
-forked from a stale local ref can still carry stray commits, and CI only sees them if they
-show up in the diff. Rebase (`git rebase origin/master`) before opening the PR if you are
-not sure your branch is current.
+job (exit 1) when a PR's base ref isn't `master`, and a second, ancestry-based mode
+(`--ancestry <head-sha> <head-ref>`) fails it (exit 1, sibling named) when any commit
+unique to the PR's head is also reachable from another unmerged remote branch — catching
+the cut-from-a-sibling case even when the declared base ref says `master`. Two things it
+still can't resolve: git ancestry is symmetric, so when two unmerged branches share
+commits the check can't tell which was cut from which — it names the overlap and flags
+both PRs, and a human decides which one is actually the fork; and once a sibling has
+merged, its commits become indistinguishable from legitimate `master` history, so
+contamination that survives until the sibling merges is not caught. Rebase
+(`git rebase origin/master`) before opening the PR if you are not sure your branch is
+current.
 
 ## Found a bypass?
 

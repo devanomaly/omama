@@ -30,6 +30,20 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Ancestry mode reads origin/master..<head> and other remote
+          # branches' full history -- a shallow (default depth-1) checkout
+          # would hide exactly what it needs to read. Push/dispatch don't
+          # need it, so leave those at the default.
+          fetch-depth: ${{ github.event_name == 'pull_request' && 0 || 1 }}
+
+      # fetch-depth: 0 unshallows the ref actually being built (the
+      # synthetic refs/pull/N/merge on pull_request events); it does not by
+      # itself guarantee every other branch is present as a remote-tracking
+      # ref, which the ancestry check also needs to find a sibling branch.
+      - name: Fetch full history and all remote branches (ancestry check)
+        if: github.event_name == 'pull_request'
+        run: git fetch --no-tags --prune origin '+refs/heads/*:refs/remotes/origin/*'
 
       - uses: actions/setup-python@v5
         with:
@@ -38,6 +52,13 @@ jobs:
       - name: PRs must branch off master
         if: github.event_name == 'pull_request'
         run: python check_pr_base.py "${{ github.event.pull_request.base.ref }}"
+
+      - name: PR branch must not be forked from an unmerged sibling
+        if: github.event_name == 'pull_request'
+        # Deliberately the PR head SHA/ref, not HEAD: on pull_request events
+        # HEAD is the synthetic refs/pull/N/merge, which is not the branch
+        # whose ancestry we're checking.
+        run: python check_pr_base.py --ancestry "${{ github.event.pull_request.head.sha }}" "${{ github.event.pull_request.head.ref }}"
 
       # protect-tests' guard is a Node script; without node its runner
       # reports NOT-RUN, which this job treats as a failure.
