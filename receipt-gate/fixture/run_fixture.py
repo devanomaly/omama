@@ -780,7 +780,7 @@ def plant_settings(repo, command):
         encoding="utf-8")
 
 
-def run_wiring(repo, timeout=120):
+def run_wiring(repo, timeout=120, extra=()):
     # Guard BEFORE probing: a missing check_wiring.py would make the
     # interpreter itself exit 2 ("can't open file"), which would fake a
     # NOT-RUN pass in the expect-2 case. Env-heavy fixtures fail loudly.
@@ -788,7 +788,8 @@ def run_wiring(repo, timeout=120):
           "FIXTURE ENV NOT ESTABLISHED: adapt/check_wiring.py does not "
           "exist -- wiring cases must fail loudly, not let python's own "
           "missing-file exit 2 impersonate NOT-RUN")
-    return subprocess.run([PY, str(WIRING), str(repo)], input="",
+    return subprocess.run([PY, str(WIRING), str(repo)] + list(extra),
+                          input="",
                           capture_output=True, text=True, encoding="utf-8",
                           errors="replace", cwd=str(repo), timeout=timeout)
 
@@ -863,19 +864,132 @@ def w_both_wrong(tmp):
           f"the two violations must name interpreter AND hook script: {vl}", r)
 
 
-def w_project_dir_forms(tmp):
-    repo = make_repo(tmp)
+HOST_FORMS = (("%CLAUDE_PROJECT_DIR%",) if os.name == "nt"
+              else ("$CLAUDE_PROJECT_DIR", "${CLAUDE_PROJECT_DIR}"))
+ALIEN_FORMS = (("$CLAUDE_PROJECT_DIR", "${CLAUDE_PROJECT_DIR}")
+               if os.name == "nt" else ("%CLAUDE_PROJECT_DIR%",))
+
+
+def _copy_gate_under(repo):
     hooks = repo / ".claude" / "hooks"
-    hooks.mkdir(parents=True)
+    hooks.mkdir(parents=True, exist_ok=True)
     shutil.copy(str(GATE), str(hooks / "receipt_gate.py"))
-    for form in ("$CLAUDE_PROJECT_DIR", "${CLAUDE_PROJECT_DIR}",
-                 "%CLAUDE_PROJECT_DIR%"):
+
+
+def w_project_dir_host_form(tmp):
+    """Only the form THIS host's hook shell actually expands (cmd.exe:
+    %VAR%; POSIX sh: $VAR and ${VAR}) may certify as WIRING-OK."""
+    repo = make_repo(tmp)
+    _copy_gate_under(repo)
+    for form in HOST_FORMS:
         plant_settings(
             repo, '"{0}" "{1}/.claude/hooks/receipt_gate.py"'.format(PY, form))
         r = run_wiring(repo)
         check(r.returncode == 0,
               f"{form} form: expected exit 0, got {r.returncode}", r)
         check("WIRING-OK" in r.stdout, f"{form} form: no WIRING-OK line", r)
+
+
+def w_project_dir_alien_form(tmp):
+    """A CLAUDE_PROJECT_DIR spelling the host's hook shell leaves LITERAL
+    (cmd.exe never expands $VAR/${VAR}; POSIX sh never expands %VAR%) is
+    dead wiring and must be a named VIOLATION, not a false WIRING-OK."""
+    repo = make_repo(tmp)
+    _copy_gate_under(repo)
+    for form in ALIEN_FORMS:
+        plant_settings(
+            repo, '"{0}" "{1}/.claude/hooks/receipt_gate.py"'.format(PY, form))
+        r = run_wiring(repo)
+        check(r.returncode == 1,
+              f"{form} form: wrong-shell spelling must be exit 1, "
+              f"got {r.returncode}", r)
+        vl = viol_lines(r)
+        check(any("CLAUDE_PROJECT_DIR" in v and "shell" in v for v in vl),
+              f"{form} form: violation must name the wrong-shell "
+              f"CLAUDE_PROJECT_DIR spelling: {vl}", r)
+
+
+def w_shell_operator(tmp):
+    """Shell operators and single-quote quoting are exec'd as argv by the
+    check but mean something else (or nothing) to the real hook shell --
+    they must be a named VIOLATION, never certified as a working gate."""
+    repo = make_repo(tmp)
+    for cmd in ('"{0}" "{1}" || true'.format(PY, GATE),
+                '"{0}" "{1}" ; exit 0'.format(PY, GATE),
+                "'{0}' '{1}'".format(PY, GATE)):
+        plant_settings(repo, cmd)
+        r = run_wiring(repo)
+        check(r.returncode == 1,
+              f"shell-ism {cmd!r} must be exit 1, got {r.returncode}", r)
+        vl = viol_lines(r)
+        check(any("shell" in v or "single-quote" in v for v in vl),
+              f"violation must name the shell-ism: {vl}", r)
+
+
+def w_local_settings(tmp):
+    """A gate wired only in .claude/settings.local.json (where the
+    machine-specific absolute interpreter path naturally lands) is live in
+    Claude Code and must be seen by the check."""
+    repo = make_repo(tmp)
+    d = repo / ".claude"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "settings.local.json").write_text(json.dumps(
+        {"hooks": {"Stop": [{"hooks": [
+            {"type": "command",
+             "command": '"{0}" "{1}"'.format(PY, GATE)}]}]}}, indent=1),
+        encoding="utf-8")
+    r = run_wiring(repo)
+    check(r.returncode == 0,
+          f"gate in settings.local.json only: expected exit 0, "
+          f"got {r.returncode}", r)
+    check("WIRING-OK" in r.stdout, "no WIRING-OK line on stdout", r)
+
+
+def w_sibling_reported(tmp):
+    """One live Stop hook must not silently swallow a broken sibling: the
+    check exits 0 (documented at-least-one contract) but the sibling's
+    failures are printed as WARNING lines, not discarded."""
+    repo = make_repo(tmp)
+    ghost_cmd = '"{0}" "{1}"'.format(Path(tmp) / "ghost" / "python.exe",
+                                     Path(tmp) / "ghost" / "receipt_gate.py")
+    good_cmd = '"{0}" "{1}"'.format(PY, GATE)
+    d = repo / ".claude"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "settings.json").write_text(json.dumps(
+        {"hooks": {"Stop": [{"hooks": [
+            {"type": "command", "command": ghost_cmd},
+            {"type": "command", "command": good_cmd}]}]}}, indent=1),
+        encoding="utf-8")
+    r = run_wiring(repo)
+    check(r.returncode == 0, f"expected exit 0, got {r.returncode}", r)
+    check("WIRING-OK" in r.stdout, "no WIRING-OK line on stdout", r)
+    warns = [ln for ln in r.stderr.splitlines()
+             if ln.startswith("WARNING:")]
+    check(any("sibling" in w for w in warns),
+          f"broken sibling hook must be reported as a WARNING line, "
+          f"got stderr {r.stderr!r}", r)
+
+
+def w_static_only(tmp):
+    """--static-only resolves paths WITHOUT executing the registered
+    command (for CI that checks out untrusted PRs): clean wiring is
+    WIRING-STATIC-OK, a dead path is still a named VIOLATION."""
+    repo = make_repo(tmp)
+    plant_settings(repo, '"{0}" "{1}"'.format(PY, GATE))
+    r = run_wiring(repo, extra=("--static-only",))
+    check(r.returncode == 0,
+          f"static-only on clean wiring: expected exit 0, "
+          f"got {r.returncode}", r)
+    check("WIRING-STATIC-OK" in r.stdout,
+          "no WIRING-STATIC-OK line on stdout", r)
+    plant_settings(repo, '"{0}" "{1}"'.format(
+        Path(tmp) / "ghost" / "python.exe", GATE))
+    r = run_wiring(repo, extra=("--static-only",))
+    check(r.returncode == 1,
+          f"static-only on dead interpreter: expected exit 1, "
+          f"got {r.returncode}", r)
+    check(any("interpreter" in v for v in viol_lines(r)),
+          "violation does not name the interpreter", r)
 
 
 def w_settings_missing(tmp):
@@ -902,7 +1016,9 @@ def w_gate_does_not_answer(tmp):
     exists and exits 2 without the RECEIPT-GATE BLOCK[BAD-INPUT] block
     (e.g. a Windows-Store python3 stub) is NOT a present gate."""
     repo = make_repo(tmp)
-    plant_settings(repo, f'"{PY}" -c "import sys; sys.exit(2)"')
+    # No semicolon: a `;` would (correctly) trip the shell-operator
+    # rejection before the answer check this case exists to pin.
+    plant_settings(repo, f'"{PY}" -c "exit(2)"')
     r = run_wiring(repo)
     check(r.returncode == 1,
           f"exit-2-without-the-block must be a violation, got {r.returncode}", r)
@@ -990,8 +1106,13 @@ CASES = [
     ("wiring: wrong interpreter path is 1 named VIOLATION", w_wrong_interpreter),
     ("wiring: wrong script path is 1 named VIOLATION", w_wrong_script),
     ("wiring: both wrong reports BOTH violations", w_both_wrong),
-    ("wiring: $CLAUDE_PROJECT_DIR / ${} / %% forms expand clean", w_project_dir_forms),
-    ("wiring: missing settings.json is NOT-RUN (exit 2)", w_settings_missing),
+    ("wiring: host-shell CLAUDE_PROJECT_DIR form expands clean", w_project_dir_host_form),
+    ("wiring: wrong-shell CLAUDE_PROJECT_DIR form is a named VIOLATION", w_project_dir_alien_form),
+    ("wiring: shell operators / single-quote quoting are named VIOLATIONs", w_shell_operator),
+    ("wiring: gate wired only in settings.local.json is seen", w_local_settings),
+    ("wiring: broken sibling hook is WARNED about, not swallowed", w_sibling_reported),
+    ("wiring: --static-only resolves paths without executing the command", w_static_only),
+    ("wiring: missing settings(.local).json is NOT-RUN (exit 2)", w_settings_missing),
     ("wiring: settings without a Stop hook is 'gate absent'", w_no_stop_hook),
     ("wiring: exit 2 without the BAD-INPUT block is NOT a present gate", w_gate_does_not_answer),
 ]

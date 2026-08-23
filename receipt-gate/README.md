@@ -2,7 +2,7 @@
 
 > Docs for this piece: **README** (promise, command, states, coverage) ·
 > [adapt/README.md](adapt/README.md) (how to install — per-repo, with a
-> mandatory self-test). The evidence is the re-runnable fixture (62 cases) +
+> mandatory self-test). The evidence is the re-runnable fixture (67 cases) +
 > the empirical spike ([fixture/spike/SPIKE.md](fixture/spike/SPIKE.md)).
 
 ## The decision this piece changes
@@ -46,7 +46,7 @@ the registered Stop command answers the gate's `BAD-INPUT` block on empty
 stdin, re-runnable from the adopting repo's CI). Fixture:
 
 ```
-python3 fixture/run_fixture.py        # exit 0 = gate correct (62 cases)
+python3 fixture/run_fixture.py        # exit 0 = gate correct (67 cases)
 ```
 
 | Gate exit | Means |
@@ -114,13 +114,22 @@ otherwise structurally valid S3 close.
   machine) still leaves the gate silently absent until
   `adapt/check_wiring.py` is run again — the check DETECTS dead wiring at
   the moment it runs, nothing prevents it; re-run it (CI of the adopting
-  repo is the natural place).
+  repo is the natural place — with `--static-only` if that CI checks out
+  untrusted PRs, because the default mode EXECUTES the registered command).
+- **A hook wired only on the OTHER platform's shell spelling**
+  (`$CLAUDE_PROJECT_DIR` on a Windows host, `%CLAUDE_PROJECT_DIR%` on
+  POSIX) is certified only on the host whose shell expands it — the check
+  names the wrong-shell spelling as a VIOLATION on the host where it is
+  dead, but a check run only on one platform says nothing about the other.
+- **User-level `~/.claude` settings are not read** by the wiring check —
+  the install rule is per-repo; a gate wired globally (against
+  adapt/README's explicit rule) is invisible to it.
 
 ## Coverage
 
 | Promised | Mechanically covered | Not covered / known bypass | Classification |
 |---|---|---|---|
-| VERIFIED without backing impossible via close | 62 cases: red blocks, stale blocks, planted receipts deleted (start, block-exit, guard route) | forgery on a WIP turn persists | fixed KNOWN-LIMITATION |
+| VERIFIED without backing impossible via close | 67 cases: red blocks, stale blocks, planted receipts deleted (start, block-exit, guard route) | forgery on a WIP turn persists | fixed KNOWN-LIMITATION |
 | Honest close always reachable | fixtures: broken/unreadable/non-git/no-git card — all exit 0 with a conservative receipt | — | covered |
 | Binding catches verify mutation | tracked, untracked-dir (-uall), CARD family, stash, assume-unchanged | non-git cp-restore; inside .git | accepted limitation |
-| Fail-closed | pyyaml absent, git absent, empty stdin, unborn HEAD, unreadable card ⇒ named exit 2 | broken wiring (shell exit≠2) — resolved by: adapt/check_wiring.py (+ self-test); an interpreter that vanishes after install stays undetected until the check is re-run (detection, not prevention) | accepted limitation |
+| Fail-closed | pyyaml absent, git absent, empty stdin, unborn HEAD, unreadable card ⇒ named exit 2 | broken wiring (shell exit≠2) — resolved by: adapt/check_wiring.py (+ self-test; reads settings.json AND settings.local.json, host-shell-aware CLAUDE_PROJECT_DIR, rejects shell operators/single quotes, warns on broken sibling hooks); an interpreter that vanishes after install stays undetected until the check is re-run (detection, not prevention); `--static-only` mode does NOT prove the gate answers | accepted limitation |

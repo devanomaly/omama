@@ -74,14 +74,29 @@ ausente ou bloqueando para sempre:
 O gate precisa de um repo git com pelo menos um commit (HEAD não-nascido
 falha-fechado, por design).
 
-## 4. Prove o gate: vermelho, depois verde (obrigatório — não pule)
+## 4. Prove o gate: cheque de fiação, depois vermelho, depois verde (obrigatório — não pule)
 
 Uma instalação que você não viu bloquear não está instalada. Esta seção é o
 self-test que o [adapt/README.md](receipt-gate/adapt/README.md) torna
-obrigatório — rode o gate pela string de comando EXATA registrada no seu
-`settings.json`, copiada e colada, não redigitada.
+obrigatório — primeiro o cheque mecânico de fiação, depois rode o gate pela
+string de comando EXATA registrada no seu `settings.json`, copiada e colada,
+não redigitada.
 
-Adicione o snippet do gitignore primeiro — um card é por tarefa e por
+**Passo 1 — cheque de fiação.** Da raiz do seu repo:
+
+```
+python3 <OMAMA>/receipt-gate/adapt/check_wiring.py
+```
+
+**Esperado: `WIRING-OK ...` e exit 0.** Ele resolve o comando de Stop hook
+registrado e o executa a seco com stdin vazio — interpretador ausente,
+caminho de script errado, ou um `CLAUDE_PROJECT_DIR` grafado para o shell da
+outra plataforma vira uma `VIOLATION` nomeada (exit 1) em vez da ausência
+silenciosa 127/9009. (Ele EXECUTA o comando registrado — esse é o ponto;
+detalhes, uso em CI e `--static-only` no
+[adapt/README.md](receipt-gate/adapt/README.md).)
+
+**Passos 2–3 — vermelho, depois verde.** Adicione o snippet do gitignore primeiro — um card é por tarefa e por
 máquina, não algo para versionar (veja
 [work-order/ADOPTION.md](work-order/ADOPTION.md#the-card-and-its-receipt-stay-local)
 para o porquê):
@@ -142,8 +157,9 @@ disco** com comando de verify, exit code e hashes da árvore amarrados juntos.
 registro durável. Closes honestos (`FAILED: <razão>`, `UNVERIFIED: <razão>`)
 sempre passam e sempre deixam recibo também.
 
-Se você viu o BLOCK vermelho **e** o VERIFIED verde, o loop está instalado.
-Um sem o outro significa fiação quebrada — ver a seção de self-test do
+Se você viu o WIRING-OK, o BLOCK vermelho **e** o VERIFIED verde, o loop
+está instalado. Um resultado vermelho/verde sem o outro significa fiação
+quebrada — ver a seção de self-test do
 [adapt/README.md](receipt-gate/adapt/README.md) para o que cada resultado
 parcial significa.
 

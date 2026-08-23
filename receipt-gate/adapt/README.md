@@ -43,18 +43,38 @@ is the reference (env vars, troubleshooting, rationale).
    python3 check_wiring.py <repo-root>   # repo-root defaults to the cwd's git toplevel
    ```
 
-   It reads the repo's `.claude/settings.json`, resolves every Stop hook
-   command (expanding `$CLAUDE_PROJECT_DIR` / `${CLAUDE_PROJECT_DIR}` /
-   `%CLAUDE_PROJECT_DIR%` to the repo root), and exits 0 **only** when the
-   exact registered command, dry-invoked with EMPTY stdin, answers the
-   gate's own `RECEIPT-GATE BLOCK[BAD-INPUT]` block on exit 2 — the block
-   NAME is matched, not just the exit code (a Windows-Store python3 stub
-   also exits non-zero). A missing interpreter or wrong script path is a
-   named `VIOLATION` (exit 1) instead of the silent 127/9009 absence; a
-   missing/unreadable settings file is NOT-RUN (exit 2). Re-run it after an
-   interpreter upgrade and on every fresh clone — the adopting repo's CI is
-   the natural place; the check DETECTS dead wiring, nothing prevents it
-   from going dead later.
+   It reads the repo's `.claude/settings.json` AND `settings.local.json`
+   (Claude Code merges them — the machine-specific absolute path from step
+   3 naturally lands in the untracked local file), resolves every Stop
+   hook command, and exits 0 **only** when the exact registered command,
+   dry-invoked with EMPTY stdin, answers the gate's own
+   `RECEIPT-GATE BLOCK[BAD-INPUT]` block on exit 2 — the block NAME is
+   matched, not just the exit code (a Windows-Store python3 stub also
+   exits non-zero). `CLAUDE_PROJECT_DIR` is expanded **host-shell-aware**:
+   only the spelling THIS host's hook shell expands counts
+   (`%CLAUDE_PROJECT_DIR%` under cmd.exe on Windows,
+   `$CLAUDE_PROJECT_DIR` / `${CLAUDE_PROJECT_DIR}` under POSIX sh) — the
+   other shell's spelling is left literal by the real shell, so it is dead
+   wiring and a named `VIOLATION`, as are shell operators (`|| true` would
+   swallow the gate's blocking exit) and single-quote quoting (cmd.exe
+   treats `'` as a literal character). A missing interpreter or wrong
+   script path is a named `VIOLATION` (exit 1) instead of the silent
+   127/9009 absence; when neither settings file is readable the result is
+   NOT-RUN (exit 2). With several Stop hooks, one working gate is enough
+   for exit 0, but each broken sibling's failures are printed as
+   `WARNING:` lines — read them. Re-run the check after an interpreter
+   upgrade and on every fresh clone — the adopting repo's CI is the
+   natural place; the check DETECTS dead wiring, nothing prevents it from
+   going dead later.
+
+   **SECURITY — the default mode EXECUTES the registered command string it
+   finds in the settings files** (that dry run is what proves the gate
+   answers). Do not run it against a checkout you do not trust — e.g. CI
+   that builds fork PRs, where the PR can rewrite `.claude/settings.json`
+   to any command. Use `--static-only` there: it resolves the interpreter
+   and script paths without executing anything and exits 0 with
+   `WIRING-STATIC-OK` — which does NOT prove the gate answers; keep the
+   full check (and steps 2–3) on trusted machines.
 
    **Steps 2–3 — red AND green close test**, running the EXACT command
    string registered in settings.json (copy-pasted, not retyped): (a) a
