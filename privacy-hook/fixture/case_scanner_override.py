@@ -26,10 +26,20 @@ Three assertions, one throwaway repo:
      when the override is ignored: the default scanner is present and
      healthy, so the commit sails through with rc=0.
 
+  4. announced -- the knob is read from the AMBIENT environment, so an
+     exported value (shell profile, direnv, CI job env, a stale launcher
+     from another repo) lives in no diff and no reviewer ever sees it.
+     Existence is validated, identity is not: an override aimed at any
+     readable file makes the hook a no-op. That residual is accepted;
+     doing it SILENTLY is not. With the knob set, the wrapper must say so
+     on stderr. Red when the wrapper only defaults quietly: an override
+     pointing at an empty script commits the planted violation with rc=0
+     and zero output.
+
 Assertion 3 also charges the pasteable-output promise on the new
 diagnostic: no traceback, and no absolute path in the message.
 
-Exits 0 when all three hold, 1 otherwise, 2 if the fixture itself could
+Exits 0 when all four hold, 1 otherwise, 2 if the fixture itself could
 not be set up.
 """
 import os
@@ -151,6 +161,34 @@ def main():
     else:
         print("PASS: missing scanner override fails closed with "
               "`BLOCKED hook-error missing-scanner`")
+
+    # --- 4. an override that IS honoured must announce itself -----------
+    # `innocuous.py` exists and is readable, so the existence check passes
+    # and the wrapper runs it: an empty script scans nothing and exits 0.
+    # The commit going through is the documented residual (existence is
+    # validated, identity is not). What is charged here is that the
+    # redirection is OBSERVABLE -- the value came from the ambient
+    # environment and appears in no diff.
+    lib.write_file(repo, "innocuous.py", b"")
+    lib.write_file(repo, VIOLATING_PATH, VIOLATION)
+    lib.git(repo, "add", VIOLATING_PATH)
+    r = commit(repo, "override honoured: must be announced",
+               scanner="innocuous.py")
+    out = r.stdout + r.stderr
+    if "privacy-hook: scanner =" not in out:
+        sys.stderr.write(
+            "FAIL: PRIVACY_HOOK_SCANNER was honoured SILENTLY -- an ambient "
+            "override redirected the scan and nothing on stdout/stderr said "
+            "so (rc=%d)\n%s\n" % (r.returncode, out or "<no output>"))
+        ok = False
+    elif "innocuous.py" not in out:
+        sys.stderr.write(
+            "FAIL: the override notice does not name the value the scan was "
+            "redirected to:\n%s\n" % out)
+        ok = False
+    else:
+        print("PASS: an honoured PRIVACY_HOOK_SCANNER announces itself on "
+              "stderr")
 
     if ok:
         lib.rmtree(os.path.dirname(repo))

@@ -81,6 +81,16 @@ Plain git repo (no `pre-commit` framework):
    `BLOCKED hook-error missing-scanner` (exit 1) — it never falls back
    to the default location silently. Fixture:
    `fixture/case_scanner_override.py`.
+
+   Whenever the variable is set, every commit prints
+   `notice privacy-hook: scanner = <value> …` on stderr. That line is
+   expected once you have done step 2c — and it is the **only** thing
+   that makes the knob visible: it is an environment variable, so a
+   value exported by a shell profile, a direnv file, a CI job env or a
+   launcher left over from another repo redirects the scan without
+   appearing in any diff. A notice on a repo where nobody configured one
+   means something in the environment is choosing the scanner; the hook
+   validates that the file exists, never that it is `scan_staged.py`.
 3. **Recommended:** install the same wrapper file under the name
    `pre-merge-commit` as well (this piece ships one hook file; the
    second name is a copy of it). git doesn't call `pre-commit` on an

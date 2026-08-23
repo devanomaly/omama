@@ -15,14 +15,28 @@ dir="$(git rev-parse --show-toplevel)" || {
 
 # THE ONE KNOB: where scan_staged.py lives. Default = the adopting repo
 # root. An adopter who vendors the scanner elsewhere (`tools/`, to keep
-# the root clean) exports PRIVACY_HOOK_SCANNER instead of editing this
-# file -- an edited wrapper is no longer byte-identical with upstream,
-# and byte-identity is what makes "update" a copy instead of a merge.
-# Set it per repo (`git config` is not read here on purpose: the value is
-# a path this script must trust, and one line at the top of the hook is
-# reviewable in the same diff as the hook). A relative value resolves
-# against the repo root -- git runs hooks from the top of the worktree.
-PRIVACY_HOOK_SCANNER="${PRIVACY_HOOK_SCANNER:-$dir/scan_staged.py}"
+# the root clean) sets PRIVACY_HOOK_SCANNER instead of editing this file
+# -- an edited wrapper is no longer byte-identical with upstream, and
+# byte-identity is what makes "update" a copy instead of a merge.
+# (`git config` is not read here on purpose: the value is a path this
+# script must trust, and reading it from one place keeps the trust
+# surface one line long.) A relative value resolves against the repo
+# root -- git runs hooks from the top of the worktree.
+#
+# The knob is read from the AMBIENT ENVIRONMENT, so its value lives in
+# no diff: a shell profile, a direnv file, a CI job env or a stale
+# launcher can set it for every repo on the machine, and no reviewer of
+# this hook would ever see it. Existence is validated below, identity is
+# NOT -- an override aimed at any readable file runs that file, and an
+# empty one turns the hook into a no-op. That residual is documented and
+# accepted (README, "What it does NOT catch"); doing it silently is not.
+# So whenever the knob is set, the redirection is ANNOUNCED on stderr,
+# naming the value, before anything is scanned.
+if [ -n "${PRIVACY_HOOK_SCANNER:-}" ]; then
+  echo "notice privacy-hook: scanner = $PRIVACY_HOOK_SCANNER (PRIVACY_HOOK_SCANNER is set; the default is the repo root's scan_staged.py)" >&2
+else
+  PRIVACY_HOOK_SCANNER="$dir/scan_staged.py"
+fi
 
 # The override is VALIDATED, and it fails CLOSED: an override that points
 # at nothing is a misconfiguration, and silently falling back to the

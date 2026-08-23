@@ -139,10 +139,19 @@ Design properties (case-by-case receipts in
   `BLOCKED hook-error missing-scanner`, exit 1, never a silent fallback
   to the default location (a hook that scans a file the adopter did not
   choose is the failure this piece exists to prevent). The diagnostic
-  names the knob, not the path, so hook output stays pasteable. Both
-  polarities in `fixture/case_scanner_override.py`: the relocated
-  scanner produces the default location's verdict **byte for byte**, and
-  a broken override blocks with the named `hook-error`.
+  names the knob, not the path, so hook output stays pasteable. And an
+  override that IS honoured **announces itself**: whenever the variable
+  is set, the wrapper writes
+  `notice privacy-hook: scanner = <value> (PRIVACY_HOOK_SCANNER is set; …)`
+  to stderr before scanning. The value comes from the ambient
+  environment — a shell profile, a direnv file, a CI job env — so unlike
+  the wrapper it appears in no diff; the notice is the only place a
+  redirected scan becomes visible, and an unexpected one on a repo you
+  never configured is the signal. Three polarities in
+  `fixture/case_scanner_override.py`: the relocated scanner produces the
+  default location's verdict **byte for byte**, a broken override blocks
+  with the named `hook-error`, and an honoured override prints the
+  notice naming its value.
 - **The wrapper ends in `exec`.** Nothing written after it runs, and it
   fails silently that way — so a repo that already has a `pre-commit`
   runs its own checks BEFORE the scan. That is an
@@ -266,11 +275,25 @@ it — none of these is a "generic limitation."
 - **A scanner override that points at the wrong script.**
   `PRIVACY_HOOK_SCANNER` is checked for **existence**, not identity: an
   override aimed at any readable file runs that file and the commit is
-  decided on its terms. Not a new privilege (whoever can set the hook's
-  environment can already run code as the committing user), but a typo
-  that lands on another script is invisible. Resolved by: **review of
-  the versioned hook** (ADOPTION step 2a puts it in a diff) and
-  **CI/pre-receive**, which does not read the local hook at all.
+  decided on its terms — an empty file makes the hook a no-op that
+  passes the existence check. Not a new privilege (whoever can set the
+  hook's environment can already run code as the committing user), but a
+  typo that lands on another script decides commits on its terms.
+  Reviewing the versioned hook does **not** contain this: the knob is
+  read from the **ambient environment**, so a value exported by a shell
+  profile, a direnv file, a CI job env or a stale launcher from another
+  repo lives in no diff and redirects the scan in every repo on that
+  machine. Reduced by: the wrapper **announcing** the value on stderr
+  whenever the variable is set (`fixture/case_scanner_override.py`
+  charges it) — that turns a silent no-op into a line the committer
+  sees, but it is a notice, not a check, and nothing verifies that what
+  the value points at is `scan_staged.py`. Resolved by:
+  **CI/pre-receive**, which does not read the local hook or its
+  environment at all.
+  <br>Second-order: the notice echoes the knob's value verbatim, so an
+  adopter who sets an absolute path gets that path in the hook's output
+  — the only place this piece prints one, and it prints a value the
+  adopter typed, never one it discovered.
 - **A chained hook that runs the scan first.** The wrapper ends in
   `exec`, so a combined `pre-commit` that calls it before the repo's own
   checks turns those checks into dead code — silently. Nothing in this
@@ -303,7 +326,7 @@ vs `.git/hooks`), and where `scan_staged.py` lives.
 | Config exemption restricted to self-referential layers | `secret-inside-deny-config`, `tokens-file-redirect`, `case-variant-config-name` (rc=1); P11 (rc=1); mutations M2/M3 go red only on these cases | content that only the team layers would catch, inside `tokens_file` itself, passes (P10, rc=0) — route: PR review of the config | defect |
 | Pasteable output: no matched value, no absolute path, no traceback | absence of absolute path is charged on **all** 55 cases; `Traceback` forbidden on the 2 malformed-config cases; echoing the value forbidden on 6 cases | non-echo of the value is not charged on the remaining rules | not assessed |
 | Automatic merge covered via `pre-merge-commit` | none — it's an adoption instruction | merge, `git am`, and `git rebase` not probed this round | not assessed |
-| Scanner location overridable without editing the wrapper | `fixture/case_scanner_override.py`: a scanner moved to `tools/` and reached through `PRIVACY_HOOK_SCANNER` reproduces the default location's `BLOCKED` lines exactly; an override pointing at a missing file blocks with `hook-error missing-scanner` (rc=1), no traceback, no absolute path | existence is validated, identity is not — an override aimed at another readable script runs that script | defect |
+| Scanner location overridable without editing the wrapper | `fixture/case_scanner_override.py`: a scanner moved to `tools/` and reached through `PRIVACY_HOOK_SCANNER` reproduces the default location's `BLOCKED` lines exactly; an override pointing at a missing file blocks with `hook-error missing-scanner` (rc=1), no traceback, no absolute path; an override that IS honoured prints `notice privacy-hook: scanner = <value>` on stderr, charged in the same case | existence is validated, identity is not — an override aimed at another readable script runs that script, and the notice announces the redirection without checking it; the value comes from the ambient environment, so no diff carries it — route: CI / pre-receive | defect |
 | Hook active in every clone (versioned `.githooks/` + `core.hooksPath`) | none — the activation is a per-clone `git config`, and `.git/config` is not versioned | a clone that never ran it has no hook and nothing warns — route: CI / pre-receive | not assessed |
 | Scan runs after an existing `pre-commit`'s own checks | none — chaining is an adoption instruction with a verbatim example | a combined hook that calls the wrapper first makes its own checks dead code (`exec`), undetected — route: PR review of the versioned hook | not assessed |
 

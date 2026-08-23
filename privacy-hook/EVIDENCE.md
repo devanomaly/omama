@@ -1,8 +1,9 @@
 # 01 — privacy-hook · EVIDENCE
 
 Probes, cases, and red-green history. The [README](README.md) carries
-the promise; this file carries the receipts. All are from real runs on
-2026-08-18: `fixture/check.py` with exit 0
+the promise; this file carries the receipts. All are from real runs —
+2026-08-18 unless a section says otherwise (the scanner-override section
+is from 2026-08-23): `fixture/check.py` with exit 0
 (`corpus: 55 cases (28 block / 27 pass), 0 failed`) and standalone
 probes (`python3`, each in a temporary git repo with the hook installed
 byte-for-byte by the same `lib.make_repo` used by the corpus). `rc` is
@@ -13,15 +14,17 @@ scanner.
 
 ```
 cd privacy-hook/fixture
-python3 check.py          # smoke cases + gitlink + full corpus
-python3 case_corpus.py    # tabulated corpus only
-python3 case_gitlink.py   # gitlink case only (both polarities)
+python3 check.py                    # smoke cases + gitlink + override + full corpus
+python3 case_corpus.py              # tabulated corpus only
+python3 case_gitlink.py             # gitlink case only (both polarities)
+python3 case_scanner_override.py    # PRIVACY_HOOK_SCANNER case only (four assertions)
 ```
 
-`check.py` runs four scripts and charges each one's polarity:
+`check.py` runs five scripts and charges each one's polarity:
 `case_violation.py` (fake AWS key + deny-listed token — **must fail**),
 `case_clean.py` (ordinary Python file — **must pass**),
-`case_gitlink.py` (see history below), and `case_corpus.py`. In the
+`case_gitlink.py` and `case_scanner_override.py` (both self-reporting,
+see the sections below), and `case_corpus.py`. In the
 corpus, each case gets **its own** temporary repo (inside
 `fixture/.tmp/`, never outside it), is staged the way the case defines
 it (`git add`, `git mv`, `git rm`, `git update-index`, nested
@@ -181,6 +184,39 @@ New fixture: `fixture/case_gitlink.py` (both polarities), run by
 OK; direct run of `check.py` at this doc's close:
 `corpus: 55 cases (28 block / 27 pass), 0 failed`, exit 0, with
 `PASS: gitlink .env blocked, innocent gitlink allowed`.
+
+## Scanner-location override (`PRIVACY_HOOK_SCANNER`), 2026-08-23
+
+The wrapper used to hardcode `<repo-root>/scan_staged.py`, so an adopter
+who vendors the scanner under `tools/` had to edit the wrapper body —
+and an edited wrapper is no longer byte-identical with upstream. It now
+reads one knob. `fixture/case_scanner_override.py` charges four
+assertions in one throwaway repo (`lib.make_repo`, hook installed
+byte-for-byte, real `git commit`; `rc` is git's own exit code):
+
+| # | Route | Charged output | rc |
+|---|---|---|---|
+| 1 | baseline — scanner at the default location, `AWS_ACCESS_KEY_ID=AKIA…` staged | `BLOCKED aws-access-key config/deploy.env` | 1 |
+| 2 | same violation, scanner moved to `tools/`, `PRIVACY_HOOK_SCANNER=tools/scan_staged.py` | **the same line, byte for byte** — the case charges the output, not the polarity, because an ignored override also fails, just with an interpreter error | 1 |
+| 3 | override pointing at a file that does not exist, clean content staged | `BLOCKED hook-error missing-scanner (no scan_staged.py at the configured location; set PRIVACY_HOOK_SCANNER to where it lives)`; no `Traceback`, no absolute path | 1 |
+| 4 | override pointing at an **existing** file (`innocuous.py`, zero bytes), violation staged | `notice privacy-hook: scanner = innocuous.py (PRIVACY_HOOK_SCANNER is set; the default is the repo root's scan_staged.py)` on stderr | 0 |
+
+Assertion 4 red-green (external review finding, same date). The knob is
+read from the ambient environment — a shell profile, a direnv file, a CI
+job env, a stale launcher from another repo — so its value appears in no
+diff, and the existence check passes for **any** readable file:
+
+| Wrapper | Commit of the planted key with `PRIVACY_HOOK_SCANNER=innocuous.py` |
+|---|---|
+| before (default applied quietly) | rc=0, **zero output on both streams**, `git show --stat HEAD` shows `config/deploy.env` in the commit — the fixture's literal red: `FAIL: PRIVACY_HOOK_SCANNER was honoured SILENTLY -- an ambient override redirected the scan and nothing on stdout/stderr said so (rc=0)` |
+| after (notice) | rc=0 and the same commit — identity is still not validated — but stderr now carries the `notice privacy-hook: scanner = innocuous.py …` line above |
+
+What that buys and what it does not: the notice makes a redirected scan
+**observable**, it does not make it **checked**. The residual row
+"scanner override that points at the wrong script" stays a `defect`, and
+its route stays CI / pre-receive — reviewing the versioned hook does not
+cover a value that lives in the environment. Direct run at this
+section's close: `case_scanner_override.py` exit 0, four `PASS` lines.
 
 ## `pre-commit` wrapper receipts
 
