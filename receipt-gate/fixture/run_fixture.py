@@ -26,6 +26,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 GATE = HERE.parent / "receipt_gate.py"
+WIRING = HERE.parent / "adapt" / "check_wiring.py"
 ROOT = HERE.parent.parent
 VALIDATOR = ROOT / "work-order" / "validate_work_order.py"
 CHECKER = ROOT / "output-discipline" / "scripts" / "check_artifact.py"
@@ -768,6 +769,147 @@ def b_unexpected_untracked_removed(tmp):
           "removed untracked file not named in the block detail", r)
 
 
+# ------------------------------------------------- wiring check (adapt/)
+
+def plant_settings(repo, command):
+    d = Path(repo) / ".claude"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "settings.json").write_text(json.dumps(
+        {"hooks": {"Stop": [{"hooks": [
+            {"type": "command", "command": command}]}]}}, indent=1),
+        encoding="utf-8")
+
+
+def run_wiring(repo, timeout=120):
+    # Guard BEFORE probing: a missing check_wiring.py would make the
+    # interpreter itself exit 2 ("can't open file"), which would fake a
+    # NOT-RUN pass in the expect-2 case. Env-heavy fixtures fail loudly.
+    check(WIRING.exists(),
+          "FIXTURE ENV NOT ESTABLISHED: adapt/check_wiring.py does not "
+          "exist -- wiring cases must fail loudly, not let python's own "
+          "missing-file exit 2 impersonate NOT-RUN")
+    return subprocess.run([PY, str(WIRING), str(repo)], input="",
+                          capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", cwd=str(repo), timeout=timeout)
+
+
+def viol_lines(r):
+    return [ln for ln in r.stderr.splitlines() if ln.startswith("VIOLATION:")]
+
+
+def w_clean(tmp):
+    repo = make_repo(tmp)
+    plant_settings(repo, '"{0}" "{1}"'.format(PY, GATE))
+    r = run_wiring(repo)
+    check(r.returncode == 0, f"expected exit 0, got {r.returncode}", r)
+    check("WIRING-OK" in r.stdout, "no WIRING-OK line on stdout", r)
+
+
+def w_backslash_survival(tmp):
+    """shlex.split(posix=True) must let a double-quoted single-backslash
+    path through (only \\\\ and \\" are escapes inside double quotes). On
+    Windows the real gate path already carries single backslashes; on POSIX
+    the backslash is planted INSIDE a filename (legal there)."""
+    repo = make_repo(tmp)
+    if os.name == "nt":
+        script = str(GATE)
+        check("\\" in script, "FIXTURE ENV: expected backslashes in the "
+              "Windows gate path, got " + script)
+    else:
+        script = str(Path(tmp) / "wired\\receipt_gate.py")
+        shutil.copy(str(GATE), script)
+    plant_settings(repo, '"{0}" "{1}"'.format(PY, script))
+    r = run_wiring(repo)
+    check(r.returncode == 0,
+          f"single-backslash quoted path did not survive parsing, "
+          f"got exit {r.returncode}", r)
+    check("WIRING-OK" in r.stdout, "no WIRING-OK line on stdout", r)
+
+
+def w_wrong_interpreter(tmp):
+    repo = make_repo(tmp)
+    ghost = str(Path(tmp) / "ghost" / "python.exe")
+    plant_settings(repo, '"{0}" "{1}"'.format(ghost, GATE))
+    r = run_wiring(repo)
+    check(r.returncode == 1, f"expected exit 1, got {r.returncode}", r)
+    vl = viol_lines(r)
+    check(len(vl) == 1, f"expected exactly 1 VIOLATION line, got {vl}", r)
+    check("interpreter" in vl[0], "violation does not name the interpreter", r)
+
+
+def w_wrong_script(tmp):
+    repo = make_repo(tmp)
+    ghost = str(Path(tmp) / "ghost" / "receipt_gate.py")
+    plant_settings(repo, '"{0}" "{1}"'.format(PY, ghost))
+    r = run_wiring(repo)
+    check(r.returncode == 1, f"expected exit 1, got {r.returncode}", r)
+    vl = viol_lines(r)
+    check(len(vl) == 1, f"expected exactly 1 VIOLATION line, got {vl}", r)
+    check("hook script" in vl[0], "violation does not name the hook script", r)
+
+
+def w_both_wrong(tmp):
+    repo = make_repo(tmp)
+    plant_settings(repo, '"{0}" "{1}"'.format(
+        Path(tmp) / "ghost" / "python.exe",
+        Path(tmp) / "ghost" / "receipt_gate.py"))
+    r = run_wiring(repo)
+    check(r.returncode == 1, f"expected exit 1, got {r.returncode}", r)
+    vl = viol_lines(r)
+    check(len(vl) == 2,
+          f"both failures must be reported, not just the first: {vl}", r)
+    check(any("interpreter" in v for v in vl)
+          and any("hook script" in v for v in vl),
+          f"the two violations must name interpreter AND hook script: {vl}", r)
+
+
+def w_project_dir_forms(tmp):
+    repo = make_repo(tmp)
+    hooks = repo / ".claude" / "hooks"
+    hooks.mkdir(parents=True)
+    shutil.copy(str(GATE), str(hooks / "receipt_gate.py"))
+    for form in ("$CLAUDE_PROJECT_DIR", "${CLAUDE_PROJECT_DIR}",
+                 "%CLAUDE_PROJECT_DIR%"):
+        plant_settings(
+            repo, '"{0}" "{1}/.claude/hooks/receipt_gate.py"'.format(PY, form))
+        r = run_wiring(repo)
+        check(r.returncode == 0,
+              f"{form} form: expected exit 0, got {r.returncode}", r)
+        check("WIRING-OK" in r.stdout, f"{form} form: no WIRING-OK line", r)
+
+
+def w_settings_missing(tmp):
+    repo = make_repo(tmp)
+    r = run_wiring(repo)
+    check(r.returncode == 2,
+          f"missing settings.json must be NOT-RUN, got {r.returncode}", r)
+    check("NOT-RUN" in r.stderr, "exit 2 without a NOT-RUN line", r)
+
+
+def w_no_stop_hook(tmp):
+    repo = make_repo(tmp)
+    d = repo / ".claude"
+    d.mkdir()
+    (d / "settings.json").write_text(
+        json.dumps({"hooks": {"PostToolUse": []}}), encoding="utf-8")
+    r = run_wiring(repo)
+    check(r.returncode == 1, f"expected exit 1, got {r.returncode}", r)
+    check("gate absent" in r.stderr, "not named 'gate absent'", r)
+
+
+def w_gate_does_not_answer(tmp):
+    """Separates 'exit 2' from 'the gate answered': an interpreter that
+    exists and exits 2 without the RECEIPT-GATE BLOCK[BAD-INPUT] block
+    (e.g. a Windows-Store python3 stub) is NOT a present gate."""
+    repo = make_repo(tmp)
+    plant_settings(repo, f'"{PY}" -c "import sys; sys.exit(2)"')
+    r = run_wiring(repo)
+    check(r.returncode == 1,
+          f"exit-2-without-the-block must be a violation, got {r.returncode}", r)
+    check("did not answer" in r.stderr, "not named 'did not answer'", r)
+    check("BAD-INPUT" in r.stderr, "missing block name not cited", r)
+
+
 # --------------------------------------------------- pinned KNOWN-LIMITATION
 
 def k_forged_wip_receipt_persists(tmp):
@@ -843,6 +985,15 @@ CASES = [
     ("block: pre-seeded assume-unchanged at H1", b_assume_preseed),
     ("block: OMAMA_CARD card rewritten mid-verify", b_omama_card_rewrite),
     ("KNOWN-LIMITATION: forged WIP-turn receipt persists", k_forged_wip_receipt_persists),
+    ("wiring: clean planted settings (absolute interpreter + real script)", w_clean),
+    ("wiring: double-quoted single-backslash path survives shlex posix", w_backslash_survival),
+    ("wiring: wrong interpreter path is 1 named VIOLATION", w_wrong_interpreter),
+    ("wiring: wrong script path is 1 named VIOLATION", w_wrong_script),
+    ("wiring: both wrong reports BOTH violations", w_both_wrong),
+    ("wiring: $CLAUDE_PROJECT_DIR / ${} / %% forms expand clean", w_project_dir_forms),
+    ("wiring: missing settings.json is NOT-RUN (exit 2)", w_settings_missing),
+    ("wiring: settings without a Stop hook is 'gate absent'", w_no_stop_hook),
+    ("wiring: exit 2 without the BAD-INPUT block is NOT a present gate", w_gate_does_not_answer),
 ]
 
 
