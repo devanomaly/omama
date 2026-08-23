@@ -53,14 +53,27 @@ jobs:
 
       - name: PRs must branch off master
         if: github.event_name == 'pull_request'
-        run: python check_pr_base.py "${{ github.event.pull_request.base.ref }}"
+        # Untrusted PR data must never be template-expanded straight into
+        # `run:` -- a git-legal branch name can carry shell metacharacters
+        # that execute in CI. Route it through env: and reference it as a
+        # shell variable instead, which is expanded, never re-parsed.
+        shell: bash
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: python check_pr_base.py "$BASE_REF"
 
       - name: PR branch must not be forked from an unmerged sibling
         if: github.event_name == 'pull_request'
         # Deliberately the PR head SHA/ref, not HEAD: on pull_request events
         # HEAD is the synthetic refs/pull/N/merge, which is not the branch
         # whose ancestry we're checking.
-        run: python check_pr_base.py --ancestry "${{ github.event.pull_request.head.sha }}" "${{ github.event.pull_request.head.ref }}"
+        # Untrusted PR data must never be template-expanded straight into
+        # `run:` -- route it through env: instead (see comment above).
+        shell: bash
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: python check_pr_base.py --ancestry "$HEAD_SHA" "$HEAD_REF"
 
       # protect-tests' guard is a Node script; without node its runner
       # reports NOT-RUN, which this job treats as a failure.
