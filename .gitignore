@@ -1,2 +1,9 @@
 __pycache__/
 *.pyc
+
+# work-order card and receipt-gate receipt: per task, per machine, never
+# versioned (see work-order/ADOPTION.md and receipt-gate/adapt/README.md)
+CARD.yaml
+CARD.close
+CARD.receipt.json
+*.receipt.json

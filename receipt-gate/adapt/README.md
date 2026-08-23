@@ -47,6 +47,19 @@ troubleshooting, rationale).
    close is declared in `CARD.close` (`CLOSE` | `FAILED: <reason>` |
    `UNVERIFIED: <reason>`); the durable receipt is `CARD.receipt.json`.
 
+   Gitignore all four: `CARD.yaml`, `CARD.close`, `CARD.receipt.json`,
+   `*.receipt.json`. A card is per task and per machine — versioning it is
+   churn on every task and a merge conflict the moment two developers hold
+   different cards at the same root. A committed receipt would be worse: it
+   binds the hash of the tree it was written against, and the commit that
+   adds the receipt file changes that tree by construction, so the hash it
+   carries would already be stale for the commit that ships it. Left local,
+   the hash stays true. That does not make a VERIFIED close a local-only
+   claim: the durable record for review is the `verify` command, its exit
+   code, and the receipt's `rev` pasted into the PR body (or equivalent
+   review surface) — the receipt file itself never has to leave the machine
+   that produced it.
+
 ## Environment variables
 
 - `OMAMA_CARD` — path to the active card (empty = disabled; a nonexistent
