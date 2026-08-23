@@ -1,9 +1,10 @@
 # adapt/ — EXAMPLE — NOT INSTALLED
 
-Configuration snippet to copy and adapt (piece-04 pattern). Nothing here is
-installed in any real repository. The ordered happy path lives in
-[QUICKSTART.md](../../QUICKSTART.md); this file is the reference (env vars,
-troubleshooting, rationale).
+Configuration snippet to copy and adapt (piece-04 pattern), plus
+`check_wiring.py` — the mechanical "gate presence" check (step 1 of the
+self-test below). Nothing here is installed in any real repository. The
+ordered happy path lives in [QUICKSTART.md](../../QUICKSTART.md); this file
+is the reference (env vars, troubleshooting, rationale).
 
 ## How a team would adopt it
 
@@ -20,7 +21,9 @@ troubleshooting, rationale).
    the blast radius stays confined to repositories that opted into the gate.
 3. Use the **interpreter's absolute path** in the command (not `python3` — if
    the launcher doesn't exist on the host, the shell exits 9009/127, which
-   does NOT block: the gate ends up silently absent forever).
+   does NOT block: the gate ends up silently absent forever —
+   `check_wiring.py`, step 1 of the self-test in step 5, detects exactly
+   this state as a named VIOLATION).
 4. **Set the environment variables BEFORE the self-test** — this step is not
    optional: if you copy only `receipt_gate.py` out of the omama repo, the
    gate's relative defaults for the validator (02) and the checker (09)
@@ -30,18 +33,42 @@ troubleshooting, rationale).
    into the repo, and export `OMAMA_VALIDATOR` / `OMAMA_CHECK_ARTIFACT`
    pointing to them (or place them at the relative paths the gate
    documents).
-5. **Self-test MANDATORY before trusting it — red AND green** — running the
-   EXACT command string registered in settings.json (copy-pasted, not
-   retyped): (a) a synthetic red close in a scratch repo must produce the
-   BLOCK (exit 2, `VERIFY-RED`); (b) a synthetic GREEN close must reach
-   `VERIFIED` (exit 0, receipt written) — the green test is what catches a
-   forgotten step 4: an install with a dead validator passes the red test
-   (it blocks on `SCHEMA`) and would never emit VERIFIED. Testing the script
-   "by hand" validates the script and leaves the wiring itself untested —
-   the silent-absence failure one level up. Re-run the self-test after an
-   interpreter upgrade AND after any edit to receipt_gate.py (a syntax error
-   exits 1 at parse time, before the guard exists — the gate looks installed
-   while actually absent).
+5. **Self-test MANDATORY before trusting it — wiring check first, then red
+   AND green.**
+
+   **Step 1 — mechanical wiring check** (copy `check_wiring.py` from this
+   directory alongside the hook, or run it from the omama checkout):
+
+   ```
+   python3 check_wiring.py <repo-root>   # repo-root defaults to the cwd's git toplevel
+   ```
+
+   It reads the repo's `.claude/settings.json`, resolves every Stop hook
+   command (expanding `$CLAUDE_PROJECT_DIR` / `${CLAUDE_PROJECT_DIR}` /
+   `%CLAUDE_PROJECT_DIR%` to the repo root), and exits 0 **only** when the
+   exact registered command, dry-invoked with EMPTY stdin, answers the
+   gate's own `RECEIPT-GATE BLOCK[BAD-INPUT]` block on exit 2 — the block
+   NAME is matched, not just the exit code (a Windows-Store python3 stub
+   also exits non-zero). A missing interpreter or wrong script path is a
+   named `VIOLATION` (exit 1) instead of the silent 127/9009 absence; a
+   missing/unreadable settings file is NOT-RUN (exit 2). Re-run it after an
+   interpreter upgrade and on every fresh clone — the adopting repo's CI is
+   the natural place; the check DETECTS dead wiring, nothing prevents it
+   from going dead later.
+
+   **Steps 2–3 — red AND green close test**, running the EXACT command
+   string registered in settings.json (copy-pasted, not retyped): (a) a
+   synthetic red close in a scratch repo must produce the BLOCK (exit 2,
+   `VERIFY-RED`); (b) a synthetic GREEN close must reach `VERIFIED` (exit
+   0, receipt written) — the green test is what catches a forgotten step 4:
+   an install with a dead validator passes the red test (it blocks on
+   `SCHEMA`) and would never emit VERIFIED, and the wiring check does not
+   see the validator either (BAD-INPUT fires before card resolution).
+   Testing the script "by hand" validates the script and leaves the wiring
+   itself untested — the silent-absence failure one level up. Re-run the
+   self-test after an interpreter upgrade AND after any edit to
+   receipt_gate.py (a syntax error exits 1 at parse time, before the guard
+   exists — the gate looks installed while actually absent).
 6. Set up the flow's reproduction requirement: cards live at
    `<repo>/CARD.yaml` (or `OMAMA_CARD` pointing at the active card); the
    close is declared in `CARD.close` (`CLOSE` | `FAILED: <reason>` |
