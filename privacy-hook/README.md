@@ -129,12 +129,33 @@ Design properties (case-by-case receipts in
   blocked commit (receipts in [EVIDENCE.md](EVIDENCE.md)). With none of
   the three available: `BLOCKED hook-error no-python-interpreter`,
   exit 1.
+- **One knob for the scanner's location.** The wrapper reads
+  `PRIVACY_HOOK_SCANNER`, a single variable at the top defaulting to
+  `<repo-root>/scan_staged.py`, so an adopter who vendors the scanner
+  under `tools/` sets a variable instead of editing the wrapper body —
+  an edited wrapper is no longer byte-identical with upstream, which is
+  what turns the next update from a copy into a merge. The path is
+  **validated and fails closed**: nothing there means
+  `BLOCKED hook-error missing-scanner`, exit 1, never a silent fallback
+  to the default location (a hook that scans a file the adopter did not
+  choose is the failure this piece exists to prevent). The diagnostic
+  names the knob, not the path, so hook output stays pasteable. Both
+  polarities in `fixture/case_scanner_override.py`: the relocated
+  scanner produces the default location's verdict **byte for byte**, and
+  a broken override blocks with the named `hook-error`.
+- **The wrapper ends in `exec`.** Nothing written after it runs, and it
+  fails silently that way — so a repo that already has a `pre-commit`
+  runs its own checks BEFORE the scan. That is an
+  [ADOPTION.md](ADOPTION.md) instruction with a verbatim combined-hook
+  example, not a mechanism: nothing in this piece can detect a chained
+  hook that put the scan first.
 
 ## Command and states
 
-Installed as `.git/hooks/pre-commit` (see [ADOPTION.md](ADOPTION.md)),
-runs on every `git commit`. Direct invocation, from the adopting repo's
-root:
+Installed as the repo's `pre-commit` hook — a versioned `.githooks/`
+directory activated with `git config core.hooksPath .githooks`, or a
+copy into `.git/hooks/` (see [ADOPTION.md](ADOPTION.md)) — and runs on
+every `git commit`. Direct invocation, from the adopting repo's root:
 
 ```
 python3 scan_staged.py
@@ -155,7 +176,8 @@ probes, and mutations: [EVIDENCE.md](EVIDENCE.md).
 ### What it catches
 
 Corpus of **55 cases (28 block / 27 pass), 0 failed**, run of
-2026-08-18, plus the dedicated gitlink case — the case-by-case list,
+2026-08-18, plus the dedicated gitlink and scanner-override cases — the
+case-by-case list,
 with charged outputs, lives in [EVIDENCE.md](EVIDENCE.md). Classes
 covered, all with rc=1:
 
@@ -241,11 +263,31 @@ it — none of these is a "generic limitation."
   Resolved by: the config is versioned and reviewable in a PR — that's
   where this redirection gets contained.
 
+- **A scanner override that points at the wrong script.**
+  `PRIVACY_HOOK_SCANNER` is checked for **existence**, not identity: an
+  override aimed at any readable file runs that file and the commit is
+  decided on its terms. Not a new privilege (whoever can set the hook's
+  environment can already run code as the committing user), but a typo
+  that lands on another script is invisible. Resolved by: **review of
+  the versioned hook** (ADOPTION step 2a puts it in a diff) and
+  **CI/pre-receive**, which does not read the local hook at all.
+- **A chained hook that runs the scan first.** The wrapper ends in
+  `exec`, so a combined `pre-commit` that calls it before the repo's own
+  checks turns those checks into dead code — silently. Nothing in this
+  piece detects the order. Resolved by: **PR review** of the combined
+  hook (versioned route) and CI running the same checks.
+- **A clone where the hook was never activated.** `core.hooksPath` and
+  the `.git/hooks` copy both live in `.git/`, which is not versioned:
+  a fresh clone that skipped the one-time step has **no hook**, and
+  nothing says so. Resolved by: **CI / pre-receive**, which sees the
+  pushed commit regardless of what ran locally.
+
 ### What only a human decides
 
 See [ADOPTION.md](ADOPTION.md) — deny-list vocabulary, allowlist
 entries, triaging a BLOCKED, accepting residuals, `pre-merge-commit`,
-`tokens_file` outside git.
+`tokens_file` outside git, which install route (versioned `.githooks/`
+vs `.git/hooks`), and where `scan_staged.py` lives.
 
 ### Coverage, promise by promise
 
@@ -261,6 +303,9 @@ entries, triaging a BLOCKED, accepting residuals, `pre-merge-commit`,
 | Config exemption restricted to self-referential layers | `secret-inside-deny-config`, `tokens-file-redirect`, `case-variant-config-name` (rc=1); P11 (rc=1); mutations M2/M3 go red only on these cases | content that only the team layers would catch, inside `tokens_file` itself, passes (P10, rc=0) — route: PR review of the config | defect |
 | Pasteable output: no matched value, no absolute path, no traceback | absence of absolute path is charged on **all** 55 cases; `Traceback` forbidden on the 2 malformed-config cases; echoing the value forbidden on 6 cases | non-echo of the value is not charged on the remaining rules | not assessed |
 | Automatic merge covered via `pre-merge-commit` | none — it's an adoption instruction | merge, `git am`, and `git rebase` not probed this round | not assessed |
+| Scanner location overridable without editing the wrapper | `fixture/case_scanner_override.py`: a scanner moved to `tools/` and reached through `PRIVACY_HOOK_SCANNER` reproduces the default location's `BLOCKED` lines exactly; an override pointing at a missing file blocks with `hook-error missing-scanner` (rc=1), no traceback, no absolute path | existence is validated, identity is not — an override aimed at another readable script runs that script | defect |
+| Hook active in every clone (versioned `.githooks/` + `core.hooksPath`) | none — the activation is a per-clone `git config`, and `.git/config` is not versioned | a clone that never ran it has no hook and nothing warns — route: CI / pre-receive | not assessed |
+| Scan runs after an existing `pre-commit`'s own checks | none — chaining is an adoption instruction with a verbatim example | a combined hook that calls the wrapper first makes its own checks dead code (`exec`), undetected — route: PR review of the versioned hook | not assessed |
 
 Accepting a residual requires a named human signature and a date. No
 row in this table becomes "accepted" by existing here: `defect` marks a

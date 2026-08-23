@@ -6,6 +6,12 @@ polarity:
   - case_violation.py must exit NON-ZERO (commit was blocked)
   - case_clean.py must exit ZERO (commit went through)
 
+Then case_gitlink.py and case_scanner_override.py, each self-reporting
+its own polarities (gitlink named `.env` blocked / innocent gitlink
+allowed; the scanner reached through PRIVACY_HOOK_SCANNER giving the
+default location's verdict, and an override pointing at a missing file
+failing closed).
+
 Then runs case_corpus.py, the table-driven corpus: one red case per KEPT
 pattern, the deny-filename / literal-token / deny-regex red cases, the
 sixteen measured false positives as green cases, and the
@@ -14,7 +20,7 @@ asserted green so re-adding a broad value rule goes red here first).
 case_corpus.py must exit ZERO -- it self-reports per-case polarity and
 fails loudly on any case that behaves wrong.
 
-Exits 0 only if all three hold, 1 otherwise.
+Exits 0 only if all of them hold, 1 otherwise.
 """
 import os
 import subprocess
@@ -61,6 +67,18 @@ def main():
         ok = False
     else:
         print("PASS: gitlink .env blocked, innocent gitlink allowed")
+
+    rc, out, err = run("case_scanner_override.py")
+    print("--- case_scanner_override.py (expect zero) -> rc=%d ---" % rc)
+    print(out, end="")
+    print(err, end="", file=sys.stderr)
+    if rc != 0:
+        print("FAIL: scanner-location override case reported wrong behaviour",
+              file=sys.stderr)
+        ok = False
+    else:
+        print("PASS: relocated scanner blocks identically, missing override "
+              "fails closed")
 
     rc, out, err = run("case_corpus.py")
     print("--- case_corpus.py (expect zero) -> rc=%d ---" % rc)

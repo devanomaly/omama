@@ -2,16 +2,38 @@
 # privacy-hook pre-commit wrapper -- see README.md
 #
 # scan_staged.py is committed at the ADOPTING REPO ROOT (README: Como
-# adotar, step 1), while this wrapper lives in .git/hooks/ (step 2) --
-# those are two different directories, so `dirname "$0"` would look for
-# the scanner next to itself and fail. Resolve the repo root the same
-# way scan_staged.py's own repo_root() does, so the wrapper and the
-# script it invokes agree on where things live regardless of which repo
-# adopts this hook.
+# adotar, step 1), while this wrapper lives in .githooks/ or
+# .git/hooks/ (step 2) -- those are two different directories, so
+# `dirname "$0"` would look for the scanner next to itself and fail.
+# Resolve the repo root the same way scan_staged.py's own repo_root()
+# does, so the wrapper and the script it invokes agree on where things
+# live regardless of which repo adopts this hook.
 dir="$(git rev-parse --show-toplevel)" || {
   echo "BLOCKED hook-error not-a-git-repo" >&2
   exit 1
 }
+
+# THE ONE KNOB: where scan_staged.py lives. Default = the adopting repo
+# root. An adopter who vendors the scanner elsewhere (`tools/`, to keep
+# the root clean) exports PRIVACY_HOOK_SCANNER instead of editing this
+# file -- an edited wrapper is no longer byte-identical with upstream,
+# and byte-identity is what makes "update" a copy instead of a merge.
+# Set it per repo (`git config` is not read here on purpose: the value is
+# a path this script must trust, and one line at the top of the hook is
+# reviewable in the same diff as the hook). A relative value resolves
+# against the repo root -- git runs hooks from the top of the worktree.
+PRIVACY_HOOK_SCANNER="${PRIVACY_HOOK_SCANNER:-$dir/scan_staged.py}"
+
+# The override is VALIDATED, and it fails CLOSED: an override that points
+# at nothing is a misconfiguration, and silently falling back to the
+# default path would scan a file the adopter did not choose (or, with no
+# default present either, let the interpreter's own "can't open file"
+# stand in for a verdict). Same `BLOCKED <rule>` shape as every other
+# finding, exit 1, and no path echoed -- hook output stays pasteable.
+if [ ! -f "$PRIVACY_HOOK_SCANNER" ]; then
+  echo "BLOCKED hook-error missing-scanner (no scan_staged.py at the configured location; set PRIVACY_HOOK_SCANNER to where it lives)" >&2
+  exit 1
+fi
 
 # Interpreter selection is done by PROBING for the interpreter, never by
 # reacting to the scanner's exit code. The previous form was
@@ -27,12 +49,16 @@ dir="$(git rev-parse --show-toplevel)" || {
 #      and printed each finding twice.
 # Probing fixes both, and the no-interpreter branch now fails CLOSED with
 # a message in the same `BLOCKED <rule>` shape as every other finding.
+#
+# This wrapper ends in `exec`: nothing after it runs. A repo that already
+# has a pre-commit must run its own checks BEFORE the scan -- see
+# ADOPTION.md, "Chaining after an existing pre-commit".
 if command -v py >/dev/null 2>&1; then
-  exec py -3 "$dir/scan_staged.py"
+  exec py -3 "$PRIVACY_HOOK_SCANNER"
 elif command -v python3 >/dev/null 2>&1; then
-  exec python3 "$dir/scan_staged.py"
+  exec python3 "$PRIVACY_HOOK_SCANNER"
 elif command -v python >/dev/null 2>&1; then
-  exec python "$dir/scan_staged.py"
+  exec python "$PRIVACY_HOOK_SCANNER"
 else
   echo "BLOCKED hook-error no-python-interpreter (privacy-hook needs py, python3 or python on PATH)" >&2
   exit 1
