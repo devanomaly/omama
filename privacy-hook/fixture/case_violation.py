@@ -19,9 +19,12 @@ import lib  # noqa: E402
 def main():
     repo = lib.make_repo()
 
-    # Fake AWS-style access key -- shape-valid, not a real credential.
+    # Fake AWS-style access key -- shape-valid, not a real credential. Split
+    # by concatenation so this fixture source itself does not carry a
+    # contiguous AWS-key-shape literal (privacy-hook scans its own fixture
+    # source too; see fixture-source-self-clean in check.py).
     lib.write_file(repo, "config/deploy.env",
-                    b"AWS_ACCESS_KEY_ID=AKIAABCDEFGHIJKLMNOP\n")
+                    b"AWS_ACCESS_KEY_ID=AKIA" + b"ABCDEFGHIJKLMNOP\n")
     # Deny-listed literal token from privacy-tokens.txt.
     lib.write_file(repo, "notes/internal.md",
                     b"reference: EXAMPLE-DENY-TOKEN in the ticket\n")
