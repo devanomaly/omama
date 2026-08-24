@@ -864,10 +864,12 @@ def w_both_wrong(tmp):
           f"the two violations must name interpreter AND hook script: {vl}", r)
 
 
-HOST_FORMS = (("%CLAUDE_PROJECT_DIR%",) if os.name == "nt"
-              else ("$CLAUDE_PROJECT_DIR", "${CLAUDE_PROJECT_DIR}"))
-ALIEN_FORMS = (("$CLAUDE_PROJECT_DIR", "${CLAUDE_PROJECT_DIR}")
-               if os.name == "nt" else ("%CLAUDE_PROJECT_DIR%",))
+# The hook shell is sh-like on every platform (Git Bash on Windows;
+# verified empirically 2026-08-24: both sh spellings expanded in a live
+# Stop hook, %VAR% stayed literal), so the sh spellings are the live
+# forms everywhere and the cmd spelling is dead wiring everywhere.
+HOST_FORMS = ("$CLAUDE_PROJECT_DIR", "${CLAUDE_PROJECT_DIR}")
+ALIEN_FORMS = ("%CLAUDE_PROJECT_DIR%",)
 
 
 def _copy_gate_under(repo):
@@ -877,8 +879,8 @@ def _copy_gate_under(repo):
 
 
 def w_project_dir_host_form(tmp):
-    """Only the form THIS host's hook shell actually expands (cmd.exe:
-    %VAR%; POSIX sh: $VAR and ${VAR}) may certify as WIRING-OK."""
+    """The sh spellings ($VAR and ${VAR}) are what the hook shell expands
+    on every platform (Git Bash on Windows) and must certify WIRING-OK."""
     repo = make_repo(tmp)
     _copy_gate_under(repo)
     for form in HOST_FORMS:
@@ -891,9 +893,9 @@ def w_project_dir_host_form(tmp):
 
 
 def w_project_dir_alien_form(tmp):
-    """A CLAUDE_PROJECT_DIR spelling the host's hook shell leaves LITERAL
-    (cmd.exe never expands $VAR/${VAR}; POSIX sh never expands %VAR%) is
-    dead wiring and must be a named VIOLATION, not a false WIRING-OK."""
+    """%CLAUDE_PROJECT_DIR% is left LITERAL by the sh hook shell on every
+    platform (Git Bash on Windows) -- dead wiring, and must be a named
+    VIOLATION, not a false WIRING-OK."""
     repo = make_repo(tmp)
     _copy_gate_under(repo)
     for form in ALIEN_FORMS:
@@ -910,20 +912,34 @@ def w_project_dir_alien_form(tmp):
 
 
 def w_shell_operator(tmp):
-    """Shell operators and single-quote quoting are exec'd as argv by the
-    check but mean something else (or nothing) to the real hook shell --
-    they must be a named VIOLATION, never certified as a working gate."""
+    """Shell operators are exec'd as argv by the check but mean something
+    else to the real hook shell (|| true would swallow the gate's blocking
+    exit) -- they must be a named VIOLATION, never a working gate."""
     repo = make_repo(tmp)
     for cmd in ('"{0}" "{1}" || true'.format(PY, GATE),
-                '"{0}" "{1}" ; exit 0'.format(PY, GATE),
-                "'{0}' '{1}'".format(PY, GATE)):
+                '"{0}" "{1}" ; exit 0'.format(PY, GATE)):
         plant_settings(repo, cmd)
         r = run_wiring(repo)
         check(r.returncode == 1,
               f"shell-ism {cmd!r} must be exit 1, got {r.returncode}", r)
         vl = viol_lines(r)
-        check(any("shell" in v or "single-quote" in v for v in vl),
+        check(any("shell" in v for v in vl),
               f"violation must name the shell-ism: {vl}", r)
+
+
+def w_single_quote_ok(tmp):
+    """Single-quote quoting is valid sh quoting and shlex(posix=True)
+    parses it identically -- it must certify WIRING-OK, not be rejected
+    (the discarded cmd.exe shell model wrongly named it a VIOLATION)."""
+    repo = make_repo(tmp)
+    _copy_gate_under(repo)
+    plant_settings(
+        repo, "'{0}' '{1}/.claude/hooks/receipt_gate.py'".format(PY, repo))
+    r = run_wiring(repo)
+    check(r.returncode == 0,
+          f"single-quoted command: expected exit 0, got {r.returncode}", r)
+    check("WIRING-OK" in r.stdout,
+          "single-quoted command: no WIRING-OK line", r)
 
 
 def w_local_settings(tmp):
@@ -1108,7 +1124,8 @@ CASES = [
     ("wiring: both wrong reports BOTH violations", w_both_wrong),
     ("wiring: host-shell CLAUDE_PROJECT_DIR form expands clean", w_project_dir_host_form),
     ("wiring: wrong-shell CLAUDE_PROJECT_DIR form is a named VIOLATION", w_project_dir_alien_form),
-    ("wiring: shell operators / single-quote quoting are named VIOLATIONs", w_shell_operator),
+    ("wiring: shell operators are named violations (argv-only contract)", w_shell_operator),
+    ("wiring: single-quote quoting is valid sh quoting, certifies WIRING-OK", w_single_quote_ok),
     ("wiring: gate wired only in settings.local.json is seen", w_local_settings),
     ("wiring: broken sibling hook is WARNED about, not swallowed", w_sibling_reported),
     ("wiring: --static-only resolves paths without executing the command", w_static_only),

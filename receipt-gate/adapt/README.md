@@ -50,14 +50,13 @@ is the reference (env vars, troubleshooting, rationale).
    dry-invoked with EMPTY stdin, answers the gate's own
    `RECEIPT-GATE BLOCK[BAD-INPUT]` block on exit 2 — the block NAME is
    matched, not just the exit code (a Windows-Store python3 stub also
-   exits non-zero). `CLAUDE_PROJECT_DIR` is expanded **host-shell-aware**:
-   only the spelling THIS host's hook shell expands counts
-   (`%CLAUDE_PROJECT_DIR%` under cmd.exe on Windows,
-   `$CLAUDE_PROJECT_DIR` / `${CLAUDE_PROJECT_DIR}` under POSIX sh) — the
-   other shell's spelling is left literal by the real shell, so it is dead
-   wiring and a named `VIOLATION`, as are shell operators (`|| true` would
-   swallow the gate's blocking exit) and single-quote quoting (cmd.exe
-   treats `'` as a literal character). A missing interpreter or wrong
+   exits non-zero). `CLAUDE_PROJECT_DIR` is expanded the way the
+   real hook shell does: the hook shell is sh-like on every platform (Git
+   Bash on Windows — verified empirically 2026-08-24 with a live Stop
+   hook), so `$CLAUDE_PROJECT_DIR` / `${CLAUDE_PROJECT_DIR}` expand and
+   `%CLAUDE_PROJECT_DIR%` is left literal — dead wiring on every platform
+   and a named `VIOLATION`, as are shell operators (`|| true` would
+   swallow the gate's blocking exit). A missing interpreter or wrong
    script path is a named `VIOLATION` (exit 1) instead of the silent
    127/9009 absence; when neither settings file is readable the result is
    NOT-RUN (exit 2). With several Stop hooks, one working gate is enough

@@ -40,18 +40,21 @@ User-level ~/.claude settings are NOT read -- the install rule is per-repo.
 
 Resolution steps per command (hooks.Stop[*].hooks[*].command, type
 "command"):
-  1. The CLAUDE_PROJECT_DIR spelling THIS host's hook shell actually
-     expands is replaced with the repo root BEFORE parsing: on Windows
-     (cmd.exe) only `%CLAUDE_PROJECT_DIR%`; on POSIX (sh) only
-     `$CLAUDE_PROJECT_DIR` / `${CLAUDE_PROJECT_DIR}`. A spelling the host
-     shell leaves LITERAL (each shell ignores the other's form) is dead
-     wiring and a named VIOLATION -- expanding it here would certify a
-     hook that can never run.
-  2. Shell operators (`| & ; < >` backtick, newline) and single-quote
-     quoting are named VIOLATIONs: the command is exec'd as plain argv
-     both here and conceptually by the gate contract, and cmd.exe treats
-     `'` as a literal character while `|| true` would swallow the gate's
-     blocking exit. Use double quotes only, no operators.
+  1. The CLAUDE_PROJECT_DIR spellings the hook shell actually expands
+     are replaced with the repo root BEFORE parsing:
+     `$CLAUDE_PROJECT_DIR` / `${CLAUDE_PROJECT_DIR}`. The hook shell is
+     sh-like on EVERY platform (Git Bash on Windows) -- verified
+     empirically 2026-08-24: a live Stop hook received CLAUDE_PROJECT_DIR
+     in its environment, both sh spellings expanded to the repo root, and
+     `%CLAUDE_PROJECT_DIR%` reached the hook as a literal. The cmd-style
+     spelling is therefore dead wiring on every platform and a named
+     VIOLATION -- expanding it here would certify a hook that can never
+     run.
+  2. Shell operators (`| & ; < >` backtick, newline) are named
+     VIOLATIONs: the command is exec'd as plain argv both here and
+     conceptually by the gate contract, and `|| true` would swallow the
+     gate's blocking exit. Quoting (single or double) is fine -- sh and
+     shlex(posix=True) tokenize both the same way.
   3. The command is parsed with shlex.split(posix=True). Double-quoted
      Windows paths with SINGLE backslashes survive this (inside double
      quotes only `\\\\` and `\\"` are escapes) -- pinned by a fixture case.
@@ -78,16 +81,15 @@ DRY_RUN_TIMEOUT = 30.0
 BAD_INPUT_MARKER = "RECEIPT-GATE BLOCK[BAD-INPUT]"
 BARE_LAUNCHERS = ("py", "python3", "python")
 
-# Only the spelling THIS host's hook shell expands may be substituted;
-# the other shell's spelling stays literal there and is dead wiring.
-if os.name == "nt":
-    HOST_SHELL = "cmd.exe"
-    HOST_FORMS = ("%CLAUDE_PROJECT_DIR%",)
-    ALIEN_FORMS = ("${CLAUDE_PROJECT_DIR}", "$CLAUDE_PROJECT_DIR")
-else:
-    HOST_SHELL = "/bin/sh"
-    HOST_FORMS = ("${CLAUDE_PROJECT_DIR}", "$CLAUDE_PROJECT_DIR")
-    ALIEN_FORMS = ("%CLAUDE_PROJECT_DIR%",)
+# The hook shell is sh-like on EVERY platform -- Git Bash on Windows --
+# so only the sh spellings are substituted. Verified empirically
+# (2026-08-24, Windows 11 host): a live Stop hook received
+# CLAUDE_PROJECT_DIR in env; "$CLAUDE_PROJECT_DIR" and
+# "${CLAUDE_PROJECT_DIR}" expanded to the repo root,
+# "%CLAUDE_PROJECT_DIR%" reached the hook as a literal.
+HOST_SHELL = "sh (Git Bash on Windows)"
+HOST_FORMS = ("${CLAUDE_PROJECT_DIR}", "$CLAUDE_PROJECT_DIR")
+ALIEN_FORMS = ("%CLAUDE_PROJECT_DIR%",)
 
 # Rejected outright: exec'd as argv they would be certified while meaning
 # something else (or nothing) to the real hook shell. `(` `)` are NOT here
@@ -182,13 +184,8 @@ def _check_command(command, root, static_only=False):
             pre_violations.append(
                 "shell operator {0!r} in hook command -- the wiring check "
                 "certifies a plain argv command only (operators like || "
-                "would swallow the gate's blocking exit, or break under "
-                "cmd.exe): {1!r}".format(meta, command))
-    if "'" in command:
-        pre_violations.append(
-            "single-quote quoting in hook command -- cmd.exe treats ' as "
-            "a literal character (the hook dies with a bad-path error); "
-            "use double quotes only: {0!r}".format(command))
+                "would swallow the gate's blocking exit): "
+                "{1!r}".format(meta, command))
     if pre_violations:
         return pre_violations  # parsing a shell-ism as argv proves nothing
 

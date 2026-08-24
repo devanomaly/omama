@@ -116,7 +116,7 @@ hidden.
 
 Each piece is opt-in, per repository — nothing here installs itself. Adopt the LOOP, not loose
 pieces: work-order at the repo root, the gate wired into that repo's `.claude/settings.json`
-(per-repo, never global — self-test both red AND green required, see
+(per-repo, never global — wiring check plus red AND green self-test required, see
 [receipt-gate/adapt/README.md](receipt-gate/adapt/README.md)), output-discipline's templates for
 plans/reviews. The passive layers (privacy-hook, protect-tests) install alongside (pre-commit and
 PreToolUse). **Third-party code:** protect-tests vendors an MIT-licensed script
