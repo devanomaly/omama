@@ -26,6 +26,36 @@ Integration and human decisions. The mechanics and the limits are in the
 The gate only exists where the pipeline conditions dispatch on `OK` — wire the validator
 into CI or the dispatch wrapper; a validator nobody runs is prose with a `.py` extension.
 
+## Sourcing a card from an existing GitHub issue
+
+An issue is prose, same as a verbal "fix bug X" — it does not arrive pre-ratified.
+When an agent is asked to turn an issue into a card, the fields it may fill from the
+issue text and the fields that stay human are not the same list:
+
+- **Fillable from the issue:** `goal` (from the title/body), `task_type`,
+  `done_when` (from stated acceptance criteria, if any).
+- **Proposed, not decided:** `tier` — the agent may suggest one; ratification is
+  still the human act step 3 of "How to adopt" already requires.
+- **Never fabricated:** `verify` and, for `task_type: bugfix`, `repro`. Most issues
+  do not contain a real proof command or an attached reproduction; inventing one to
+  fill the field is exactly the fabrication [CONTRIBUTING.md](../CONTRIBUTING.md)
+  and this piece's own residual warn against (see "What it does NOT catch" in the
+  [README](README.md) — truth of content is a human read, not something the
+  validator or an agent can certify). One refinement: when the issue states
+  explicit acceptance criteria, the agent may derive a **proposed** `verify` from
+  them — written next to the empty field and labeled a proposal, never filled in
+  as if ratified. Proposing from stated criteria is not fabrication (the criteria
+  are the issue author's, not the agent's); an unlabeled fill is. And a criterion
+  that is not mechanically checkable must not be laundered into a vacuous command
+  just to occupy the slot — the validator's non-vacuity check is the backstop,
+  the human read is the gate. Either way the agent shows the draft and stops; the
+  human supplies or confirms `verify`/`repro`, then runs
+  `validate_work_order.py` before dispatch — same gate, same step 5, regardless of
+  where the draft's fields came from.
+
+No new mechanism exists for this — it is a routing note for step 2-3 above, not an
+additional validator or hook.
+
 ## What only a human decides
 
 - Ratifying the `tier` — the validator checks the value, not whether S1 was really an S3.
