@@ -26,6 +26,31 @@ Integration and human decisions. The mechanics and the limits are in the
 The gate only exists where the pipeline conditions dispatch on `OK` — wire the validator
 into CI or the dispatch wrapper; a validator nobody runs is prose with a `.py` extension.
 
+### The card and its receipt stay local
+
+Add this to the adopting repository's `.gitignore` (the omama repo itself carries it too):
+
+```
+CARD.yaml
+CARD.close
+CARD.receipt.json
+*.receipt.json
+```
+
+A card is per task and per machine — versioning it is churn on every task and a merge
+conflict the moment two developers hold different cards at the same root. A committed
+receipt is worse: the receipt binds the hash of the tree it was written against, and the
+commit that adds the receipt file changes that tree by construction, so the hash a
+committed receipt carries would already be stale for the commit that ships it. Left local,
+the hash stays true.
+
+The one non-trivial consequence of "local" is that VERIFIED would be a local-only claim if
+the docs stopped here — a receipt nobody else can see proves nothing to a reviewer. It
+doesn't stop here: the durable record of a VERIFIED close is the `verify` command, its
+exit code, and the receipt's `rev` pasted into the PR body (or equivalent review surface),
+same as every other evidence claim this repo asks for. The receipt file itself never needs
+to leave the machine that produced it.
+
 ## Sourcing a card from an existing GitHub issue
 
 An issue is prose, same as a verbal "fix bug X" — it does not arrive pre-ratified.

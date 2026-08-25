@@ -81,6 +81,22 @@ self-test que o [adapt/README.md](receipt-gate/adapt/README.md) torna
 obrigatório — rode o gate pela string de comando EXATA registrada no seu
 `settings.json`, copiada e colada, não redigitada.
 
+Adicione o snippet do gitignore primeiro — um card é por tarefa e por
+máquina, não algo para versionar (veja
+[work-order/ADOPTION.md](work-order/ADOPTION.md#the-card-and-its-receipt-stay-local)
+para o porquê):
+
+```
+cat >> .gitignore <<'EOF'
+CARD.yaml
+CARD.close
+CARD.receipt.json
+*.receipt.json
+EOF
+git add .gitignore
+git commit -m "gitignore: card e receipt ficam locais"
+```
+
 Escreva um primeiro card, `CARD.yaml`, cujo `verify` **ainda** não passa —
 p.ex. para um repo onde `app.js` ainda diz `hi`:
 
@@ -99,10 +115,12 @@ verify: python3 -c "exit(0 if 'hello' in open('app.js').read() else 1)"
 
 ```
 python3 tools/validate_work_order.py CARD.yaml   # esperado: OK ... valid card
-git add -A && git commit -m "card"
 echo "CLOSE" > CARD.close
 echo '{}' | <string de comando exata do seu settings.json>
 ```
+
+Nada para commitar ainda — `CARD.yaml` e `CARD.close` estão no gitignore, e
+`app.js` ainda não mudou.
 
 **Esperado: `RECEIPT-GATE BLOCK[VERIFY-RED]` e exit 2.** Esse block é o
 produto funcionando. (O `{}` no stdin faz as vezes do payload de Stop-hook
