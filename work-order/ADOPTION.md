@@ -41,7 +41,14 @@ issue text and the fields that stay human are not the same list:
   fill the field is exactly the fabrication [CONTRIBUTING.md](../CONTRIBUTING.md)
   and this piece's own residual warn against (see "What it does NOT catch" in the
   [README](README.md) — truth of content is a human read, not something the
-  validator or an agent can certify). The agent shows the draft and stops; the
+  validator or an agent can certify). One refinement: when the issue states
+  explicit acceptance criteria, the agent may derive a **proposed** `verify` from
+  them — written next to the empty field and labeled a proposal, never filled in
+  as if ratified. Proposing from stated criteria is not fabrication (the criteria
+  are the issue author's, not the agent's); an unlabeled fill is. And a criterion
+  that is not mechanically checkable must not be laundered into a vacuous command
+  just to occupy the slot — the validator's non-vacuity check is the backstop,
+  the human read is the gate. Either way the agent shows the draft and stops; the
   human supplies or confirms `verify`/`repro`, then runs
   `validate_work_order.py` before dispatch — same gate, same step 5, regardless of
   where the draft's fields came from.
