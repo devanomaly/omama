@@ -75,6 +75,13 @@ jobs:
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: python check_pr_base.py --ancestry "$HEAD_SHA" "$HEAD_REF"
 
+      # check_pr_base.py is CI-internal (this repo's own PR hygiene), not a
+      # shippable piece -- it runs against the real PR above, and its own
+      # correctness fixture runs here directly rather than through
+      # verify_all.py's piece list.
+      - name: check_pr_base's own fixture (proves the checker's exit codes)
+        run: python fixture/run_check_pr_base_fixture.py
+
       # protect-tests' guard is a Node script; without node its runner
       # reports NOT-RUN, which this job treats as a failure.
       - uses: actions/setup-node@v4
