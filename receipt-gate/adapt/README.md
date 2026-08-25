@@ -47,8 +47,17 @@ troubleshooting, rationale).
    close is declared in `CARD.close` (`CLOSE` | `FAILED: <reason>` |
    `UNVERIFIED: <reason>`); the durable receipt is `CARD.receipt.json`.
 
-   Gitignore all four: `CARD.yaml`, `CARD.close`, `CARD.receipt.json`,
-   `*.receipt.json`. A card is per task and per machine — versioning it is
+   Gitignore all four — add this to the adopting repository's `.gitignore`
+   (the omama repo itself carries it too):
+
+   ```
+   CARD.yaml
+   CARD.close
+   CARD.receipt.json
+   *.receipt.json
+   ```
+
+   A card is per task and per machine — versioning it is
    churn on every task and a merge conflict the moment two developers hold
    different cards at the same root. A committed receipt would be worse: it
    binds the hash of the tree it was written against, and the commit that
