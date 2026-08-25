@@ -30,10 +30,57 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Ancestry mode reads origin/master..<head> and other remote
+          # branches' full history -- a shallow (default depth-1) checkout
+          # would hide exactly what it needs to read. Unconditional because
+          # the `cond && 0 || 1` expression trick returns 1 when the wanted
+          # value is the falsy 0 -- exactly the shallow checkout the checker
+          # then refuses (exit 2) as not runnable.
+          fetch-depth: 0
+
+      # fetch-depth: 0 unshallows the ref actually being built (the
+      # synthetic refs/pull/N/merge on pull_request events); it does not by
+      # itself guarantee every other branch is present as a remote-tracking
+      # ref, which the ancestry check also needs to find a sibling branch.
+      - name: Fetch full history and all remote branches (ancestry check)
+        if: github.event_name == 'pull_request'
+        run: git fetch --no-tags --prune origin '+refs/heads/*:refs/remotes/origin/*'
 
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+
+      - name: PRs must branch off master
+        if: github.event_name == 'pull_request'
+        # Untrusted PR data must never be template-expanded straight into
+        # `run:` -- a git-legal branch name can carry shell metacharacters
+        # that execute in CI. Route it through env: and reference it as a
+        # shell variable instead, which is expanded, never re-parsed.
+        shell: bash
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: python check_pr_base.py "$BASE_REF"
+
+      - name: PR branch must not be forked from an unmerged sibling
+        if: github.event_name == 'pull_request'
+        # Deliberately the PR head SHA/ref, not HEAD: on pull_request events
+        # HEAD is the synthetic refs/pull/N/merge, which is not the branch
+        # whose ancestry we're checking.
+        # Untrusted PR data must never be template-expanded straight into
+        # `run:` -- route it through env: instead (see comment above).
+        shell: bash
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: python check_pr_base.py --ancestry "$HEAD_SHA" "$HEAD_REF"
+
+      # check_pr_base.py is CI-internal (this repo's own PR hygiene), not a
+      # shippable piece -- it runs against the real PR above, and its own
+      # correctness fixture runs here directly rather than through
+      # verify_all.py's piece list.
+      - name: check_pr_base's own fixture (proves the checker's exit codes)
+        run: python fixture/run_check_pr_base_fixture.py
 
       # protect-tests' guard is a Node script; without node its runner
       # reports NOT-RUN, which this job treats as a failure.
