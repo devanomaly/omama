@@ -60,7 +60,7 @@ PIECES = [
     ("receipt-gate", "receipt-gate",
      [PY, "fixture/run_fixture.py"], ["git"], 600, "notrun"),
     ("check_pr_base", ".",
-     [PY, "fixture/run_fixture.py"], ["git"], 300, "notrun"),
+     [PY, "fixture/run_check_pr_base_fixture.py"], ["git"], 300, "notrun"),
     ("release hygiene: LICENSE at root", ".",
      "LICENSE_CHECK", [], 10, "notrun"),  # sentinel, handled below
 ]

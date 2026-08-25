@@ -13,7 +13,7 @@ Exit code 1 -> at least one case behaved unexpectedly (checker is broken, or
                someone weakened it).
 
 Usage:
-    python3 run_fixture.py
+    python3 run_check_pr_base_fixture.py
 """
 import subprocess
 import sys
@@ -230,9 +230,9 @@ def main():
     total = len(CASES) + len(ANCESTRY_REPO_CASES)
     print()
     if failures:
-        print(f"run_fixture: {len(failures)}/{total} case(s) FAILED")
+        print(f"run_check_pr_base_fixture: {len(failures)}/{total} case(s) FAILED")
         return 1
-    print(f"run_fixture: all {total} cases behaved as expected")
+    print(f"run_check_pr_base_fixture: all {total} cases behaved as expected")
     return 0
 
 
