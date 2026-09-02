@@ -66,8 +66,8 @@ skeleton that output-discipline and the receipt gate both inherit their exit con
 checker (untagged/dangling rules, renamed headings, vocabulary bypasses).
 
 **On-demand ([skills/](skills/README.md), outside the measured per-task surface):**
-belief-check, triad-check, and concurrency-map — invocable in a session on this repo via the
-pointers in `.claude/skills/`.
+belief-check, triad-check, and concurrency-map. The canonical files live in `skills/`; this repo
+does not wire them into its own sessions (`.claude/` is untracked here except `settings.json`).
 
 ### Piece numbers ([NN] legend)
 

@@ -70,8 +70,8 @@ tri-estado do qual output-discipline e o receipt gate herdam o contrato de exit.
 coerência (regra sem tag, heading renomeado, bypass de vocabulário).
 
 **On-demand ([skills/](skills/README.md), fora da superfície medida por tarefa):**
-belief-check, triad-check e concurrency-map — invocáveis numa sessão neste repo via os
-ponteiros de `.claude/skills/`.
+belief-check, triad-check e concurrency-map. Os arquivos canônicos ficam em `skills/`; este repo
+não os conecta às suas próprias sessões (`.claude/` não é versionado aqui, exceto `settings.json`).
 
 ### Numeração das peças (legenda [NN])
 
