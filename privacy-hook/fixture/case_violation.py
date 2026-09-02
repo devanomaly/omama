@@ -25,9 +25,11 @@ def main():
     # source too; see fixture-source-self-clean in check.py).
     lib.write_file(repo, "config/deploy.env",
                     b"AWS_ACCESS_KEY_ID=AKIA" + b"ABCDEFGHIJKLMNOP\n")
-    # Deny-listed literal token from privacy-tokens.txt.
+    # Deny-listed literal token from privacy-tokens.txt -- the SHIPPED example
+    # token, split for the same reason (check.py commits this file through
+    # the hook with the shipped config, team layers included).
     lib.write_file(repo, "notes/internal.md",
-                    b"reference: EXAMPLE-DENY-TOKEN in the ticket\n")
+                    b"reference: EXAMPLE-DENY-" + b"TOKEN in the ticket\n")
 
     r = lib.attempt_commit(repo, "should be blocked")
     sys.stdout.write(r.stdout)

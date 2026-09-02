@@ -23,13 +23,19 @@ asserted green so re-adding a broad value rule goes red here first).
 case_corpus.py must exit ZERO -- it self-reports per-case polarity and
 fails loudly on any case that behaves wrong.
 
-Finally, fixture-source-self-clean asserts that every fixture/*.py file,
-scanned as bytes the same way the real hook would scan a staged blob,
-trips none of privacy-hook's built-in credential-shape rules -- so an
-adopting repo (this one included) can commit a fixture edit through its
-own hook. Payloads a case plants at runtime are unchanged; only the
-fixture's SOURCE representation of a credential shape is required to be
-non-contiguous (built by concatenation).
+Before any of those, fixture-source-self-clean: the fixture's OWN source files must
+commit through the hook AS SHIPPED. Every regular file in fixture/ is
+copied into a throwaway repo built by lib.make_repo (shipped wrapper,
+shipped privacy-deny.json + privacy-tokens.txt, scanner at the root),
+staged, and committed for real; `git commit` must exit 0. This is what
+lets an adopting repo (this one included) commit a fixture edit through
+its own hook. Payloads a case plants at runtime are unchanged; only the
+fixture's SOURCE spelling of anything the shipped config flags -- the
+built-in credential shapes AND the example team rules (deny_regexes,
+tokens_file) -- is required to be non-contiguous (built by
+concatenation). Scanning the source in-process with builtins_only would
+NOT prove this: the shipped config's team layers block too (red-green
+proven, see EVIDENCE.md).
 
 Exits 0 only if all of them hold, 1 otherwise.
 """
@@ -38,9 +44,8 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PIECE_DIR = os.path.dirname(HERE)
-sys.path.insert(0, PIECE_DIR)
-import scan_staged  # noqa: E402
+sys.path.insert(0, HERE)
+import lib  # noqa: E402
 
 
 def run(script):
@@ -50,49 +55,60 @@ def run(script):
 
 
 def check_fixture_source_self_clean():
-    """The fixture's OWN source files must pass privacy-hook's built-in
-    scanner, so an adopting repo (this one included) can commit a fixture
-    edit through the hook. Reads each fixture/*.py as bytes -- the same
-    bytes `git show :path` would hand the real hook -- and asserts
-    scan_bytes(..., builtins_only=True) reports no rule. deny_regexes and
-    the token list are irrelevant here (this fixture plants no team-owned
-    literal), so only the built-in credential shapes are checked; team
-    config is exercised by the corpus's deny-filename / deny-token /
-    deny-regex cases instead.
+    """Stage every regular file in fixture/ (the files this repo commits;
+    .tmp/ and __pycache__/ are not source) inside a throwaway repo with
+    the hook installed exactly as ADOPTION step 1/2 installs it -- the
+    SHIPPED privacy-deny.json and privacy-tokens.txt included -- and make
+    a real `git commit`. The verdict is git's own exit code, and the
+    BLOCKED lines are the hook's own, so what fails here is exactly what
+    would fail for a developer committing a fixture edit through the
+    hook: built-in credential shapes AND the example team rules.
+
+    This is a WORKTREE-source check: the bytes staged in the scratch
+    repo are the bytes on disk here, not this repo's index. A partially
+    staged edit is therefore judged by its working-tree content; the
+    real hook in an adopting repo judges the staged blob. Both agree
+    whenever the file on disk is what gets committed, which is the case
+    CI and a plain `git add` produce.
 
     A payload a case PLANTS at runtime (inside a throwaway repo under
     fixture/.tmp/) is not fixture SOURCE and is correctly out of scope --
-    only the *.py files committed to this repo are scanned."""
-    failures = []
+    only the files committed to this repo are staged."""
+    repo = lib.make_repo()
+    staged = []
     for name in sorted(os.listdir(HERE)):
-        if not name.endswith(".py"):
+        src = os.path.join(HERE, name)
+        if not os.path.isfile(src):
             continue
-        path = os.path.join(HERE, name)
-        with open(path, "rb") as f:
-            data = f.read()
-        hit = scan_staged.scan_bytes(data, deny_regexes=[], tokens=[],
-                                     builtins_only=True)
-        if hit:
-            failures.append((name, hit))
-    return failures
+        with open(src, "rb") as f:
+            lib.write_file(repo, "fixture/" + name, f.read())
+        staged.append(name)
+    lib.git(repo, "add", "fixture")
+    r = lib.git(repo, "commit", "-q", "-m", "fixture source through the shipped hook")
+    output = r.stdout + r.stderr
+    if r.returncode == 0:
+        if not lib.rmtree(os.path.dirname(repo)):
+            print("WARN: scratch tree not removed: fixture/.tmp/%s"
+                  % os.path.basename(os.path.dirname(repo)), file=sys.stderr)
+    return r.returncode, output, staged
 
 
 def main():
     ok = True
 
-    failures = check_fixture_source_self_clean()
-    print("--- fixture-source-self-clean (expect no built-in rule hits) ---")
-    if failures:
-        for name, hit in failures:
-            print("FAIL: fixture/%s matches built-in rule %r" % (name, hit),
-                  file=sys.stderr)
-        print("FAIL: fixture source is not committable through its own "
-              "hook -- split the flagged literal(s) by concatenation",
+    rc, out, staged = check_fixture_source_self_clean()
+    print("--- fixture-source-self-clean: %d files committed through the "
+          "shipped hook config (expect zero) -> rc=%d ---" % (len(staged), rc))
+    print(out, end="")
+    if rc != 0:
+        print("FAIL: fixture source is not committable through its own hook "
+              "as shipped -- split the flagged literal(s) by concatenation "
+              "(built-in shapes and the example team rules alike)",
               file=sys.stderr)
         ok = False
     else:
-        print("PASS: every fixture/*.py is clean against the built-in "
-              "rules (fixture is self-committable, red-green proven)")
+        print("PASS: every fixture/ source file commits through the shipped "
+              "hook (fixture is self-committable, red-green proven)")
 
     rc, out, err = run("case_violation.py")
     print("--- case_violation.py (expect non-zero) -> rc=%d ---" % rc)

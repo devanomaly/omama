@@ -254,8 +254,15 @@ PEM_BLOCK = (
     b"-----END RSA PRIVATE KEY-----\n"
 )
 
+# The two EXAMPLE team rules the piece ships (privacy-tokens.txt and the
+# `internal-hostname` entry of privacy-deny.json). Split for the same reason
+# as the credential shapes: check.py commits this source through the hook
+# with the SHIPPED config, so the team layers apply to it as well.
+DENY_TOKEN = b"EXAMPLE-DENY-" + b"TOKEN"
+DENY_HOSTNAME = b"internal.example." + b"corp"
+
 UTF16_AWS = ('KEY = "' + AWS_KEY_BLOCKING.decode() + '"\n').encode("utf-16-le")
-UTF16_BOM_TOKEN = 'tok = "EXAMPLE-DENY-TOKEN"\n'.encode("utf-16")
+UTF16_BOM_TOKEN = ('tok = "' + DENY_TOKEN.decode() + '"\n').encode("utf-16")
 
 # --- the sixteen measured false positives, verbatim ---------------------
 # Source: toolkit-staging/attack-findings-wave-a2.json ->
@@ -445,12 +452,12 @@ CASES = [
     C("deny-filename-via-rename", BLOCK, stage_rename("settings.txt", ".env"), None),
     C("deny-token-literal", BLOCK,
       stage_content("notes/internal.md",
-                    b"reference: EXAMPLE-DENY-TOKEN in the ticket\n"),
-      "EXAMPLE-DENY-TOKEN"),
+                    b"reference: " + DENY_TOKEN + b" in the ticket\n"),
+      DENY_TOKEN.decode()),
     C("deny-regex-internal-hostname", BLOCK,
       stage_content("docs/runbook.md",
-                    b"ssh deploy@internal.example.corp\n"),
-      "internal.example.corp"),
+                    b"ssh deploy@" + DENY_HOSTNAME + b"\n"),
+      DENY_HOSTNAME.decode()),
 
     # =================================================================
     # BLOCK -- reach: renames, wide encodings, the config itself.
