@@ -6,11 +6,14 @@ polarity:
   - case_violation.py must exit NON-ZERO (commit was blocked)
   - case_clean.py must exit ZERO (commit went through)
 
-Then case_gitlink.py and case_scanner_override.py, each self-reporting
-its own polarities (gitlink named `.env` blocked / innocent gitlink
-allowed; the scanner reached through PRIVACY_HOOK_SCANNER giving the
-default location's verdict, and an override pointing at a missing file
-failing closed).
+Then case_gitlink.py, case_scanner_override.py and
+case_hookspath_merge.py, each self-reporting its own polarities (gitlink
+named `.env` blocked / innocent gitlink allowed; the scanner reached
+through PRIVACY_HOOK_SCANNER giving the default location's verdict, an
+override pointing at a missing file failing closed, an honoured override
+announced on stderr; ADOPTION route (a) + step 2c + step 3 composed: the
+launcher under both hook names blocks a key on commit AND on automatic
+merge while a clean merge goes through).
 
 Then runs case_corpus.py, the table-driven corpus: one red case per KEPT
 pattern, the deny-filename / literal-token / deny-regex red cases, the
@@ -78,7 +81,19 @@ def main():
         ok = False
     else:
         print("PASS: relocated scanner blocks identically, missing override "
-              "fails closed")
+              "fails closed, honoured override announced on stderr")
+
+    rc, out, err = run("case_hookspath_merge.py")
+    print("--- case_hookspath_merge.py (expect zero) -> rc=%d ---" % rc)
+    print(out, end="")
+    print(err, end="", file=sys.stderr)
+    if rc != 0:
+        print("FAIL: versioned .githooks + pre-merge-commit composition case "
+              "reported wrong behaviour", file=sys.stderr)
+        ok = False
+    else:
+        print("PASS: launcher under both hook names: key blocked on commit "
+              "and on merge, clean merge passes")
 
     rc, out, err = run("case_corpus.py")
     print("--- case_corpus.py (expect zero) -> rc=%d ---" % rc)

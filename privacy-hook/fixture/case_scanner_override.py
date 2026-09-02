@@ -8,7 +8,7 @@ byte-identical with upstream, which is what makes "update" a copy instead
 of a merge. The wrapper now reads ONE knob, `PRIVACY_HOOK_SCANNER`,
 defaulting to `<repo-root>/scan_staged.py`.
 
-Three assertions, one throwaway repo:
+Five assertions, one throwaway repo:
 
   1. baseline -- scanner at the default location, planted AWS-shaped key,
      commit BLOCKED. The `BLOCKED ...` lines are captured and become the
@@ -31,15 +31,25 @@ Three assertions, one throwaway repo:
      from another repo) lives in no diff and no reviewer ever sees it.
      Existence is validated, identity is not: an override aimed at any
      readable file makes the hook a no-op. That residual is accepted;
-     doing it SILENTLY is not. With the knob set, the wrapper must say so
-     on stderr. Red when the wrapper only defaults quietly: an override
-     pointing at an empty script commits the planted violation with rc=0
-     and zero output.
+     doing it SILENTLY is not. With the knob set, the wrapper must say so.
+     Red when the wrapper only defaults quietly: an override pointing at
+     an empty script commits the planted violation with rc=0 and zero
+     output.
+
+  5. stream discipline -- the notice goes to STDERR and the scanner's
+     verdict lines stay on STDOUT. Through `git commit` that split is
+     invisible: git folds a hook's stdout into its own stderr, so a
+     review mutation that dropped the notice's `>&2` left assertion 4
+     green and would have left an `r.stderr` check green too (measured
+     2026-09-02). So the wrapper is invoked DIRECTLY here, as a combined
+     hook's `exec sh .githooks/privacy-pre-commit` does, with the two
+     streams captured apart. Red with the `>&2` dropped: the notice
+     lands on stdout among the verdicts.
 
 Assertion 3 also charges the pasteable-output promise on the new
 diagnostic: no traceback, and no absolute path in the message.
 
-Exits 0 when all four hold, 1 otherwise, 2 if the fixture itself could
+Exits 0 when all five hold, 1 otherwise, 2 if the fixture itself could
 not be set up.
 """
 import os
@@ -66,6 +76,23 @@ def commit(repo, message, scanner=None):
         env.pop("PRIVACY_HOOK_SCANNER", None)
     return subprocess.run(["git", "commit", "-m", message], cwd=repo,
                           capture_output=True, text=True, env=env)
+
+
+def find_sh():
+    """A POSIX shell to run the wrapper with, for the one assertion that
+    must see the wrapper's own streams. PATH first; on Windows, Git for
+    Windows ships one next to git (`<Git>/bin/sh.exe`)."""
+    sh = shutil.which("sh")
+    if sh:
+        return sh
+    git = shutil.which("git")
+    if git:
+        root = os.path.dirname(os.path.dirname(git))
+        for cand in (("bin", "sh.exe"), ("usr", "bin", "sh.exe")):
+            p = os.path.join(root, *cand)
+            if os.path.exists(p):
+                return p
+    return None
 
 
 def blocked_lines(r):
@@ -174,21 +201,73 @@ def main():
     lib.git(repo, "add", VIOLATING_PATH)
     r = commit(repo, "override honoured: must be announced",
                scanner="innocuous.py")
-    out = r.stdout + r.stderr
-    if "privacy-hook: scanner =" not in out:
+    # Through `git commit` this can only charge that the line EXISTS: git
+    # folds a hook's stdout into its own stderr, so everything the hook
+    # printed arrives on r.stderr whatever stream the wrapper chose
+    # (measured 2026-09-02: `>&2` removed, r.stderr unchanged). Which
+    # stream the wrapper itself writes to is assertion 5.
+    if "privacy-hook: scanner =" not in r.stderr:
         sys.stderr.write(
             "FAIL: PRIVACY_HOOK_SCANNER was honoured SILENTLY -- an ambient "
-            "override redirected the scan and nothing on stdout/stderr said "
-            "so (rc=%d)\n%s\n" % (r.returncode, out or "<no output>"))
+            "override redirected the scan and nothing in the hook output "
+            "said so (rc=%d)\n%s\n"
+            % (r.returncode, (r.stdout + r.stderr).strip() or "<no output>"))
         ok = False
-    elif "innocuous.py" not in out:
+    elif "innocuous.py" not in r.stderr:
         sys.stderr.write(
             "FAIL: the override notice does not name the value the scan was "
-            "redirected to:\n%s\n" % out)
+            "redirected to:\n%s\n" % r.stderr)
         ok = False
     else:
-        print("PASS: an honoured PRIVACY_HOOK_SCANNER announces itself on "
-              "stderr")
+        print("PASS: an honoured PRIVACY_HOOK_SCANNER announces itself in "
+              "the hook output")
+
+    # --- 5. stream discipline: notice on stderr, verdict on stdout ------
+    # README and EVIDENCE promise the notice on STDERR, and the scanner's
+    # `BLOCKED <rule> <path>` verdict lines go to STDOUT -- the split a
+    # chained hook, a CI step or a human piping the output relies on. git
+    # hides it (see above), so the wrapper is invoked DIRECTLY here, the
+    # way a combined hook's `exec sh .githooks/privacy-pre-commit` does,
+    # with the two streams captured apart. Red with the notice's `>&2`
+    # dropped: the notice lands on stdout among the verdicts.
+    sh = find_sh()
+    if sh is None:
+        sys.stderr.write("FIXTURE BUG: no `sh` to invoke the wrapper directly "
+                         "(looked on PATH and next to git)\n")
+        return 2
+    lib.write_file(repo, "config/other.env", VIOLATION)
+    lib.git(repo, "add", "config/other.env")
+    env = lib.hook_env()
+    env["PRIVACY_HOOK_SCANNER"] = "scan_staged.py"
+    d = subprocess.run([sh, os.path.join(".git", "hooks", "pre-commit")],
+                       cwd=repo, capture_output=True, text=True, env=env)
+    verdict = "BLOCKED aws-access-key config/other.env"
+    if d.returncode != 1 or verdict not in d.stdout + d.stderr:
+        sys.stderr.write(
+            "FIXTURE BUG: direct wrapper run did not produce the expected "
+            "verdict (rc=%d)\n  stdout: %s\n  stderr: %s\n"
+            % (d.returncode, d.stdout.strip(), d.stderr.strip()))
+        return 2
+    if "privacy-hook: scanner =" not in d.stderr:
+        sys.stderr.write(
+            "FAIL: the override notice is not on the wrapper's STDERR -- "
+            "wrapper invoked directly:\n  stdout: %s\n  stderr: %s\n"
+            % (d.stdout.strip(), d.stderr.strip()))
+        ok = False
+    elif "privacy-hook: scanner =" in d.stdout:
+        sys.stderr.write(
+            "FAIL: the override notice is on the wrapper's STDOUT, among the "
+            "verdict lines:\n%s\n" % d.stdout)
+        ok = False
+    elif verdict not in d.stdout or "BLOCKED " in d.stderr:
+        sys.stderr.write(
+            "FAIL: the scanner's verdict is not on STDOUT alone -- wrapper "
+            "invoked directly:\n  stdout: %s\n  stderr: %s\n"
+            % (d.stdout.strip(), d.stderr.strip()))
+        ok = False
+    else:
+        print("PASS: wrapper invoked directly keeps the notice on stderr and "
+              "the verdict on stdout")
 
     if ok:
         lib.rmtree(os.path.dirname(repo))

@@ -69,13 +69,32 @@ def rmtree(path, attempts=12, delay=0.15):
     return not os.path.exists(path)
 
 
+def hook_env():
+    """The environment the fixture hands to git, and git hands to the hook.
+
+    The wrapper reads PRIVACY_HOOK_SCANNER from the AMBIENT environment --
+    the exact leak case_scanner_override.py documents -- so a value the
+    developer's shell happens to export would reach every fixture repo:
+    a path absent here blocks every case with `missing-scanner` (the
+    smoke cases then die at setup, rc=2), a path present but pointing at
+    the wrong script turns the hook into a no-op (`FIXTURE BUG: violating
+    commit was NOT blocked`). Every case charges the DEFAULT location
+    unless it sets the knob on purpose, so the knob is dropped here and
+    re-added only by the one case that means it (case_scanner_override's
+    own commit helper)."""
+    env = os.environ.copy()
+    env.pop("PRIVACY_HOOK_SCANNER", None)
+    return env
+
+
 def make_repo():
     tmp = tempfile.mkdtemp(prefix="privacy-hook-fixture-", dir=_tmp_base())
     repo = os.path.join(tmp, "repo")
     os.makedirs(repo)
 
     def run(*args, **kw):
-        r = subprocess.run(args, cwd=repo, capture_output=True, text=True, **kw)
+        r = subprocess.run(args, cwd=repo, capture_output=True, text=True,
+                           env=hook_env(), **kw)
         return r
 
     run("git", "init", "-q")
@@ -108,6 +127,80 @@ def make_repo():
     return repo
 
 
+# ADOPTION step 2c, verbatim shape: the hook git calls is a two-line
+# launcher that sets the knob and hands over to the SHIPPED wrapper, kept
+# as its own file so it stays byte-identical with upstream.
+LAUNCHER = (b"#!/bin/sh\n"
+            b"# .githooks/<hook-name> -- ADOPTION step 2c launcher\n"
+            b"PRIVACY_HOOK_SCANNER=tools/scan_staged.py\n"
+            b"export PRIVACY_HOOK_SCANNER\n"
+            b"exec sh .githooks/privacy-pre-commit\n")
+
+
+def make_versioned_repo(merge_hook="launcher"):
+    """ADOPTION route (a) + step 2c + step 3 COMPOSED, the way an adopter
+    who vendors the scanner under tools/ ends up installed:
+
+      - `git config core.hooksPath .githooks` (route a), the hooks dir
+        tracked in the repo;
+      - scan_staged.py at tools/scan_staged.py, config + tokens at the
+        root (those two are not movable -- step 5);
+      - the shipped wrapper, byte-for-byte, at .githooks/privacy-pre-commit;
+      - .githooks/pre-commit = LAUNCHER (step 2c);
+      - .githooks/pre-merge-commit (step 3) = the same LAUNCHER when
+        merge_hook == "launcher" -- what step 3 says now -- or a bare
+        copy of the shipped wrapper when merge_hook == "wrapper", which
+        is what step 3 USED to say and is the red of
+        case_hookspath_merge.py: that wrapper looks for the scanner at
+        the root, finds nothing, and refuses every merge, clean or not.
+
+    Everything a colleague would `git pull` is committed in the initial
+    commit, which itself goes through the pre-commit launcher."""
+    if merge_hook not in ("launcher", "wrapper"):
+        raise ValueError("merge_hook must be 'launcher' or 'wrapper'")
+    tmp = tempfile.mkdtemp(prefix="privacy-hook-fixture-", dir=_tmp_base())
+    repo = os.path.join(tmp, "repo")
+    os.makedirs(repo)
+
+    def run(*args):
+        return subprocess.run(args, cwd=repo, capture_output=True, text=True,
+                              env=hook_env())
+
+    run("git", "init", "-q")
+    run("git", "config", "user.email", "fixture@example.test")
+    run("git", "config", "user.name", "Fixture Runner")
+    run("git", "config", "core.hooksPath", ".githooks")
+
+    os.makedirs(os.path.join(repo, "tools"))
+    os.makedirs(os.path.join(repo, ".githooks"))
+    shutil.copy(os.path.join(PIECE_DIR, "scan_staged.py"),
+                os.path.join(repo, "tools", "scan_staged.py"))
+    shutil.copy(os.path.join(PIECE_DIR, "privacy-deny.json"),
+                os.path.join(repo, "privacy-deny.json"))
+    shutil.copy(os.path.join(PIECE_DIR, "privacy-tokens.txt"),
+                os.path.join(repo, "privacy-tokens.txt"))
+    shutil.copy(os.path.join(PIECE_DIR, "pre-commit"),
+                os.path.join(repo, ".githooks", "privacy-pre-commit"))
+
+    write_file(repo, ".githooks/pre-commit", LAUNCHER)
+    if merge_hook == "launcher":
+        write_file(repo, ".githooks/pre-merge-commit", LAUNCHER)
+    else:
+        shutil.copy(os.path.join(PIECE_DIR, "pre-commit"),
+                    os.path.join(repo, ".githooks", "pre-merge-commit"))
+    for name in ("pre-commit", "pre-merge-commit"):
+        os.chmod(os.path.join(repo, ".githooks", name), 0o755)
+
+    run("git", "add", "tools/scan_staged.py", "privacy-deny.json",
+        "privacy-tokens.txt", ".githooks")
+    r = run("git", "commit", "-q", "-m", "chore: install privacy-hook (versioned)")
+    if r.returncode != 0:
+        sys.stderr.write("fixture setup failed: %s\n%s\n" % (r.stdout, r.stderr))
+        sys.exit(2)
+
+    return repo
+
+
 def write_file(repo, relpath, content_bytes):
     full = os.path.join(repo, relpath)
     os.makedirs(os.path.dirname(full), exist_ok=True) if os.path.dirname(full) else None
@@ -117,7 +210,7 @@ def write_file(repo, relpath, content_bytes):
 
 def git(repo, *args):
     return subprocess.run(["git"] + list(args), cwd=repo,
-                           capture_output=True, text=True)
+                          capture_output=True, text=True, env=hook_env())
 
 
 def attempt_commit(repo, message):

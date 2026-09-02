@@ -91,16 +91,30 @@ Plain git repo (no `pre-commit` framework):
    appearing in any diff. A notice on a repo where nobody configured one
    means something in the environment is choosing the scanner; the hook
    validates that the file exists, never that it is `scan_staged.py`.
-3. **Recommended:** install the same wrapper file under the name
-   `pre-merge-commit` as well (this piece ships one hook file; the
-   second name is a copy of it). git doesn't call `pre-commit` on an
-   automatic merge — it calls `pre-merge-commit`. Without this, merging
-   a colleague's branch that doesn't have the hook installed produces,
-   on YOUR machine, a local commit with their secret.
+3. **Recommended:** install a `pre-merge-commit` hook as well. git
+   doesn't call `pre-commit` on an automatic merge — it calls
+   `pre-merge-commit`. Without this, merging a colleague's branch that
+   doesn't have the hook installed produces, on YOUR machine, a local
+   commit with their secret. The second name is a copy of **the hook
+   git calls in step 2, whatever that file is** — not necessarily the
+   shipped wrapper:
    ```
+   # plain step 2a / 2b (scanner at the root, no chaining): the wrapper itself
    cp pre-commit <REPO_ROOT>/.githooks/pre-merge-commit    # route (a)
    cp pre-commit <REPO_ROOT>/.git/hooks/pre-merge-commit   # route (b)
+   # step 2c launcher, or the combined hook from "Chaining" below: THAT file
+   cp <REPO_ROOT>/.githooks/pre-commit <REPO_ROOT>/.githooks/pre-merge-commit
    ```
+   Copying the bare wrapper under the second name **after step 2c** is
+   the one combination that does not work: that wrapper looks for the
+   scanner at the root, finds nothing there, and refuses **every**
+   automatic merge, clean or not, with `BLOCKED hook-error
+   missing-scanner … set PRIVACY_HOOK_SCANNER` — a variable you did set,
+   in a file git never calls on a merge. Two independent reviews hit it
+   (2026-09-02); `fixture/case_hookspath_merge.py` builds route (a) +
+   step 2c + this step and charges that a colleague's leaked key is
+   refused on the merge by the scanner's verdict while a clean merge
+   goes through.
    `git am`, `git cherry-pick`, and `git rebase` remain **out of
    reach** (probe P4: cherry-pick lands the secret with rc=0) — see
    "Reach and limits" in the [README](README.md).
@@ -166,6 +180,11 @@ the execute bit surviving the clone. Sourcing it last (`. .githooks/privacy-pre-
 is equivalent for this purpose — the wrapper's own `exec` ends the hook
 either way. What is **not** equivalent: putting the scan first. Its
 `exec` would make the repo's own checks dead code.
+
+The combined hook is also what goes under `pre-merge-commit` (step 3):
+a bare copy of the wrapper there would skip the repo's own checks on
+every merge and, with the scanner relocated, refuse every merge with
+`missing-scanner`.
 
 ## What only a human decides
 

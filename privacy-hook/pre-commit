@@ -43,7 +43,9 @@ fi
 # default path would scan a file the adopter did not choose (or, with no
 # default present either, let the interpreter's own "can't open file"
 # stand in for a verdict). Same `BLOCKED <rule>` shape as every other
-# finding, exit 1, and no path echoed -- hook output stays pasteable.
+# finding, exit 1, and the diagnostic itself echoes no path: the only
+# path in the output is the value the adopter typed, named by the notice
+# above, never one this script discovered -- hook output stays pasteable.
 if [ ! -f "$PRIVACY_HOOK_SCANNER" ]; then
   echo "BLOCKED hook-error missing-scanner (no scan_staged.py at the configured location; set PRIVACY_HOOK_SCANNER to where it lives)" >&2
   exit 1
