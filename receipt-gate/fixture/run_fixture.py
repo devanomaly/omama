@@ -1164,6 +1164,67 @@ def w_single_quoted_placeholder(tmp):
               f"violation must name the literal placeholder: {vl}", r)
 
 
+def w_dollar_rejected(tmp):
+    """Anything sh would still EXPAND after the CLAUDE_PROJECT_DIR
+    placeholders are substituted -- `$(...)` command substitution, `$VAR`
+    -- is a shell expansion this check does not model. The real hook is
+    shell-form, so `$(...)` runs there; the checker exec's argv, so the
+    dry run never runs it (false WIRING-OK, review finding 2026-09-02),
+    and under --static-only it would certify PR-author-controlled
+    settings that execute arbitrary code at every Stop. Every remaining
+    `$` must be a named VIOLATION in both modes, never a pass."""
+    repo = make_repo(tmp)
+    plant_settings(repo, '"{0}" "{1}" $(echo probe-executed)'.format(PY, GATE))
+    r = run_wiring(repo)
+    check(r.returncode == 1,
+          f"$(...) in the command must be exit 1, got {r.returncode}", r)
+    vl = viol_lines(r)
+    check(any("$" in v and "expansion" in v for v in vl),
+          f"violation must name the unmodeled $ expansion: {vl}", r)
+    r = run_wiring(repo, extra=("--static-only",))
+    check(r.returncode == 1,
+          f"$(...) under --static-only must be exit 1, got {r.returncode}", r)
+    check(not any("WIRING-STATIC-OK" in ln for ln in r.stdout.splitlines()),
+          "--static-only printed WIRING-STATIC-OK for a $(...) command", r)
+    plant_settings(repo, '"$PYTHON" "{0}"'.format(GATE))
+    r = run_wiring(repo)
+    check(r.returncode == 1,
+          f"$PYTHON interpreter must be exit 1, got {r.returncode}", r)
+    check(any("$" in v and "expansion" in v for v in viol_lines(r)),
+          "violation must name the unmodeled $ expansion for $PYTHON", r)
+
+
+def w_no_git_bash(tmp):
+    """On Windows Claude Code runs shell-form hooks through Git Bash, and
+    falls back to PowerShell when Git Bash is not installed -- where the
+    certified sh-form string is not what runs (review finding
+    2026-09-02). CLAUDE_CODE_GIT_BASH_PATH is Claude Code's own knob for
+    a non-standard Git Bash and is authoritative when set: pointed at a
+    file that does not exist, the hook shell cannot be established and
+    the check must be NOT-RUN (exit 2) naming Git Bash -- never
+    WIRING-OK. On POSIX the knob is meaningless and must be ignored
+    (clean wiring still certifies)."""
+    repo = make_repo(tmp)
+    plant_settings(repo, '"{0}" "{1}"'.format(PY, GATE))
+    env = dict(os.environ)
+    env["CLAUDE_CODE_GIT_BASH_PATH"] = str(Path(tmp) / "ghost" / "bash.exe")
+    r = subprocess.run([PY, str(WIRING), str(repo)], input="",
+                       capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", cwd=str(repo), timeout=120, env=env)
+    if os.name == "nt":
+        check(r.returncode == 2,
+              f"Windows without Git Bash must be NOT-RUN (exit 2), "
+              f"got {r.returncode}", r)
+        check("NOT-RUN" in r.stderr and "Git Bash" in r.stderr,
+              "NOT-RUN line must name Git Bash", r)
+        check("WIRING-OK" not in r.stdout,
+              "printed WIRING-OK on a host whose hook shell is PowerShell", r)
+    else:
+        check(r.returncode == 0 and "WIRING-OK" in r.stdout,
+              f"POSIX must ignore CLAUDE_CODE_GIT_BASH_PATH, "
+              f"got exit {r.returncode}", r)
+
+
 def w_settings_missing(tmp):
     repo = make_repo(tmp)
     r = run_wiring(repo)
@@ -1290,6 +1351,8 @@ CASES = [
     ("wiring: shell: bash certifies, shell: powershell is a named VIOLATION", w_shell_field),
     ("wiring: disableAllHooks in settings(.local).json is a named VIOLATION", w_disable_all_hooks),
     ("wiring: single-quoted / escaped $CLAUDE_PROJECT_DIR is LITERAL -> named VIOLATION", w_single_quoted_placeholder),
+    ("wiring: $(...) / $VAR left after expansion is a named VIOLATION in both modes", w_dollar_rejected),
+    ("wiring: Windows without Git Bash (CLAUDE_CODE_GIT_BASH_PATH ghost) is NOT-RUN, POSIX ignores it", w_no_git_bash),
     ("wiring: missing settings(.local).json is NOT-RUN (exit 2)", w_settings_missing),
     ("wiring: settings without a Stop hook is 'gate absent'", w_no_stop_hook),
     ("wiring: exit 2 without the BAD-INPUT block is NOT a present gate", w_gate_does_not_answer),

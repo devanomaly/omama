@@ -71,9 +71,15 @@ Resolution steps per handler (hooks.Stop[*].hooks[*], type "command"):
      VIOLATION -- expanding it here would certify a hook that can never
      run.
   3. Shell operators (`| & ; < >` backtick, newline) are named
-     VIOLATIONs: the command is exec'd as plain argv both here and
-     conceptually by the gate contract, and `|| true` would swallow the
-     gate's blocking exit. Quoting (single or double) is fine -- sh and
+     VIOLATIONs: the real hook is SHELL-form, so sh would run them, while
+     the dry run below exec's plain argv and would never see them (`||
+     true` would swallow the gate's blocking exit). Any `$` still present
+     AFTER the CLAUDE_PROJECT_DIR substitution -- `$(...)` command
+     substitution, `$OTHER_VAR` -- is likewise a named VIOLATION in BOTH
+     modes: sh would expand or execute it, the checker cannot model it,
+     and under --static-only a pass would certify PR-author-controlled
+     settings that run arbitrary code at every Stop (review finding,
+     2026-09-02). Quoting (single or double) is fine -- sh and
      shlex(posix=True) tokenize both the same way.
   4. The command is parsed with shlex.split(posix=True). Double-quoted
      Windows paths with SINGLE backslashes survive this (inside double
@@ -88,14 +94,29 @@ Resolution steps per handler (hooks.Stop[*].hooks[*], type "command"):
      parsed command is dry-run with empty stdin (time-boxed), and must
      answer the BAD-INPUT block on exit 2.
 
+Hook shell on Windows: Claude Code runs shell-form hooks through Git Bash
+and falls back to PowerShell when Git Bash is not installed -- where NOTHING
+this check certifies is what runs (`$CLAUDE_PROJECT_DIR` is a null
+PowerShell variable; a quoted path as the first token is a string
+expression, not a command). So on Windows the check first establishes that
+Git Bash exists, the way Claude Code's own knob describes it:
+CLAUDE_CODE_GIT_BASH_PATH when set (authoritative -- a value pointing at a
+missing file means the shell cannot be established), else bash.exe next to
+the `git` on PATH or in the standard Git for Windows locations. Not found
+-> NOT-RUN (exit 2) naming Git Bash: the hook shell could not be
+established, so presence was not evaluated -- never WIRING-OK. This is a
+proxy for Claude Code's detection (INFERRED from the documented knob and
+install locations, not from its source); the direction is fail-closed.
+
+Same command registered in both settings files is checked once. Any
+positional argument beyond the repo root is NOT-RUN (a typo in the flag
+must not be silently ignored).
+
 What this does NOT do: it DETECTS dead wiring at the moment it runs --
 nothing prevents the interpreter from vanishing afterwards; re-run it after
 interpreter upgrades and on fresh clones (it is cheap enough for CI, but
 see the SECURITY note above before wiring the default mode into CI that
-checks out untrusted PRs). It models the hook shell as sh: on a Windows
-host WITHOUT Git Bash, Claude Code falls back to PowerShell, where the
-sh-form command string is not what runs -- the check does not verify Git
-Bash's presence (residual, named in the README).
+checks out untrusted PRs).
 """
 import os
 import sys
@@ -110,7 +131,7 @@ BARE_LAUNCHERS = ("py", "python3", "python")
 # CLAUDE_PROJECT_DIR in env; "$CLAUDE_PROJECT_DIR" and
 # "${CLAUDE_PROJECT_DIR}" expanded to the repo root,
 # "%CLAUDE_PROJECT_DIR%" reached the hook as a literal.
-HOST_SHELL = "sh (Git Bash on Windows)"
+HOST_SHELL = "sh (Git Bash)" if os.name == "nt" else "sh"
 HOST_FORMS = ("${CLAUDE_PROJECT_DIR}", "$CLAUDE_PROJECT_DIR")  # longest first
 ALIEN_FORMS = ("%CLAUDE_PROJECT_DIR%",)
 MODELED_SHELLS = ("bash",)          # the `shell` values this check models
@@ -133,10 +154,55 @@ def _emit(violations):
     return 1
 
 
+def _git_bash_missing():
+    """Windows only. None when Git Bash can be established (or off
+    Windows); otherwise the NOT-RUN reason. CLAUDE_CODE_GIT_BASH_PATH is
+    Claude Code's own knob and is authoritative when set."""
+    import os
+    import shutil
+    if os.name != "nt":
+        return None
+    knob = os.environ.get("CLAUDE_CODE_GIT_BASH_PATH")
+    if knob:
+        if os.path.isfile(knob):
+            return None
+        return ("hook shell could not be established: Git Bash not found -- "
+                "CLAUDE_CODE_GIT_BASH_PATH points at {0!r}, which is not a "
+                "file -- Claude Code would "
+                "run the Stop hook through PowerShell, where this sh-form "
+                "command is not what runs; gate presence not evaluated"
+                .format(knob))
+    candidates = []
+    git = shutil.which("git")
+    if git:
+        gdir = os.path.dirname(os.path.abspath(git))
+        for up in ("..", os.path.join("..", "..")):
+            candidates.append(os.path.normpath(
+                os.path.join(gdir, up, "bin", "bash.exe")))
+    for var in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432",
+                "LocalAppData"):
+        base = os.environ.get(var)
+        if base:
+            candidates.append(os.path.join(base, "Git", "bin", "bash.exe"))
+            candidates.append(os.path.join(base, "Programs", "Git", "bin",
+                                           "bash.exe"))
+    if any(os.path.isfile(c) for c in candidates):
+        return None
+    return ("hook shell could not be established: no Git Bash found (no "
+            "CLAUDE_CODE_GIT_BASH_PATH, no bin/bash.exe next to the git on "
+            "PATH, none in the standard Git for Windows locations) -- Claude "
+            "Code would run the Stop hook through PowerShell, where this "
+            "sh-form command is not what runs; install Git for Windows or "
+            "set CLAUDE_CODE_GIT_BASH_PATH; gate presence not evaluated")
+
+
 def _resolve_root(argv):
     """(root|None, not_run_reason|None)."""
     import os
     import subprocess
+    if len(argv) > 2:
+        return None, ("unexpected argument(s) {0!r} -- usage: check_wiring.py "
+                      "[repo-root] [--static-only]".format(argv[2:]))
     if len(argv) > 1 and argv[1].strip():
         root = argv[1]
         if not os.path.isdir(root):
@@ -306,6 +372,13 @@ def _check_command(command, root, static_only=False):
             "is inside single quotes or escaped, so sh does not expand it "
             "and the hook can never find its script -- use double quotes "
             "or none: {2!r}".format(HOST_SHELL, site, command))
+    if "$" in expanded:
+        pre_violations.append(
+            "unmodeled shell expansion: a `$` remains after the "
+            "CLAUDE_PROJECT_DIR substitution ({0}) -- sh would expand or "
+            "execute it ($(...), $VAR) and this check cannot model that; "
+            "write literal paths and the placeholder only: {1!r}".format(
+                expanded[expanded.index("$"):][:40], command))
     if pre_violations:
         return pre_violations  # parsing a shell-ism as argv proves nothing
 
@@ -382,6 +455,9 @@ def main(argv):
     root, reason = _resolve_root(argv)
     if root is None:
         return _not_run(reason)
+    reason = _git_bash_missing()
+    if reason is not None:
+        return _not_run(reason)
     # Claude Code merges settings.json with the untracked
     # settings.local.json -- the machine-specific absolute interpreter
     # path this piece mandates naturally lands in the local file, so a
@@ -431,8 +507,17 @@ def main(argv):
                       "a non-empty command in {0}".format(
                           " or ".join(readable))])
 
-    results = [(h["command"], _check_handler(h, root, static_only))
-               for h in handlers]
+    seen = set()
+    results = []
+    for h in handlers:
+        # The same handler registered in both settings files is one hook
+        # to certify, not two dry runs (both files are merged by Claude
+        # Code; the local one usually carries the machine-specific copy).
+        key = json.dumps(h, sort_keys=True)
+        if key in seen:
+            continue
+        seen.add(key)
+        results.append((h["command"], _check_handler(h, root, static_only)))
     clean = [command for command, violations in results if not violations]
     if clean:
         if static_only:
