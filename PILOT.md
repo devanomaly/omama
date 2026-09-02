@@ -5,6 +5,14 @@ maintainer on 2026-08-25, before the first pilot card. The commit that introduce
 registration rev — the numbers are pre-registered, not remembered. Any change to a threshold after
 the first closed card voids the pre-registration and is said so in the write-up.
 
+**Amended 2026-09-02, still before the first pilot card**, after an external review of the
+registration found four protocol defects, each reproduced before it was fixed: the window could
+qualify with zero S2 cards while the headline median is computed on S2 alone (§2); the export row
+dropped `close_reason` and `close_reason_class`, the two fields T4 depends on (§3 b); the sample
+`t0`/`t1` had no UTC offset and could not be subtracted from the receipt's offset-aware timestamp
+(§1, §3 b); and the log sink was a path relative to the card directory, i.e. per-worktree, not
+per-developer (§3 b). The registration rev is the commit that lands this amended file.
+
 **No efficacy claim is made here, and none is made by running this pilot.** The README says the
 mechanics are what's proven — red-green fixtures and an external adversarial review that converged
 on what to measure — and nothing more. This document does not add a claim; it fixes, in advance,
@@ -29,15 +37,15 @@ One row per card that reaches a receipt, plus one row per card that is abandoned
 |---|---|---|---|
 | `tier` | `S1` \| `S2` \| `S3` | the ratified card | yes — `tier` in `CARD.yaml` |
 | `task_type` | bugfix \| implementation \| refactor \| config \| do-nothing \| ask-first | the card | yes |
-| `t0` | ISO timestamp — card written and tier ratified | recorded by the developer, or `CARD.yaml` mtime at first write | approximate |
-| `t1` | ISO timestamp — **first** close attempt (`CARD.close` first written) | `CARD.close` mtime at first write | approximate |
-| `t2` | ISO timestamp — receipt written | `timestamp` in `CARD.receipt.json` | yes |
-| `minutes_card_to_receipt` | `t2 − t0`, minutes | derived | derived |
-| `minutes_close_loop` | `t2 − t1`, minutes | derived | derived |
+| `t0` | ISO timestamp **with explicit UTC offset** (`2026-08-23T09:12+00:00`) — card written and tier ratified | recorded by the developer, or `CARD.yaml` mtime at first write | approximate |
+| `t1` | ISO timestamp **with explicit UTC offset** — **first** close attempt (`CARD.close` first written) | `CARD.close` mtime at first write | approximate |
+| `t2` | ISO timestamp — receipt written | `timestamp` in `CARD.receipt.json` (the gate writes it offset-aware, UTC) | yes |
+| `minutes_card_to_receipt` | `t2 − t0`, minutes | derived by the export command in §3 (b), which refuses an offset-naive `t0` rather than guessing a zone | derived |
+| `minutes_close_loop` | `t2 − t1`, minutes | derived by the export command in §3 (b), same refusal on `t1` | derived |
 | `blocks` | count + the **named** reasons, in order | gate stderr: `BAD-INPUT` · `CARD-CONFIGURED-BUT-MISSING` · `CLOSE-TOKEN` · `SCHEMA` · `GIT-ERROR` · `INDEX-FLAGS` · `UNEXPECTED-CHANGE` · `VERIFY-RED` · `TIMEOUT` · `S3-REVIEW` · `GATE-ERROR` | by hand — see §6 |
 | `verdict` | `VERIFIED` \| `FAILED` \| `UNVERIFIED` | `verdict` in the receipt | yes |
 | `close_reason` | free text, present on FAILED/UNVERIFIED | `reason` in the receipt | yes |
-| `close_reason_class` | `work` \| `harness` \| `external` | classified by the developer at close | by hand |
+| `close_reason_class` | `work` \| `harness` \| `external` | classified by the developer at close — the sixth argument to the export command; **required** on FAILED/UNVERIFIED, refused on VERIFIED | by hand |
 | `self_test_skipped` | `y` \| `n` | did this close happen on a worktree/machine where the receipt-gate install self-test (red AND green, per `receipt-gate/adapt/README.md`) had been run? | by hand |
 | `tier_dispute` | `y` \| `n` (+ proposed → ratified, if `y`) | did the human ratify a tier different from the one the agent proposed, or did the two developers disagree on the tier? | by hand |
 | `review_artifact` | `y` \| `n` \| `n/a` | S3 only: was `CARD.review.md` produced before close? | yes (S3 close implies `y`) |
@@ -83,11 +91,18 @@ contact with a real repository.
 ### Window
 
 The rule is evaluated once, when **`30` cards have closed**, of which at least
-**`10` are S2 or S3** — or when **`90` days** have passed since the first
-closed card, whichever comes first. If the window closes with fewer than `10` S2/S3
+**`10` are S2** — or when **`90` days** have passed since the first
+closed card, whichever comes first. If the window closes with fewer than `10` S2
 cards, the pilot reports **INCONCLUSIVE on attention cost** and reports nothing else. It does not
 extend the window to reach a number it likes; extending the window after seeing the data is how a
 pre-registration becomes a story.
+
+The qualifying count is S2 specifically, not S2-or-S3. The headline trigger below is computed on
+S2 cards alone, so a window that qualified on `20` S1 + `10` S3 cards would have licensed a
+non-refutation with an undefined headline median — the protocol would have permitted a result
+without evaluating its own metric. Amended 2026-09-02 from "S2 or S3", before the first pilot card.
+T3's denominator is unchanged: it is stated on S2/S3 and is evaluated on whatever S2/S3 cards the
+window holds.
 
 ### Headline trigger
 
@@ -169,28 +184,49 @@ exists — never cross-machine — so the pasted block is a record, not a portab
 recorded as such.
 
 **(b) A one-command export at close time, appending one line to a local log.** Run in the card
-directory, immediately after the gate writes the receipt (`py -3` on Windows). VERIFIED: this
-command was executed against a sample card and receipt and exited 0, appending the row shown below:
+directory, immediately after the gate writes the receipt (`py -3` on Windows). VERIFIED 2026-09-02:
+this command was executed against a sample card and a FAILED receipt and exited 0, appending the
+row shown below; the refusal paths (offset-naive timestamp; missing or misplaced
+`close_reason_class`) were each executed and exited 1 without appending a row:
 
 ```
-python3 -c "import json,sys,yaml,os;c=yaml.safe_load(open('CARD.yaml',encoding='utf-8'));r=json.load(open('CARD.receipt.json',encoding='utf-8'));a=(sys.argv+['']*5)[1:6];row={'card':os.path.basename(os.getcwd()),'tier':c.get('tier'),'task_type':c.get('task_type'),'verdict':r.get('verdict'),'exit':r.get('exit'),'rev':r.get('rev'),'command':r.get('command'),'timestamp':r.get('timestamp'),'t0':a[0],'t1':a[1],'blocks':[b for b in a[2].split(',') if b],'self_test_skipped':a[3],'tier_dispute':a[4]};open('PILOT-LOG.jsonl','a',encoding='utf-8').write(json.dumps(row)+chr(10));print(json.dumps(row))" <t0> <t1> <BLOCK,BLOCK> <y|n> <y|n>
+python3 -c "import json,sys,yaml,os;from datetime import datetime as D;c=yaml.safe_load(open('CARD.yaml',encoding='utf-8'));r=json.load(open('CARD.receipt.json',encoding='utf-8'));a=(sys.argv+['']*6)[1:7];P=lambda s:(lambda d:d if d.utcoffset() is not None else sys.exit('REFUSED: timestamp without UTC offset (write 2026-08-23T09:12+00:00, not 2026-08-23T09:12): '+s))(D.fromisoformat(s)) if s else None;t0,t1,t2=P(a[0]),P(a[1]),P(r['timestamp']);M=lambda x,y:round((y-x).total_seconds()/60,1) if x and y else None;v=r.get('verdict');k=a[5];(v!='VERIFIED')!=(k in('work','harness','external')) and sys.exit('REFUSED: close_reason_class must be work|harness|external on FAILED/UNVERIFIED and empty on VERIFIED; got verdict=%s class=%r'%(v,k));row={'card':os.path.basename(os.getcwd()),'tier':c.get('tier'),'task_type':c.get('task_type'),'verdict':v,'exit':r.get('exit'),'rev':r.get('rev'),'command':r.get('command'),'timestamp':r.get('timestamp'),'t0':a[0],'t1':a[1],'minutes_card_to_receipt':M(t0,t2),'minutes_close_loop':M(t1,t2),'blocks':[b for b in a[2].split(',') if b],'self_test_skipped':a[3],'tier_dispute':a[4],'close_reason':r.get('reason'),'close_reason_class':k or None};p=os.environ.get('PILOT_LOG') or os.path.join(os.path.expanduser('~'),'PILOT-LOG.jsonl');open(p,'a',encoding='utf-8').write(json.dumps(row)+chr(10));print(json.dumps(row))" <t0> <t1> <BLOCK,BLOCK> <y|n> <y|n> <work|harness|external|>
 ```
 
 ```json
-{"card": "…", "tier": "S2", "task_type": "implementation", "verdict": "VERIFIED", "exit": 0,
+{"card": "…", "tier": "S2", "task_type": "implementation", "verdict": "FAILED", "exit": 1,
  "rev": "abc123def456", "command": "…", "timestamp": "2026-08-23T10:00:00+00:00",
- "t0": "2026-08-23T09:12", "t1": "2026-08-23T09:51",
- "blocks": ["SCHEMA", "VERIFY-RED"], "self_test_skipped": "n", "tier_dispute": "y"}
+ "t0": "2026-08-23T09:12+00:00", "t1": "2026-08-23T09:51+00:00",
+ "minutes_card_to_receipt": 48.0, "minutes_close_loop": 9.0,
+ "blocks": ["SCHEMA", "VERIFY-RED"], "self_test_skipped": "n", "tier_dispute": "y",
+ "close_reason": "verify exited 1", "close_reason_class": "harness"}
 ```
 
 The hand-supplied arguments are the fields no file carries: the two timestamps, the BLOCK reasons
-seen during this card, and the two yes/no answers. **A field that was not observed is left empty.
-It is never estimated after the fact** — an invented minute count would make every median in §2 a
-fiction, and the stopping rule would then be testing the log, not the harness.
+seen during this card, the two yes/no answers, and — on a FAILED or UNVERIFIED close only — the
+`close_reason_class`. **A field that was not observed is left empty. It is never estimated after
+the fact** — an invented minute count would make every median in §2 a fiction, and the stopping
+rule would then be testing the log, not the harness. Two fields are the exception, because leaving
+them empty would not be honest absence but a broken row, and the command refuses rather than
+appends:
 
-`PILOT-LOG.jsonl` is itself gitignored and lives on each developer's machine; the two logs are
-concatenated at the end of the window. Each developer keeps their own — no shared file, no merge
-conflict, and no ordering assumption in the analysis.
+- `t0` and `t1`, when given, must carry an explicit UTC offset (`+00:00`, not `Z` — Python 3.8's
+  `fromisoformat` accepts the former only). The receipt's `timestamp` is always offset-aware, and
+  subtracting a naive value from it either raises or, in a lenient parser, silently shifts both
+  durations by the machine's zone. Empty `t0`/`t1` is still allowed and yields `null` minutes: not
+  observed, not invented.
+- `close_reason_class` must be one of `work` · `harness` · `external` when the verdict is FAILED or
+  UNVERIFIED, and must be empty when it is VERIFIED. T4 is computed on this field; a FAILED row
+  without it cannot be classified later, because the next card at the same root overwrites the
+  receipt (see below), and §6 says the classification is made at close and never revised.
+
+**Where the row goes.** The command appends to `PILOT-LOG.jsonl` **in the developer's home
+directory** (`~/PILOT-LOG.jsonl`), or to the path in `$PILOT_LOG` if set — never to a path relative
+to the card directory. Parallel cards belong to separate worktrees by design (§6), so a relative
+sink would have produced one log per worktree, with rows omitted from consolidation or deleted with
+a removed worktree. One developer, one sink, regardless of how many worktrees the cards ran in. The
+two developers' logs are concatenated at the end of the window; no shared file, no merge conflict,
+and no ordering assumption in the analysis.
 
 **Run the export at close time or lose the row.** The gate consumes `CARD.close` on every allowed
 close, and the next card at the same root overwrites `CARD.receipt.json`. Nothing recovers a row
@@ -274,7 +310,9 @@ In the style every other README here follows — what this measurement does NOT 
    2026-08-25 (`INDEX-FLAGS` → signal, `GIT-ERROR` → friction, rationale in §1).
 3. Commit this file with a date, and record the commit rev. The rev is what makes the numbers
    pre-registered rather than remembered.
-4. Add `PILOT-LOG.jsonl` to the adopting repository's `.gitignore` alongside the card family.
+4. Add `PILOT-LOG.jsonl` to the adopting repository's `.gitignore` alongside the card family
+   anyway — the export writes outside every worktree by default, but a `$PILOT_LOG` pointed inside
+   the repository must not become a committed file.
 5. Run the receipt-gate install self-test (red AND green) on each developer's machine, and record
    that date — it is the baseline `self_test_skipped = n` depends on.
 6. Agree in advance that the write-up gets published whichever way the triggers land. A refutation
