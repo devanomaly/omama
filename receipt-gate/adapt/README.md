@@ -71,7 +71,13 @@ is the reference (env vars, troubleshooting, rationale).
    quotes or none), while `%CLAUDE_PROJECT_DIR%`, a placeholder inside
    **single quotes**, or an escaped `\$CLAUDE_PROJECT_DIR` is left
    literal — dead wiring on every platform and a named `VIOLATION`, as are
-   shell operators (`|| true` would swallow the gate's blocking exit). A
+   shell operators (`|| true` would swallow the gate's blocking exit) and
+   **any other `$`** left in the command (`$(...)`, `$OTHER_VAR`): the
+   real hook is shell-form, so sh would expand or run it, the check cannot
+   model it, and a `--static-only` pass on such a string would certify
+   PR-author-controlled settings that execute code at every Stop — so it
+   is a `VIOLATION` in both modes. Write literal paths plus the
+   placeholder, nothing else. A
    missing interpreter or wrong script path is a named `VIOLATION` (exit
    1) instead of the silent 127/9009 absence; when neither settings file
    is readable the result is NOT-RUN (exit 2). With several Stop hooks,
@@ -81,14 +87,23 @@ is the reference (env vars, troubleshooting, rationale).
    repo's CI is the natural place; the check DETECTS dead wiring, nothing
    prevents it from going dead later.
 
+   **Windows: Git Bash is established first.** Claude Code runs shell-form
+   hooks through Git Bash and falls back to PowerShell when it is not
+   installed — where nothing this check certifies is what runs. So on
+   Windows the check looks for Git Bash the way Claude Code's own knob
+   describes it (`CLAUDE_CODE_GIT_BASH_PATH` when set — authoritative, a
+   value pointing at a missing file counts as absent — else `bin/bash.exe`
+   next to the `git` on PATH or in the standard Git for Windows
+   locations) and answers **NOT-RUN (exit 2), naming Git Bash**, when it
+   cannot find one — never `WIRING-OK`. This is a proxy for Claude Code's
+   detection, inferred from the documented knob and install paths, not
+   read from its source: a Git Bash it cannot see gives a false NOT-RUN
+   (fix: set the knob), never a false pass.
+
    **Not read, by design (residuals, see the README's coverage):**
    user-level `~/.claude/settings.json`, managed policy settings and a
    `claude --settings` override — a `disableAllHooks` or a gate wired in
-   any of those is invisible here. And the check models the hook shell as
-   sh: a Windows host **without Git Bash** falls back to PowerShell, where
-   the sh-form string is not what runs; the check does not verify Git
-   Bash's presence — install it (Claude Code's stated Windows
-   requirement) before trusting a `WIRING-OK` there.
+   any of those is invisible here.
 
    **Do not confuse "not certified" with "does not work":** an exec-form
    or async hook may be perfectly valid for other purposes. This gate has

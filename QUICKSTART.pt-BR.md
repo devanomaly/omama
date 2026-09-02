@@ -74,27 +74,29 @@ ausente ou bloqueando para sempre:
 O gate precisa de um repo git com pelo menos um commit (HEAD não-nascido
 falha-fechado, por design).
 
-## 4. Prove o gate: cheque de fiação, depois vermelho, depois verde (obrigatório — não pule)
+## 4. Prove o gate: wiring check, depois vermelho, depois verde (obrigatório — não pule)
 
 Uma instalação que você não viu bloquear não está instalada. Esta seção é o
 self-test que o [adapt/README.md](receipt-gate/adapt/README.md) torna
-obrigatório — primeiro o cheque mecânico de fiação, depois rode o gate pela
+obrigatório — primeiro o wiring check (cheque mecânico da fiação), depois rode o gate pela
 string de comando EXATA registrada no seu `settings.json`, copiada e colada,
 não redigitada.
 
-**Passo 1 — cheque de fiação.** Da raiz do seu repo:
+**Passo 1 — wiring check.** Da raiz do seu repo:
 
 ```
-python3 <OMAMA>/receipt-gate/adapt/check_wiring.py
+python3 <OMAMA>/receipt-gate/adapt/check_wiring.py    # Windows: py -3 ...
 ```
 
 **Esperado: `WIRING-OK ...` e exit 0.** Ele resolve o comando de Stop hook
 registrado e o executa a seco com stdin vazio — interpretador ausente,
 caminho de script errado, um `CLAUDE_PROJECT_DIR` que o shell do hook
 deixaria literal (grafia `%VAR%`, aspas simples), um hook numa forma que o
-cheque não certifica (`async`, `args` em forma exec, `shell: powershell`)
-ou `disableAllHooks` num arquivo de settings vira uma `VIOLATION` nomeada
-(exit 1) em vez da ausência silenciosa 127/9009. (Ele EXECUTA o comando
+check não certifica (`async`, `args` em forma exec, `shell: powershell`),
+qualquer outra expansão `$` no comando, ou `disableAllHooks` num arquivo de
+settings vira uma `VIOLATION` nomeada (exit 1) em vez da ausência
+silenciosa 127/9009; no Windows sem Git Bash a resposta é NOT-RUN (exit 2),
+porque o hook rodaria pelo PowerShell. (Ele EXECUTA o comando
 registrado — esse é o ponto; detalhes, a forma certificada, uso em CI e
 `--static-only` no [adapt/README.md](receipt-gate/adapt/README.md).)
 

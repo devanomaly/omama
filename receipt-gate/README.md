@@ -2,7 +2,7 @@
 
 > Docs for this piece: **README** (promise, command, states, coverage) ·
 > [adapt/README.md](adapt/README.md) (how to install — per-repo, with a
-> mandatory self-test). The evidence is the re-runnable fixture (73 cases) +
+> mandatory self-test). The evidence is the re-runnable fixture (75 cases) +
 > the empirical spike ([fixture/spike/SPIKE.md](fixture/spike/SPIKE.md)).
 
 ## The decision this piece changes
@@ -46,7 +46,7 @@ the registered Stop command answers the gate's `BAD-INPUT` block on empty
 stdin, re-runnable from the adopting repo's CI). Fixture:
 
 ```
-python3 fixture/run_fixture.py        # exit 0 = gate correct (73 cases)
+python3 fixture/run_fixture.py        # exit 0 = gate correct (75 cases)
 ```
 
 | Gate exit | Means |
@@ -138,16 +138,26 @@ otherwise structurally valid S3 close.
   red/green self-test steps 2–3 run **through Claude Code** on the
   machine in question, not only by hand.
 - **A Windows host without Git Bash** runs hooks through PowerShell
-  (Claude Code's documented fallback); the check models sh and does not
-  verify Git Bash's presence, so a `WIRING-OK` there certifies a string
-  PowerShell will not run the same way. Resolved by: installing Git Bash
-  (Claude Code's stated requirement on Windows).
+  (Claude Code's documented fallback), where nothing the check certifies
+  is what runs. The check establishes Git Bash first
+  (`CLAUDE_CODE_GIT_BASH_PATH`, then `bin/bash.exe` next to `git`, then
+  the standard install locations) and answers NOT-RUN naming Git Bash
+  when it cannot — a proxy for Claude Code's own detection, inferred
+  from the documented knob and paths, so a Git Bash it cannot see is a
+  false NOT-RUN (set the knob), never a false pass. Resolved by:
+  installing Git for Windows (Claude Code's stated requirement).
+- **Shell expansions other than the placeholder** — `$(...)`, `$VAR` —
+  would run in the real (shell-form) hook but never in the checker's
+  argv dry run; any `$` left after the placeholder substitution is a
+  named VIOLATION in both modes, so a `--static-only` run on
+  PR-author-controlled settings cannot certify a string that executes
+  code at every Stop. Fixture: `w_dollar_rejected`.
 
 ## Coverage
 
 | Promised | Mechanically covered | Not covered / known bypass | Classification |
 |---|---|---|---|
-| VERIFIED without backing impossible via close | 73 cases: red blocks, stale blocks, planted receipts deleted (start, block-exit, guard route) | forgery on a WIP turn persists | fixed KNOWN-LIMITATION |
+| VERIFIED without backing impossible via close | 75 cases: red blocks, stale blocks, planted receipts deleted (start, block-exit, guard route) | forgery on a WIP turn persists | fixed KNOWN-LIMITATION |
 | Honest close always reachable | fixtures: broken/unreadable/non-git/no-git card — all exit 0 with a conservative receipt | — | covered |
 | Binding catches verify mutation | tracked, untracked-dir (-uall), CARD family, stash, assume-unchanged | non-git cp-restore; inside .git | accepted limitation |
-| Fail-closed | pyyaml absent, git absent, empty stdin, unborn HEAD, unreadable card ⇒ named exit 2 | broken wiring (shell exit≠2) — resolved by: adapt/check_wiring.py (+ self-test; reads settings.json AND settings.local.json, quote-aware sh CLAUDE_PROJECT_DIR expansion, rejects shell operators, rejects async / exec-form / non-bash-shell hooks and `disableAllHooks` by name, warns on broken sibling hooks; `--static-only` non-execution sentinel-proven); an interpreter that vanishes after install stays undetected until the check is re-run (detection, not prevention); `--static-only` mode does NOT prove the gate answers; user/managed/CLI settings and the Windows no-Git-Bash PowerShell fallback are not inspected | accepted limitation |
+| Fail-closed | pyyaml absent, git absent, empty stdin, unborn HEAD, unreadable card ⇒ named exit 2 | broken wiring (shell exit≠2) — resolved by: adapt/check_wiring.py (+ self-test; reads settings.json AND settings.local.json, quote-aware sh CLAUDE_PROJECT_DIR expansion, rejects shell operators, rejects async / exec-form / non-bash-shell hooks, `disableAllHooks` and any leftover `$` expansion by name, warns on broken sibling hooks; `--static-only` non-execution sentinel-proven; Windows: NOT-RUN unless Git Bash is established); an interpreter that vanishes after install stays undetected until the check is re-run (detection, not prevention); `--static-only` mode does NOT prove the gate answers; user/managed/CLI settings are not inspected; the Git Bash probe is a proxy for Claude Code's detection (false NOT-RUN possible, false pass not) | accepted limitation |

@@ -84,16 +84,18 @@ retyped.
 **Step 1 — wiring check.** From your repo root:
 
 ```
-python3 <OMAMA>/receipt-gate/adapt/check_wiring.py
+python3 <OMAMA>/receipt-gate/adapt/check_wiring.py    # Windows: py -3 ...
 ```
 
 **Expected: `WIRING-OK ...` and exit 0.** It resolves the registered Stop
 hook command and dry-runs it on empty stdin — a missing interpreter, a wrong
 script path, a `CLAUDE_PROJECT_DIR` the hook shell would leave literal
 (`%VAR%` spelling, single quotes), a hook in a form the check does not
-certify (`async`, exec-form `args`, `shell: powershell`), or
-`disableAllHooks` in a settings file is a named `VIOLATION` (exit 1)
-instead of the silent 127/9009 absence. (It EXECUTES the registered
+certify (`async`, exec-form `args`, `shell: powershell`), any other `$`
+expansion in the command, or `disableAllHooks` in a settings file is a
+named `VIOLATION` (exit 1) instead of the silent 127/9009 absence; on
+Windows without Git Bash the answer is NOT-RUN (exit 2), because the hook
+would run through PowerShell. (It EXECUTES the registered
 command — that is the point; details, the certified form, CI use, and
 `--static-only` in [adapt/README.md](receipt-gate/adapt/README.md).)
 
