@@ -129,12 +129,47 @@ Design properties (case-by-case receipts in
   blocked commit (receipts in [EVIDENCE.md](EVIDENCE.md)). With none of
   the three available: `BLOCKED hook-error no-python-interpreter`,
   exit 1.
+- **One knob for the scanner's location.** The wrapper reads
+  `PRIVACY_HOOK_SCANNER`, a single variable at the top defaulting to
+  `<repo-root>/scan_staged.py`, so an adopter who vendors the scanner
+  under `tools/` sets a variable instead of editing the wrapper body —
+  an edited wrapper is no longer byte-identical with upstream, which is
+  what turns the next update from a copy into a merge. The path is
+  **validated and fails closed**: nothing there means
+  `BLOCKED hook-error missing-scanner`, exit 1, never a silent fallback
+  to the default location (a hook that scans a file the adopter did not
+  choose is the failure this piece exists to prevent). The diagnostic
+  itself names the knob, not the path — the only path in the output is
+  the value the adopter typed, echoed by the notice — so hook output
+  stays pasteable. And an override that IS honoured **announces
+  itself**: whenever the variable is set, the wrapper writes
+  `notice privacy-hook: scanner = <value> (PRIVACY_HOOK_SCANNER is set; …)`
+  to its stderr before scanning, keeping stdout for the verdict lines
+  (through `git commit` you see both on stderr: git folds a hook's
+  stdout into its own stderr; the split matters to a chained hook or a
+  CI step that pipes the wrapper's output). The value comes from the
+  ambient environment — a shell profile, a direnv file, a CI job env —
+  so unlike the wrapper it appears in no diff; the notice is the only
+  place a redirected scan becomes visible, and an unexpected one on a
+  repo you never configured is the signal. Four polarities in
+  `fixture/case_scanner_override.py`: the relocated scanner produces the
+  default location's verdict **byte for byte**, a broken override blocks
+  with the named `hook-error`, an honoured override prints the notice
+  naming its value, and the wrapper invoked directly keeps that notice
+  on stderr with the verdict on stdout.
+- **The wrapper ends in `exec`.** Nothing written after it runs, and it
+  fails silently that way — so a repo that already has a `pre-commit`
+  runs its own checks BEFORE the scan. That is an
+  [ADOPTION.md](ADOPTION.md) instruction with a verbatim combined-hook
+  example, not a mechanism: nothing in this piece can detect a chained
+  hook that put the scan first.
 
 ## Command and states
 
-Installed as `.git/hooks/pre-commit` (see [ADOPTION.md](ADOPTION.md)),
-runs on every `git commit`. Direct invocation, from the adopting repo's
-root:
+Installed as the repo's `pre-commit` hook — a versioned `.githooks/`
+directory activated with `git config core.hooksPath .githooks`, or a
+copy into `.git/hooks/` (see [ADOPTION.md](ADOPTION.md)) — and runs on
+every `git commit`. Direct invocation, from the adopting repo's root:
 
 ```
 python3 scan_staged.py
@@ -155,7 +190,8 @@ probes, and mutations: [EVIDENCE.md](EVIDENCE.md).
 ### What it catches
 
 Corpus of **55 cases (28 block / 27 pass), 0 failed**, run of
-2026-08-18, plus the dedicated gitlink case — the case-by-case list,
+2026-08-18, plus the dedicated gitlink, scanner-override and
+versioned-hooks-plus-merge cases — the case-by-case list,
 with charged outputs, lives in [EVIDENCE.md](EVIDENCE.md). Classes
 covered, all with rc=1:
 
@@ -201,8 +237,10 @@ it — none of these is a "generic limitation."
   `git cherry-pick` of a contaminated commit lands the secret on HEAD
   (probe P4, rc=0). `git am` and `git rebase` follow the same git
   design and weren't probed. Automatic merge has coverage **if**
-  [ADOPTION.md](ADOPTION.md)'s `pre-merge-commit` is installed — also
-  not exercised by the corpus. Resolved by: **CI / pre-receive**, which
+  [ADOPTION.md](ADOPTION.md)'s `pre-merge-commit` is installed as the
+  same hook git calls on commit — `fixture/case_hookspath_merge.py`
+  charges a `--no-verify` leak on a colleague's branch being refused on
+  the merge — and none at all if it is not. Resolved by: **CI / pre-receive**, which
   sees the finished commit regardless of how it was created.
 - **Secret already committed to history.** The hook only looks at the
   current commit's index: after a `--no-verify`, the following
@@ -241,11 +279,45 @@ it — none of these is a "generic limitation."
   Resolved by: the config is versioned and reviewable in a PR — that's
   where this redirection gets contained.
 
+- **A scanner override that points at the wrong script.**
+  `PRIVACY_HOOK_SCANNER` is checked for **existence**, not identity: an
+  override aimed at any readable file runs that file and the commit is
+  decided on its terms — an empty file makes the hook a no-op that
+  passes the existence check. Not a new privilege (whoever can set the
+  hook's environment can already run code as the committing user), but a
+  typo that lands on another script decides commits on its terms.
+  Reviewing the versioned hook does **not** contain this: the knob is
+  read from the **ambient environment**, so a value exported by a shell
+  profile, a direnv file, a CI job env or a stale launcher from another
+  repo lives in no diff and redirects the scan in every repo on that
+  machine. Reduced by: the wrapper **announcing** the value on stderr
+  whenever the variable is set (`fixture/case_scanner_override.py`
+  charges it) — that turns a silent no-op into a line the committer
+  sees, but it is a notice, not a check, and nothing verifies that what
+  the value points at is `scan_staged.py`. Resolved by:
+  **CI/pre-receive**, which does not read the local hook or its
+  environment at all.
+  <br>Second-order: the notice echoes the knob's value verbatim, so an
+  adopter who sets an absolute path gets that path in the hook's output
+  — the only place this piece prints one, and it prints a value the
+  adopter typed, never one it discovered.
+- **A chained hook that runs the scan first.** The wrapper ends in
+  `exec`, so a combined `pre-commit` that calls it before the repo's own
+  checks turns those checks into dead code — silently. Nothing in this
+  piece detects the order. Resolved by: **PR review** of the combined
+  hook (versioned route) and CI running the same checks.
+- **A clone where the hook was never activated.** `core.hooksPath` and
+  the `.git/hooks` copy both live in `.git/`, which is not versioned:
+  a fresh clone that skipped the one-time step has **no hook**, and
+  nothing says so. Resolved by: **CI / pre-receive**, which sees the
+  pushed commit regardless of what ran locally.
+
 ### What only a human decides
 
 See [ADOPTION.md](ADOPTION.md) — deny-list vocabulary, allowlist
 entries, triaging a BLOCKED, accepting residuals, `pre-merge-commit`,
-`tokens_file` outside git.
+`tokens_file` outside git, which install route (versioned `.githooks/`
+vs `.git/hooks`), and where `scan_staged.py` lives.
 
 ### Coverage, promise by promise
 
@@ -259,8 +331,11 @@ entries, triaging a BLOCKED, accepting residuals, `pre-merge-commit`,
 | Fail-closed on missing / malformed config / missing tokens_file | 4 `fail-closed-*` cases (rc=1), each charging the diagnostic in the output | the `bad-tokens-file` branch (file present but unreadable) has no case or probe | not assessed |
 | Scan the blob's wide-Unicode reading | `utf16le-builtin-pattern`, `utf16-bom-deny-token` (rc=1); mutation M1 goes red only on these 2 | no NUL in the first 4 KB (P5, rc=0); blob >8 MB (P6, rc=0) — route: raise `WIDE_PROBE_BYTES` / `WIDE_MAX_BLOB`, or CI | defect |
 | Config exemption restricted to self-referential layers | `secret-inside-deny-config`, `tokens-file-redirect`, `case-variant-config-name` (rc=1); P11 (rc=1); mutations M2/M3 go red only on these cases | content that only the team layers would catch, inside `tokens_file` itself, passes (P10, rc=0) — route: PR review of the config | defect |
-| Pasteable output: no matched value, no absolute path, no traceback | absence of absolute path is charged on **all** 55 cases; `Traceback` forbidden on the 2 malformed-config cases; echoing the value forbidden on 6 cases | non-echo of the value is not charged on the remaining rules | not assessed |
-| Automatic merge covered via `pre-merge-commit` | none — it's an adoption instruction | merge, `git am`, and `git rebase` not probed this round | not assessed |
+| Pasteable output: no matched value, no absolute path, no traceback | absence of absolute path is charged on **all** 55 cases; `Traceback` forbidden on the 2 malformed-config cases; echoing the value forbidden on 6 cases | non-echo of the value is not charged on the remaining rules; the override notice echoes `PRIVACY_HOOK_SCANNER` verbatim, so an adopter who sets an absolute path sees it — a value they typed, not one the hook discovered | not assessed |
+| Automatic merge covered via `pre-merge-commit` | `fixture/case_hookspath_merge.py`: route (a) + step 2c + step 3 composed — a key committed `--no-verify` on a colleague's branch is refused on the automatic merge by the scanner's verdict (rc=1); a clean automatic merge goes through (rc=0) with the notice proving the hook ran; red against the old step 3 (bare wrapper under the second name: every merge refused with `missing-scanner`) | route (b) `.git/hooks` copy of `pre-merge-commit` not exercised; `git am`, `git cherry-pick` (P4, rc=0) and `git rebase` bypass every local hook — route: CI / pre-receive | defect |
+| Scanner location overridable without editing the wrapper | `fixture/case_scanner_override.py`: a scanner moved to `tools/` and reached through `PRIVACY_HOOK_SCANNER` reproduces the default location's `BLOCKED` lines exactly; an override pointing at a missing file blocks with `hook-error missing-scanner` (rc=1), no traceback, no absolute path; an override that IS honoured prints `notice privacy-hook: scanner = <value>`, charged through `git commit`; the wrapper invoked directly keeps that notice on stderr and the verdict on stdout (through git the two streams are folded together, so the split is charged on a direct run) | existence is validated, identity is not — an override aimed at another readable script runs that script, and the notice announces the redirection without checking it; the value comes from the ambient environment, so no diff carries it — route: CI / pre-receive | defect |
+| Hook active in every clone (versioned `.githooks/` + `core.hooksPath`) | none — the activation is a per-clone `git config`, and `.git/config` is not versioned | a clone that never ran it has no hook and nothing warns — route: CI / pre-receive | not assessed |
+| Scan runs after an existing `pre-commit`'s own checks | none — chaining is an adoption instruction with a verbatim example | a combined hook that calls the wrapper first makes its own checks dead code (`exec`), undetected — route: PR review of the versioned hook | not assessed |
 
 Accepting a residual requires a named human signature and a date. No
 row in this table becomes "accepted" by existing here: `defect` marks a

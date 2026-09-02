@@ -1,8 +1,10 @@
 # 01 — privacy-hook · EVIDENCE
 
 Probes, cases, and red-green history. The [README](README.md) carries
-the promise; this file carries the receipts. All are from real runs on
-2026-08-18: `fixture/check.py` with exit 0
+the promise; this file carries the receipts. All are from real runs —
+2026-08-18 unless a section says otherwise (the scanner-override section
+is from 2026-08-23, its stream assertion and the versioned-hooks +
+merge section from 2026-09-02): `fixture/check.py` with exit 0
 (`corpus: 55 cases (28 block / 27 pass), 0 failed`) and standalone
 probes (`python3`, each in a temporary git repo with the hook installed
 byte-for-byte by the same `lib.make_repo` used by the corpus). `rc` is
@@ -13,15 +15,23 @@ scanner.
 
 ```
 cd privacy-hook/fixture
-python3 check.py          # smoke cases + gitlink + full corpus
-python3 case_corpus.py    # tabulated corpus only
-python3 case_gitlink.py   # gitlink case only (both polarities)
+python3 check.py                    # smoke cases + gitlink + override + hooks-path merge + full corpus
+python3 case_corpus.py              # tabulated corpus only
+python3 case_gitlink.py             # gitlink case only (both polarities)
+python3 case_scanner_override.py    # PRIVACY_HOOK_SCANNER case only (five assertions)
+python3 case_hookspath_merge.py     # versioned .githooks + relocated scanner + pre-merge-commit (three assertions)
+python3 case_hookspath_merge.py --merge-hook-as-shipped-wrapper   # its red: the old ADOPTION step 3
 ```
 
-`check.py` runs four scripts and charges each one's polarity:
+`check.py` runs six scripts and charges each one's polarity:
 `case_violation.py` (fake AWS key + deny-listed token — **must fail**),
 `case_clean.py` (ordinary Python file — **must pass**),
-`case_gitlink.py` (see history below), and `case_corpus.py`. In the
+`case_gitlink.py`, `case_scanner_override.py` and
+`case_hookspath_merge.py` (all self-reporting, see the sections below),
+and `case_corpus.py`. Every case scrubs `PRIVACY_HOOK_SCANNER` from the
+environment it hands to git (`lib.hook_env`), so a value the developer's
+shell exports cannot redirect the fixture's own scans; only
+`case_scanner_override.py` sets it, on purpose, per commit. In the
 corpus, each case gets **its own** temporary repo (inside
 `fixture/.tmp/`, never outside it), is staged the way the case defines
 it (`git add`, `git mv`, `git rm`, `git update-index`, nested
@@ -182,6 +192,107 @@ OK; direct run of `check.py` at this doc's close:
 `corpus: 55 cases (28 block / 27 pass), 0 failed`, exit 0, with
 `PASS: gitlink .env blocked, innocent gitlink allowed`.
 
+## Scanner-location override (`PRIVACY_HOOK_SCANNER`), 2026-08-23
+
+The wrapper used to hardcode `<repo-root>/scan_staged.py`, so an adopter
+who vendors the scanner under `tools/` had to edit the wrapper body —
+and an edited wrapper is no longer byte-identical with upstream. It now
+reads one knob. `fixture/case_scanner_override.py` charges five
+assertions in one throwaway repo (`lib.make_repo`, hook installed
+byte-for-byte, real `git commit` for 1–4; `rc` is git's own exit code;
+assertion 5 invokes the wrapper directly, see below):
+
+| # | Route | Charged output | rc |
+|---|---|---|---|
+| 1 | baseline — scanner at the default location, `AWS_ACCESS_KEY_ID=AKIA…` staged | `BLOCKED aws-access-key config/deploy.env` | 1 |
+| 2 | same violation, scanner moved to `tools/`, `PRIVACY_HOOK_SCANNER=tools/scan_staged.py` | **the same line, byte for byte** — the case charges the output, not the polarity, because an ignored override also fails, just with an interpreter error | 1 |
+| 3 | override pointing at a file that does not exist, clean content staged | `BLOCKED hook-error missing-scanner (no scan_staged.py at the configured location; set PRIVACY_HOOK_SCANNER to where it lives)`; no `Traceback`, no absolute path | 1 |
+| 4 | override pointing at an **existing** file (`innocuous.py`, zero bytes), violation staged | `notice privacy-hook: scanner = innocuous.py (PRIVACY_HOOK_SCANNER is set; the default is the repo root's scan_staged.py)` in git's stderr | 0 |
+| 5 | wrapper invoked **directly** (`sh .git/hooks/pre-commit`, streams captured apart), `PRIVACY_HOOK_SCANNER=scan_staged.py`, a second violation staged | stderr: the notice and no `BLOCKED` line; stdout: `BLOCKED aws-access-key config/other.env` and no notice | 1 (the wrapper's) |
+
+Assertion 4 red-green (external review finding, same date). The knob is
+read from the ambient environment — a shell profile, a direnv file, a CI
+job env, a stale launcher from another repo — so its value appears in no
+diff, and the existence check passes for **any** readable file:
+
+| Wrapper | Commit of the planted key with `PRIVACY_HOOK_SCANNER=innocuous.py` |
+|---|---|
+| before (default applied quietly) | rc=0, **zero output on both streams**, `git show --stat HEAD` shows `config/deploy.env` in the commit — the fixture's literal red: `FAIL: PRIVACY_HOOK_SCANNER was honoured SILENTLY -- an ambient override redirected the scan and nothing on stdout/stderr said so (rc=0)` |
+| after (notice) | rc=0 and the same commit — identity is still not validated — but stderr now carries the `notice privacy-hook: scanner = innocuous.py …` line above |
+
+What that buys and what it does not: the notice makes a redirected scan
+**observable**, it does not make it **checked**. The residual row
+"scanner override that points at the wrong script" stays a `defect`, and
+its route stays CI / pre-receive — reviewing the versioned hook does not
+cover a value that lives in the environment.
+
+Assertion 5 red-green (review of the PR, 2026-09-02). The review
+mutation dropped the notice's `>&2` and assertion 4 stayed green — it
+concatenated the two streams. The proposed remedy, "assert on
+`r.stderr`", turned out to be inert, and that is the finding worth
+keeping: **git folds a hook's stdout into its own stderr**. Measured in
+a throwaway repo with the streams captured apart:
+
+| Invocation | stdout | stderr |
+|---|---|---|
+| `git commit` (hook installed) | empty | notice **and** `BLOCKED aws-access-key d.env` |
+| `sh .git/hooks/pre-commit` directly | `BLOCKED aws-access-key d.env` | notice |
+
+So through git, no assertion on `git commit`'s streams can tell the
+wrapper's stderr from its stdout; assertion 4 now claims only that the
+line exists in the hook output. Assertion 5 invokes the wrapper directly
+— the call a combined hook's `exec sh .githooks/privacy-pre-commit`
+makes — and charges both directions of the split. Same mutation,
+re-run: `FAIL: the override notice is not on the wrapper's STDERR --
+wrapper invoked directly:` with the notice shown under `stdout:`, exit
+1; wrapper restored, exit 0. Direct run at this section's close:
+`case_scanner_override.py` exit 0, five `PASS` lines.
+
+## Versioned hooks + relocated scanner + `pre-merge-commit`, composed — 2026-09-02
+
+ADOPTION route (a), step 2c and step 3 were each correct alone and did
+not compose: step 3 said to copy the **shipped wrapper** under
+`pre-merge-commit`, and for a step-2c adopter that wrapper looks for the
+scanner at a root where nothing is. Two independent reviews of the PR
+reproduced it the same afternoon. `fixture/case_hookspath_merge.py`
+builds the composition with `lib.make_versioned_repo` — `core.hooksPath
+.githooks`, scanner at `tools/scan_staged.py`, the shipped wrapper
+byte-for-byte at `.githooks/privacy-pre-commit`, the two-line step-2c
+launcher under **both** hook names — and charges three assertions (real
+`git commit` / `git merge`; `rc` is git's own):
+
+| # | Route | Charged output | rc |
+|---|---|---|---|
+| 1 | plain commit, `AKIA…` staged, through `.githooks/pre-commit` | `BLOCKED aws-access-key config/deploy.env`; notice names `tools/scan_staged.py` | 1 |
+| 2 | colleague's branch carries the key (committed `--no-verify`: no hook there), automatic merge into the base branch | refused **by the scanner's verdict** — `BLOCKED aws-access-key`, not a hook-error; no absolute path | 1 |
+| 3 | clean branch, automatic merge into the base branch | rc=0, HEAD has two parents (not a fast-forward, so `pre-merge-commit` ran), notice on stderr proves the scan happened | 0 |
+
+Red, with `--merge-hook-as-shipped-wrapper` (installs `pre-merge-commit`
+the way step 3 used to say): assertion 1 passes, then
+
+```
+FAIL: merge refused, but not by the scanner's verdict -- the pre-merge-commit hook did not reach tools/scan_staged.py:
+BLOCKED hook-error missing-scanner (no scan_staged.py at the configured location; set PRIVACY_HOOK_SCANNER to where it lives)
+FAIL: a CLEAN automatic merge was refused (rc=1) -- the pre-merge-commit hook does not reach the relocated scanner; this is the old ADOPTION step 3 (bare wrapper copied under the second name):
+BLOCKED hook-error missing-scanner (no scan_staged.py at the configured location; set PRIVACY_HOOK_SCANNER to where it lives)
+```
+
+exit 1. Assertion 3 is the discriminating one: under the old step 3 the
+leaked merge is still refused, for the wrong reason, and the **clean**
+merge is refused too. Green (launcher under both names): three `PASS`
+lines, exit 0.
+
+Same review, third finding, fixed in the same commit: the wrapper reads
+`PRIVACY_HOOK_SCANNER` from the ambient environment and only
+`case_scanner_override.py` scrubbed it. Measured before the fix with a
+stale `PRIVACY_HOOK_SCANNER=tools/scan_staged.py` exported in the shell:
+`case_clean.py` died at repo setup (`fixture setup failed: … BLOCKED
+hook-error missing-scanner`, rc=2); pointed at an existing empty file
+instead, `case_violation.py` printed `FIXTURE BUG: violating commit was
+NOT blocked`. After (`lib.hook_env` drops the variable in `lib.git` and
+in both repo builders): `case_clean.py` exit 0, `case_violation.py`
+blocked with both `BLOCKED` lines, same exports in place.
+
 ## `pre-commit` wrapper receipts
 
 The old form
@@ -205,10 +316,14 @@ corpus cases via `py -3`, the first probe on Windows.)
 ## Scratch cleanup (`fixture/.tmp/`)
 
 Each corpus case deletes its own repo when it passes and preserves it
-when it fails; `case_violation.py` and `case_clean.py` leave their repo
-behind on purpose, for post-mortem. Re-measured on 2026-08-18: starting
-from an empty `.tmp/`, a clean run of `check.py` leaves exactly **2**
-directories (the two smoke cases), zero `WARN`. Before, an entirely
+when it fails; `case_violation.py`, `case_clean.py` and
+`case_gitlink.py` leave their repo behind, for post-mortem;
+`case_scanner_override.py` and `case_hookspath_merge.py` delete theirs
+on a pass and keep them on a failure. Re-measured on 2026-09-02:
+starting from an empty `.tmp/`, a clean run of `check.py` leaves exactly
+**3** directories (the two smoke cases and the gitlink case — the
+2026-08-18 count of 2 predates the gitlink case keeping its repo), zero
+`WARN`. Before, an entirely
 green run left one directory per case — **74 measured on a clean run**,
 with `shutil.rmtree(tmp, ignore_errors=True)`, the flag that hides the
 failure. Two causes, both Windows: (1) loose git objects are read-only
