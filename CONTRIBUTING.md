@@ -49,7 +49,12 @@ implementation, and a review pass before close.
 violation, pinned in that piece's runner to **all** of its named reasons — not just the
 first one that fires. A guard nobody has watched fail for the right reason is not a proven
 guard. Paste both runs in the PR body: the output before your fix (red, for the named
-reason) and after (green).
+reason) and after (green). A credential shape or a shipped example team value planted by
+a **privacy-hook** case is spelled in the fixture source by concatenation
+(`b"AKIA" + b"ABCDEFGHIJKLMNOP"`, `DENY_TOKEN`), never as one contiguous literal:
+`privacy-hook/fixture/check.py` commits the fixture's own files through the shipped hook
+and goes red on a contiguous spelling. The bytes the case plants at runtime are what the
+scanner is tested on, and those do not change.
 
 **2. The tri-state exit contract.** New scripts inherit it from
 [`validator/`](validator/README.md): `0` OK/VERIFIED · `1` one `VIOLATION: ...` line per
