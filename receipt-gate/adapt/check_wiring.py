@@ -10,6 +10,18 @@ code the adopting repo (or its CI) can re-check at any time.
     python3 check_wiring.py [repo-root] [--static-only]
         # repo-root defaults to the cwd's `git rev-parse --show-toplevel`
 
+WHAT IS CERTIFIED -- one hook form, the one adapt/README prescribes:
+  a SYNCHRONOUS Stop hook of type "command", written as ONE shell-form
+  command string (no `args`), run by the default hook shell (`shell`
+  absent or "bash" -- sh-like on every platform, Git Bash on Windows),
+  with an absolute interpreter path and the gate script as an argument.
+  Every other form Claude Code accepts is a NAMED VIOLATION here, not a
+  silently accepted configuration: an async hook cannot block a close,
+  an exec-form (`command` + `args`) hook is not modeled, a PowerShell
+  hook is not modeled, and `disableAllHooks: true` in either project
+  settings file turns every hook off. Narrow on purpose -- a check that
+  guessed at forms it does not model would certify gates it cannot see.
+
 SECURITY: by default this check EXECUTES the registered command string it
 finds in the settings files (the dry run is what proves the gate answers).
 Never run the default mode against a checkout you do not trust -- e.g. CI
@@ -19,7 +31,7 @@ paths WITHOUT executing anything, exits 0 with `WIRING-STATIC-OK` (the
 gate's answer is NOT proven), and keeps every VIOLATION below.
 
 Exit contract (tri-state, fail closed, never a traceback):
-  0  gate PRESENT: at least one Stop hook command of type "command" in
+  0  gate PRESENT: at least one certified-form Stop hook in
      <repo-root>/.claude/settings.json or settings.local.json resolves
      AND, dry-invoked with EMPTY stdin, answers with the gate's own named
      block -- "RECEIPT-GATE BLOCK[BAD-INPUT]" on exit 2. The block NAME is
@@ -36,13 +48,21 @@ Exit contract (tri-state, fail closed, never a traceback):
 Both <repo-root>/.claude/settings.json and settings.local.json are read
 (Claude Code merges them; the machine-specific absolute interpreter path
 this piece mandates naturally lands in the untracked local file).
-User-level ~/.claude settings are NOT read -- the install rule is per-repo.
+`disableAllHooks: true` in EITHER file is a VIOLATION (fail closed -- a
+`false` in the other file is not assumed to win). NOT read, and therefore
+named residuals in the README: user-level ~/.claude settings (a gate wired
+there, or a `disableAllHooks` there), managed policy settings, and a
+`claude --settings` override on the command line.
 
-Resolution steps per command (hooks.Stop[*].hooks[*].command, type
-"command"):
-  1. The CLAUDE_PROJECT_DIR spellings the hook shell actually expands
-     are replaced with the repo root BEFORE parsing:
-     `$CLAUDE_PROJECT_DIR` / `${CLAUDE_PROJECT_DIR}`. The hook shell is
+Resolution steps per handler (hooks.Stop[*].hooks[*], type "command"):
+  1. Handler fields: `async` / `asyncRewake` true, `args` present, or
+     `shell` other than "bash" -> named VIOLATION (see above).
+  2. The CLAUDE_PROJECT_DIR spellings the hook shell expands --
+     `$CLAUDE_PROJECT_DIR` / `${CLAUDE_PROJECT_DIR}` -- are replaced with
+     the repo root (forward slashes, as the live hook environment carries
+     it) the way sh does it: NOT inside single quotes, NOT after a
+     backslash; an occurrence sh would leave literal is a named
+     VIOLATION (the hook could never find its script). The hook shell is
      sh-like on EVERY platform (Git Bash on Windows) -- verified
      empirically 2026-08-24: a live Stop hook received CLAUDE_PROJECT_DIR
      in its environment, both sh spellings expanded to the repo root, and
@@ -50,21 +70,21 @@ Resolution steps per command (hooks.Stop[*].hooks[*].command, type
      spelling is therefore dead wiring on every platform and a named
      VIOLATION -- expanding it here would certify a hook that can never
      run.
-  2. Shell operators (`| & ; < >` backtick, newline) are named
+  3. Shell operators (`| & ; < >` backtick, newline) are named
      VIOLATIONs: the command is exec'd as plain argv both here and
      conceptually by the gate contract, and `|| true` would swallow the
      gate's blocking exit. Quoting (single or double) is fine -- sh and
      shlex(posix=True) tokenize both the same way.
-  3. The command is parsed with shlex.split(posix=True). Double-quoted
+  4. The command is parsed with shlex.split(posix=True). Double-quoted
      Windows paths with SINGLE backslashes survive this (inside double
      quotes only `\\\\` and `\\"` are escapes) -- pinned by a fixture case.
      A path that itself contains `\\\\` or ends its quoted form with `\\"`
      would be mangled; don't write those.
-  4. argv[0]: absolute -> must exist; bare launcher name (py, python3,
+  5. argv[0]: absolute -> must exist; bare launcher name (py, python3,
      python) -> shutil.which; anything else -> which OR repo-relative file.
-  5. The script path (first arg ending in receipt_gate.py, else the first
+  6. The script path (first arg ending in receipt_gate.py, else the first
      path-looking arg) must exist (absolute, or relative to the repo root).
-  6. Only if 1-5 are clean AND --static-only was not given: the exact
+  7. Only if 1-6 are clean AND --static-only was not given: the exact
      parsed command is dry-run with empty stdin (time-boxed), and must
      answer the BAD-INPUT block on exit 2.
 
@@ -72,7 +92,10 @@ What this does NOT do: it DETECTS dead wiring at the moment it runs --
 nothing prevents the interpreter from vanishing afterwards; re-run it after
 interpreter upgrades and on fresh clones (it is cheap enough for CI, but
 see the SECURITY note above before wiring the default mode into CI that
-checks out untrusted PRs).
+checks out untrusted PRs). It models the hook shell as sh: on a Windows
+host WITHOUT Git Bash, Claude Code falls back to PowerShell, where the
+sh-form command string is not what runs -- the check does not verify Git
+Bash's presence (residual, named in the README).
 """
 import os
 import sys
@@ -88,8 +111,10 @@ BARE_LAUNCHERS = ("py", "python3", "python")
 # "${CLAUDE_PROJECT_DIR}" expanded to the repo root,
 # "%CLAUDE_PROJECT_DIR%" reached the hook as a literal.
 HOST_SHELL = "sh (Git Bash on Windows)"
-HOST_FORMS = ("${CLAUDE_PROJECT_DIR}", "$CLAUDE_PROJECT_DIR")
+HOST_FORMS = ("${CLAUDE_PROJECT_DIR}", "$CLAUDE_PROJECT_DIR")  # longest first
 ALIEN_FORMS = ("%CLAUDE_PROJECT_DIR%",)
+MODELED_SHELLS = ("bash",)          # the `shell` values this check models
+ASYNC_FIELDS = ("async", "asyncRewake")
 
 # Rejected outright: exec'd as argv they would be certified while meaning
 # something else (or nothing) to the real hook shell. `(` `)` are NOT here
@@ -130,9 +155,11 @@ def _resolve_root(argv):
     return os.path.abspath(r.stdout.strip()), None
 
 
-def _stop_commands(doc):
-    """Every hooks.Stop[*].hooks[*].command string of type "command"."""
-    commands = []
+def _stop_handlers(doc):
+    """Every hooks.Stop[*].hooks[*] handler object of type "command" with
+    a non-empty command string -- the WHOLE object, so async/args/shell
+    are judged, not dropped."""
+    handlers = []
     hooks = doc.get("hooks") if isinstance(doc, dict) else None
     stop = hooks.get("Stop") if isinstance(hooks, dict) else None
     if isinstance(stop, list):
@@ -146,8 +173,94 @@ def _stop_commands(doc):
                 if (isinstance(h, dict) and h.get("type") == "command"
                         and isinstance(h.get("command"), str)
                         and h["command"].strip()):
-                    commands.append(h["command"])
-    return commands
+                    handlers.append(h)
+    return handlers
+
+
+def _handler_violations(h):
+    """Fields that take the handler outside the one certified form."""
+    command = h["command"]
+    violations = []
+    for field in ASYNC_FIELDS:
+        if h.get(field):
+            violations.append(
+                "async Stop hook cannot block: `{0}: true` runs the gate in "
+                "the background, so its exit 2 never blocks the close -- "
+                "the gate is absent; remove the field: {1!r}".format(
+                    field, command))
+    if "args" in h:
+        violations.append(
+            "exec-form hook (`command` + `args`) is not the form this check "
+            "certifies: it models the shell-form command string only -- "
+            "write the absolute interpreter and the script as ONE quoted "
+            "command string (see adapt/README): {0!r}".format(command))
+    shell = h.get("shell")
+    if shell is not None and shell not in MODELED_SHELLS:
+        violations.append(
+            "hook shell {0!r} is not the modeled hook shell ({1}): this "
+            "check certifies sh-form command strings only -- remove `shell` "
+            "or set it to \"bash\": {2!r}".format(shell, HOST_SHELL, command))
+    return violations
+
+
+def _expand_host_forms(command, root):
+    """Substitute the sh spellings of CLAUDE_PROJECT_DIR the way sh does:
+    everywhere EXCEPT inside single quotes and right after a backslash.
+    Returns (expanded, literal_forms) where literal_forms lists every
+    occurrence sh would have left as text -- dead wiring, the caller's
+    VIOLATION. The root is substituted with forward slashes, the value the
+    live hook environment carries on every platform."""
+    root_sh = root.replace("\\", "/")
+    out = []
+    literal = []
+    in_single = False
+    in_double = False
+    i = 0
+    n = len(command)
+    while i < n:
+        c = command[i]
+        if not in_single and c == "\\" and i + 1 < n:
+            # sh: backslash escapes the next character (outside quotes, and
+            # `\$` inside double quotes) -- no expansion happens on it.
+            nxt = command[i + 1:]
+            for form in HOST_FORMS:
+                if nxt.startswith(form):
+                    literal.append("\\" + form)
+                    break
+            out.append(command[i:i + 2])
+            i += 2
+            continue
+        if c == "'" and not in_double:
+            in_single = not in_single
+            out.append(c)
+            i += 1
+            continue
+        if c == '"' and not in_single:
+            in_double = not in_double
+            out.append(c)
+            i += 1
+            continue
+        matched = None
+        for form in HOST_FORMS:
+            if command.startswith(form, i):
+                end = i + len(form)
+                # `$CLAUDE_PROJECT_DIRX` names a longer variable to sh.
+                if (form == "$CLAUDE_PROJECT_DIR" and end < n
+                        and (command[end].isalnum() or command[end] == "_")):
+                    continue
+                matched = form
+                break
+        if matched:
+            if in_single:
+                literal.append("'" + matched + "'")
+                out.append(matched)
+            else:
+                out.append(root_sh)
+            i += len(matched)
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out), literal
 
 
 def _find_script_arg(args):
@@ -186,12 +299,16 @@ def _check_command(command, root, static_only=False):
                 "certifies a plain argv command only (operators like || "
                 "would swallow the gate's blocking exit): "
                 "{1!r}".format(meta, command))
+    expanded, literal = _expand_host_forms(command, root)
+    for site in literal:
+        pre_violations.append(
+            "CLAUDE_PROJECT_DIR left LITERAL by the hook shell ({0}): {1} "
+            "is inside single quotes or escaped, so sh does not expand it "
+            "and the hook can never find its script -- use double quotes "
+            "or none: {2!r}".format(HOST_SHELL, site, command))
     if pre_violations:
         return pre_violations  # parsing a shell-ism as argv proves nothing
 
-    expanded = command
-    for form in HOST_FORMS:
-        expanded = expanded.replace(form, root)
     try:
         argv = shlex.split(expanded, posix=True)
     except ValueError as e:
@@ -246,6 +363,15 @@ def _check_command(command, root, static_only=False):
     return []
 
 
+def _check_handler(h, root, static_only=False):
+    """Handler-level form violations first; only a handler in the certified
+    form gets its command string resolved and dry-run."""
+    violations = _handler_violations(h)
+    if violations:
+        return violations
+    return _check_command(h["command"], root, static_only)
+
+
 def main(argv):
     import json
     import os
@@ -263,7 +389,7 @@ def main(argv):
     candidates = [os.path.join(root, ".claude", "settings.json"),
                   os.path.join(root, ".claude", "settings.local.json")]
     parse_violations = []
-    commands = []
+    handlers = []
     readable = []
     unreadable = []
     for settings in candidates:
@@ -284,20 +410,29 @@ def main(argv):
                 "settings not valid JSON ({0}) -- no hook can be wired "
                 "from {1}".format(e, settings))
             continue
-        commands.extend(_stop_commands(doc))
+        if isinstance(doc, dict) and doc.get("disableAllHooks") is True:
+            # Claude Code runs NO hook while this is set; a gate registered
+            # next to it (or in the other file) is absent. Fail closed: a
+            # `false` in the other file is not assumed to win.
+            parse_violations.append(
+                "disableAllHooks: true in {0} -- Claude Code runs no hook "
+                "while it is set, so the gate is absent whatever the Stop "
+                "entries say; remove it (or set it to false)".format(
+                    settings))
+        handlers.extend(_stop_handlers(doc))
     if not readable:
         return _not_run("cannot read any settings file ({0}) -- gate "
                         "presence not evaluated".format(
                             "; ".join(unreadable)))
     if parse_violations:
         return _emit(parse_violations)
-    if not commands:
+    if not handlers:
         return _emit(['gate absent -- no Stop hook of type "command" with '
                       "a non-empty command in {0}".format(
                           " or ".join(readable))])
 
-    results = [(command, _check_command(command, root, static_only))
-               for command in commands]
+    results = [(h["command"], _check_handler(h, root, static_only))
+               for h in handlers]
     clean = [command for command, violations in results if not violations]
     if clean:
         if static_only:
