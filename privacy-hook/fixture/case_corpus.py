@@ -214,21 +214,55 @@ def stage_submodule(path):
 
 
 # --- payloads -----------------------------------------------------------
-# Shape-valid, never live. `AKIAABCDEFGHIJKLMNOP` is used instead of AWS's
-# published `AKIAIOSFODNN7EXAMPLE` everywhere a BLOCK is expected, because
-# the published one is on the allowlist on purpose (see the two
+# Shape-valid, never live. A synthetic AKIA-prefixed key is used instead of
+# AWS's own published example key everywhere a BLOCK is expected -- the
+# published one is reserved for the allowlist cases (see the two
 # `neg-fp-aws-doc-example-key-in-test` / `allowlist-aws-doc-key-one-char-off`
-# cases).
-AWS_KEY_BLOCKING = b"AKIAABCDEFGHIJKLMNOP"
+# cases). Every credential shape on this page is assembled by concatenation
+# below (never written as one contiguous literal): this fixture's own
+# source has to pass privacy-hook's built-in scanner too, so an adopting
+# repo -- including this one -- can commit a fixture edit through the hook
+# (see fixture-source-self-clean in check.py). The BYTES a case plants at
+# runtime are unchanged; only how the literal is spelled in the source is
+# different.
+AWS_KEY_BLOCKING = b"AKIA" + b"ABCDEFGHIJKLMNOP"
+
+# STS/assumed-role prefix, split for the same reason as AWS_KEY_BLOCKING.
+AWS_STS_KEY_BLOCKING = b"ASIA" + b"IOSFODNN7EXAMPLE"
+
+# One character off the allowlisted AWS documentation key -- split so the
+# near-miss literal doesn't itself match the shape it's built to trigger.
+AWS_DOC_KEY_ONE_CHAR_OFF = b"AKIAIOSFODNN7EXAMPL" + b"Z"
+
+# GitHub classic token shape (ghp_ + 36 chars), split for the same reason.
+GITHUB_TOKEN_BLOCKING = b"ghp_" + b"A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
+
+# PuTTY private-key header, split for the same reason.
+PUTTY_HEADER_BLOCKING = b"PuTTY-User-Key-File-" + b"3"
+
+# Anthropic key shape, split for the same reason.
+ANTHROPIC_KEY_BLOCKING = b"sk-ant-" + b"api03-AbCdEfGhIjKlMnOpQrSt"
+
+# Slack token shape, split for the same reason.
+SLACK_TOKEN_BLOCKING = b"xoxb-" + b"1234567890-0987654321-AbCdEfGhIjKl"
 
 PEM_BLOCK = (
-    b"-----BEGIN RSA PRIVATE KEY-----\n"
+    # only the BEGIN line matches the built-in private-key-block shape, so
+    # only it needs splitting.
+    b"-----BEGIN RSA PRIVATE" + b" KEY-----\n"
     b"MIIEogIBAAKCAQEAxLotsyk3Ff0XoLotsyk3Ff0XoLotsyk3Ff0XoLotsyk3Ff0X\n"
     b"-----END RSA PRIVATE KEY-----\n"
 )
 
+# The two EXAMPLE team rules the piece ships (privacy-tokens.txt and the
+# `internal-hostname` entry of privacy-deny.json). Split for the same reason
+# as the credential shapes: check.py commits this source through the hook
+# with the SHIPPED config, so the team layers apply to it as well.
+DENY_TOKEN = b"EXAMPLE-DENY-" + b"TOKEN"
+DENY_HOSTNAME = b"internal.example." + b"corp"
+
 UTF16_AWS = ('KEY = "' + AWS_KEY_BLOCKING.decode() + '"\n').encode("utf-16-le")
-UTF16_BOM_TOKEN = 'tok = "EXAMPLE-DENY-TOKEN"\n'.encode("utf-16")
+UTF16_BOM_TOKEN = ('tok = "' + DENY_TOKEN.decode() + '"\n').encode("utf-16")
 
 # --- the sixteen measured false positives, verbatim ---------------------
 # Source: toolkit-staging/attack-findings-wave-a2.json ->
@@ -351,18 +385,20 @@ CASES = [
     # =================================================================
     C("builtin-aws-access-key-id", BLOCK,
       stage_content("config/aws.env", b"AWS_ACCESS_KEY_ID=" + AWS_KEY_BLOCKING + b"\n"),
-      "AKIAABCDEFGHIJKLMNOP"),
+      AWS_KEY_BLOCKING.decode()),
     # ASIA = STS/assumed-role prefix. Uses the doc key's SUFFIX with the
     # ASIA prefix, so it also proves the allowlist is not prefix-fuzzy.
     C("builtin-aws-sts-key", BLOCK,
-      stage_content("sts.env", b"AWS_ACCESS_KEY_ID=ASIAIOSFODNN7EXAMPLE\n"), None),
+      stage_content("sts.env",
+                    b"AWS_ACCESS_KEY_ID=" + AWS_STS_KEY_BLOCKING + b"\n"), None),
     # One character off the allowlisted AWS documentation key. The
     # allowlist is a byte-exact literal set, not a prefix or a pattern.
     C("allowlist-aws-doc-key-one-char-off", BLOCK,
-      stage_content("app/boot.py", b'KEY = "AKIAIOSFODNN7EXAMPLZ"\n'), None),
+      stage_content("app/boot.py",
+                    b'KEY = "' + AWS_DOC_KEY_ONE_CHAR_OFF + b'"\n'), None),
     C("builtin-github-classic-token", BLOCK,
       stage_content("ci.env",
-                    b"GH_TOKEN=ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8\n"), None),
+                    b"GH_TOKEN=" + GITHUB_TOKEN_BLOCKING + b"\n"), None),
     C("builtin-github-fine-grained-pat", BLOCK,
       stage_content("ci.env",
                     b"GH_TOKEN=github_pat_11ABCDEFG0abcdefghij_"
@@ -371,19 +407,23 @@ CASES = [
       stage_content("deploy/server_key", PEM_BLOCK), None),
     C("builtin-putty-private-key", BLOCK,
       stage_content("server.ppk",
-                    b"PuTTY-User-Key-File-3: ssh-rsa\nEncryption: none\n"), None),
+                    PUTTY_HEADER_BLOCKING + b": ssh-rsa\nEncryption: none\n"), None),
     C("builtin-anthropic-key", BLOCK,
       stage_content("svc.env",
-                    b"ANTHROPIC_API_KEY=sk-ant-api03-AbCdEfGhIjKlMnOpQrSt\n"), None),
+                    b"ANTHROPIC_API_KEY=" + ANTHROPIC_KEY_BLOCKING + b"\n"), None),
     C("builtin-slack-token", BLOCK,
       stage_content("svc.env",
-                    b"SLACK_BOT_TOKEN=xoxb-1234567890-0987654321-AbCdEfGhIjKl\n"),
+                    b"SLACK_BOT_TOKEN=" + SLACK_TOKEN_BLOCKING + b"\n"),
       None),
     C("builtin-url-credentials-upper-scheme", BLOCK,
-      stage_content("conn.txt", b"POSTGRES://admin:s3cr3tpw@db.example.com/app\n"),
+      # split before the at-sign so this line doesn't itself carry a
+      # complete credentials-in-a-URL match
+      stage_content("conn.txt",
+                    b"POSTGRES://admin:s3cr3t" + b"pw@db.example.com/app\n"),
       "s3cr3tpw"),
     C("builtin-url-credentials-slash-in-pass", BLOCK,
-      stage_content("conn2.txt", b"mongodb://admin:pa/ss@db.example.com/app\n"),
+      stage_content("conn2.txt",
+                    b"mongodb://admin:pa/s" + b"s@db.example.com/app\n"),
       None),
     # The allowlist is a PAIR, not a username: change the password half and
     # the same URL blocks again.
@@ -396,7 +436,7 @@ CASES = [
     C("allowlist-mixed-allowlisted-and-real", BLOCK,
       stage_content("docker-compose.yml",
                     b"      DATABASE_URL: postgres://postgres:postgres@db:5432/appdb\n"
-                    b"      LEGACY_URL: mysql://admin:s3cr3tpw@legacy.example.com/db\n"),
+                    b"      LEGACY_URL: mysql://admin:s3cr3t" + b"pw@legacy.example.com/db\n"),
       "s3cr3tpw"),
 
     # =================================================================
@@ -412,12 +452,12 @@ CASES = [
     C("deny-filename-via-rename", BLOCK, stage_rename("settings.txt", ".env"), None),
     C("deny-token-literal", BLOCK,
       stage_content("notes/internal.md",
-                    b"reference: EXAMPLE-DENY-TOKEN in the ticket\n"),
-      "EXAMPLE-DENY-TOKEN"),
+                    b"reference: " + DENY_TOKEN + b" in the ticket\n"),
+      DENY_TOKEN.decode()),
     C("deny-regex-internal-hostname", BLOCK,
       stage_content("docs/runbook.md",
-                    b"ssh deploy@internal.example.corp\n"),
-      "internal.example.corp"),
+                    b"ssh deploy@" + DENY_HOSTNAME + b"\n"),
+      DENY_HOSTNAME.decode()),
 
     # =================================================================
     # BLOCK -- reach: renames, wide encodings, the config itself.
@@ -426,7 +466,7 @@ CASES = [
       stage_rename("legacy.txt", "archive/notes.txt",
                    content=b"AWS_ACCESS_KEY_ID=" + AWS_KEY_BLOCKING + b"\n",
                    no_verify=True),
-      "AKIAABCDEFGHIJKLMNOP"),
+      AWS_KEY_BLOCKING.decode()),
     C("utf16le-builtin-pattern", BLOCK, stage_content("keys.txt", UTF16_AWS), None),
     C("utf16-bom-deny-token", BLOCK, stage_content("notes.txt", UTF16_BOM_TOKEN),
       None),

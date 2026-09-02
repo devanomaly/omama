@@ -49,7 +49,12 @@ implementation, and a review pass before close.
 violation, pinned in that piece's runner to **all** of its named reasons — not just the
 first one that fires. A guard nobody has watched fail for the right reason is not a proven
 guard. Paste both runs in the PR body: the output before your fix (red, for the named
-reason) and after (green).
+reason) and after (green). A credential shape or a shipped example team value planted by
+a **privacy-hook** case is spelled in the fixture source by concatenation
+(`b"AKIA" + b"ABCDEFGHIJKLMNOP"`, `DENY_TOKEN`), never as one contiguous literal:
+`privacy-hook/fixture/check.py` commits the fixture's own files through the shipped hook
+and goes red on a contiguous spelling. The bytes the case plants at runtime are what the
+scanner is tested on, and those do not change.
 
 **2. The tri-state exit contract.** New scripts inherit it from
 [`validator/`](validator/README.md): `0` OK/VERIFIED · `1` one `VIOLATION: ...` line per
@@ -74,6 +79,21 @@ Python 3, plus PyYAML (work-order, receipt-gate), `git` (receipt-gate), and Node
 **6. Nothing installs itself.** Every piece is opt-in, per repository. PRs that wire a
 hook globally, edit a user-level `~/.claude` path, or add an installer that touches
 anything outside the target repo will be declined regardless of merit.
+
+**7. The piece passes itself, as shipped.** Every guard here is applied to this repo's
+own files, through the artifact and configuration a team actually installs — not a
+neutralized stand-in. Two reasons. A guard that blocks its own maintainers teaches the
+bypass (`--no-verify`, a disabled hook), which is the exact failure class this repo
+exists to prevent; and a fixture that proves "committable" under a config nobody ships
+proves nothing (privacy-hook's first self-check was green with empty team rules while
+the shipped config blocked the same files — the review caught it by making a real
+commit). Two corollaries: prove through the shipped artifact (`fixture/lib.make_repo`
+installs the wrapper and config byte-for-byte for that reason), and get to self-clean on
+the **source** side — spell a planted literal so the source does not carry the shape —
+never on the **detection** side: no allowlist entry, no exemption, no weakened payload to
+make the piece's own files pass. When the piece's own files still cannot pass (privacy-
+hook's README and EVIDENCE spell the sample token in prose), that is a measured residual
+in "What it does NOT catch", not a reason to widen an exemption.
 
 ## Prose is not an escape hatch
 

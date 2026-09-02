@@ -143,7 +143,14 @@ Plain git repo (no `pre-commit` framework):
 7. Test: `git add` a file with `AKIA` + 16 uppercase/digit chars and
    try to commit — it should block. (Don't use AWS's own documentation
    example key id: it's in the allowlist on purpose.) Equivalent
-   automated test: `fixture/check.py`.
+   automated test: `fixture/check.py` — its first check also commits
+   the fixture's own source through the shipped hook, so a vendored
+   copy of `fixture/` commits through yours. This piece's `README.md`
+   and `EVIDENCE.md` do **not**: they spell the sample token in prose
+   and block under the unmodified sample config (measured 2026-09-02) —
+   replace the example values in `privacy-deny.json` /
+   `privacy-tokens.txt` with your own (steps 1 and 6) before vendoring
+   the docs alongside.
 
 ## Chaining after an existing pre-commit
 

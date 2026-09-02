@@ -15,7 +15,7 @@ scanner.
 
 ```
 cd privacy-hook/fixture
-python3 check.py                    # smoke cases + gitlink + override + hooks-path merge + full corpus
+python3 check.py                    # source through the shipped hook + smoke cases + gitlink + override + hooks-path merge + full corpus
 python3 case_corpus.py              # tabulated corpus only
 python3 case_gitlink.py             # gitlink case only (both polarities)
 python3 case_scanner_override.py    # PRIVACY_HOOK_SCANNER case only (five assertions)
@@ -23,7 +23,9 @@ python3 case_hookspath_merge.py     # versioned .githooks + relocated scanner + 
 python3 case_hookspath_merge.py --merge-hook-as-shipped-wrapper   # its red: the old ADOPTION step 3
 ```
 
-`check.py` runs six scripts and charges each one's polarity:
+`check.py` first commits the fixture's own source through the shipped
+hook (`fixture-source-self-clean`, its own section below), then runs
+six scripts and charges each one's polarity:
 `case_violation.py` (fake AWS key + deny-listed token — **must fail**),
 `case_clean.py` (ordinary Python file — **must pass**),
 `case_gitlink.py`, `case_scanner_override.py` and
@@ -292,6 +294,88 @@ instead, `case_violation.py` printed `FIXTURE BUG: violating commit was
 NOT blocked`. After (`lib.hook_env` drops the variable in `lib.git` and
 in both repo builders): `case_clean.py` exit 0, `case_violation.py`
 blocked with both `BLOCKED` lines, same exports in place.
+
+## Fixture source through the shipped hook (`fixture-source-self-clean`), 2026-09-02
+
+The fixture's own source used to be uncommittable through the hook it
+exercises: `case_corpus.py` and `case_violation.py` carried the planted
+credentials as contiguous literals, so an adopting repo — this one
+included — could not commit a fixture edit through its own pre-commit.
+Two rounds, because the first guard proved the wrong thing.
+
+**Round 1 (2026-08-25).** Staging `fixture/*.py` in a scratch repo
+running `scan_staged.py` against a minimal `privacy-deny.json` blocked
+the commit: `BLOCKED aws-access-key fixture/case_corpus.py`,
+`BLOCKED aws-access-key fixture/case_violation.py`. Enumerating per
+view (calling `builtin_hit()` on every view, not just the first hit per
+file) found **15** flagged literal sites: AWS key ids (the synthetic
+blocking key, the STS prefix, the one-char-off allowlist near-miss), a
+GitHub classic token, an Anthropic key, a Slack token, a PEM header, a
+PuTTY header, and three URL-embedded credentials. Every one became a
+runtime concatenation (`b"AKIA" + b"ABCDEFGHIJKLMNOP"`, …). The guard
+added to `check.py` scanned each `fixture/*.py` in-process with
+`scan_bytes(..., deny_regexes=[], tokens=[], builtins_only=True)` and
+went green.
+
+**Why round 1 was insufficient (review, 2026-09-02).** The reviewer
+staged the exact PR files in a clean repo with the **shipped**
+configuration and made a real commit: `commit_rc=1`,
+`BLOCKED deny-list:internal-hostname privacy-hook/fixture/case_corpus.py`,
+`BLOCKED deny-token privacy-hook/fixture/case_violation.py`. The
+in-process guard supplied empty team rules, so the shipped example
+values — `privacy-tokens.txt`'s token and the `internal-hostname`
+regex of `privacy-deny.json` — never applied, while the fixture spells
+both. A guard green on a tree the shipped hook blocks proves
+committability under a config nobody ships. Meanwhile the base moved:
+`case_hookspath_merge.py` and `case_scanner_override.py` (versioned
+hooks + scanner override, 2026-09-02) each carried one more contiguous
+AWS-shaped literal.
+
+**Round 2.** The guard now does what the claim says: `lib.make_repo`
+(shipped wrapper, shipped `privacy-deny.json` + `privacy-tokens.txt`,
+scanner at the root), every regular file in `fixture/` copied under
+`fixture/`, `git add`, real `git commit`; the verdict is git's exit
+code and the `BLOCKED` lines are the hook's own. Red, on the rebased
+tree before any further split (round 1's fifteen splits in place):
+
+```
+commit_rc=1 files=9
+BLOCKED deny-list:internal-hostname fixture/case_corpus.py
+BLOCKED aws-access-key fixture/case_hookspath_merge.py
+BLOCKED aws-access-key fixture/case_scanner_override.py
+BLOCKED deny-token fixture/case_violation.py
+```
+
+Green, after splitting the two AWS literals and the example team values
+(`DENY_TOKEN = b"EXAMPLE-DENY-" + b"TOKEN"`,
+`DENY_HOSTNAME = b"internal.example." + b"corp"` in `case_corpus.py`,
+the same split inline in `case_violation.py`):
+
+```
+commit_rc=0 files=9
+```
+
+The planted **bytes** did not change in either round — only their
+spelling in the source; `case_corpus.py`'s corpus count and polarities
+are unchanged (55 cases, 28 block / 27 pass).
+
+Boundaries, both measured the same day. (1) The guard stages the bytes
+on **disk**, not this repo's index, so a partially staged fixture edit
+is judged by its working-tree content — the same bytes a plain
+`git add` or CI would commit, and a different thing from what the real
+hook sees when index and worktree diverge. (2) Fixture-only: committing
+the rest of the piece through the shipped config, one file group per
+scratch repo — `README.md` rc=1 `BLOCKED deny-token`; `EVIDENCE.md`
+rc=1 `BLOCKED deny-token`; `ADOPTION.md` rc=0; `scan_staged.py` +
+`pre-commit` rc=0 (the scanner's own copy of AWS's documentation key
+is allowlisted; mutation M8 above is that receipt). The two docs spell
+the shipped example token in prose. An adopter's config carries their
+own vocabulary, so the collision is specific to a repo that commits
+this piece's docs through the unmodified sample config.
+
+Scratch: the guard's repo is removed on a pass (`lib.rmtree`, `WARN` if
+not) and kept under `fixture/.tmp/` on a failure, like the override and
+merge cases; a green `check.py` run still leaves exactly 3 directories.
 
 ## `pre-commit` wrapper receipts
 

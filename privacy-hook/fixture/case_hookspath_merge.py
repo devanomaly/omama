@@ -45,8 +45,11 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lib  # noqa: E402
 
-# Fake AWS-style access key -- shape-valid, not a real credential.
-VIOLATION = b"AWS_ACCESS_KEY_ID=AKIAABCDEFGHIJKLMNOP\n"
+# Fake AWS-style access key -- shape-valid, not a real credential. Split by
+# concatenation so this fixture source carries no contiguous AWS-key-shape
+# literal (fixture-source-self-clean in check.py commits every fixture
+# file through the shipped hook).
+VIOLATION = b"AWS_ACCESS_KEY_ID=AKIA" + b"ABCDEFGHIJKLMNOP\n"
 VIOLATING_PATH = "config/deploy.env"
 NOTICE = "notice privacy-hook: scanner = tools/scan_staged.py"
 
