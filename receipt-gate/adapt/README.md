@@ -50,21 +50,50 @@ is the reference (env vars, troubleshooting, rationale).
    dry-invoked with EMPTY stdin, answers the gate's own
    `RECEIPT-GATE BLOCK[BAD-INPUT]` block on exit 2 — the block NAME is
    matched, not just the exit code (a Windows-Store python3 stub also
-   exits non-zero). `CLAUDE_PROJECT_DIR` is expanded the way the
-   real hook shell does: the hook shell is sh-like on every platform (Git
-   Bash on Windows — verified empirically 2026-08-24 with a live Stop
-   hook), so `$CLAUDE_PROJECT_DIR` / `${CLAUDE_PROJECT_DIR}` expand and
-   `%CLAUDE_PROJECT_DIR%` is left literal — dead wiring on every platform
-   and a named `VIOLATION`, as are shell operators (`|| true` would
-   swallow the gate's blocking exit). A missing interpreter or wrong
-   script path is a named `VIOLATION` (exit 1) instead of the silent
-   127/9009 absence; when neither settings file is readable the result is
-   NOT-RUN (exit 2). With several Stop hooks, one working gate is enough
-   for exit 0, but each broken sibling's failures are printed as
-   `WARNING:` lines — read them. Re-run the check after an interpreter
-   upgrade and on every fresh clone — the adopting repo's CI is the
-   natural place; the check DETECTS dead wiring, nothing prevents it from
-   going dead later.
+   exits non-zero).
+
+   **It certifies exactly one hook form — the one this page prescribes:**
+   a **synchronous** Stop hook of type `command`, written as **one
+   shell-form command string** (no `args`), run by the **default hook
+   shell** (`shell` absent or `"bash"`), absolute interpreter path first,
+   gate script as an argument. Claude Code accepts other forms; here each
+   is a named `VIOLATION`, never a quiet pass: `async: true` /
+   `asyncRewake: true` (a background hook cannot block the close — the
+   gate is absent), exec-form `command` + `args` (not modeled — write one
+   quoted string), `shell: "powershell"` (not modeled), and
+   `disableAllHooks: true` in **either** settings file (no hook runs at
+   all; a `false` in the other file is not assumed to win).
+
+   `CLAUDE_PROJECT_DIR` is expanded the way the real hook shell does: the
+   hook shell is sh-like on every platform (Git Bash on Windows — verified
+   empirically 2026-08-24 with a live Stop hook), so
+   `"$CLAUDE_PROJECT_DIR"` / `"${CLAUDE_PROJECT_DIR}"` expand (double
+   quotes or none), while `%CLAUDE_PROJECT_DIR%`, a placeholder inside
+   **single quotes**, or an escaped `\$CLAUDE_PROJECT_DIR` is left
+   literal — dead wiring on every platform and a named `VIOLATION`, as are
+   shell operators (`|| true` would swallow the gate's blocking exit). A
+   missing interpreter or wrong script path is a named `VIOLATION` (exit
+   1) instead of the silent 127/9009 absence; when neither settings file
+   is readable the result is NOT-RUN (exit 2). With several Stop hooks,
+   one working gate is enough for exit 0, but each broken sibling's
+   failures are printed as `WARNING:` lines — read them. Re-run the check
+   after an interpreter upgrade and on every fresh clone — the adopting
+   repo's CI is the natural place; the check DETECTS dead wiring, nothing
+   prevents it from going dead later.
+
+   **Not read, by design (residuals, see the README's coverage):**
+   user-level `~/.claude/settings.json`, managed policy settings and a
+   `claude --settings` override — a `disableAllHooks` or a gate wired in
+   any of those is invisible here. And the check models the hook shell as
+   sh: a Windows host **without Git Bash** falls back to PowerShell, where
+   the sh-form string is not what runs; the check does not verify Git
+   Bash's presence — install it (Claude Code's stated Windows
+   requirement) before trusting a `WIRING-OK` there.
+
+   **Do not confuse "not certified" with "does not work":** an exec-form
+   or async hook may be perfectly valid for other purposes. This gate has
+   to *block*, and the check only vouches for the one form whose blocking
+   it has watched.
 
    **SECURITY — the default mode EXECUTES the registered command string it
    finds in the settings files** (that dry run is what proves the gate

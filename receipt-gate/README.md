@@ -2,7 +2,7 @@
 
 > Docs for this piece: **README** (promise, command, states, coverage) ·
 > [adapt/README.md](adapt/README.md) (how to install — per-repo, with a
-> mandatory self-test). The evidence is the re-runnable fixture (67 cases) +
+> mandatory self-test). The evidence is the re-runnable fixture (73 cases) +
 > the empirical spike ([fixture/spike/SPIKE.md](fixture/spike/SPIKE.md)).
 
 ## The decision this piece changes
@@ -46,7 +46,7 @@ the registered Stop command answers the gate's `BAD-INPUT` block on empty
 stdin, re-runnable from the adopting repo's CI). Fixture:
 
 ```
-python3 fixture/run_fixture.py        # exit 0 = gate correct (67 cases)
+python3 fixture/run_fixture.py        # exit 0 = gate correct (73 cases)
 ```
 
 | Gate exit | Means |
@@ -116,19 +116,38 @@ otherwise structurally valid S3 close.
   the moment it runs, nothing prevents it; re-run it (CI of the adopting
   repo is the natural place — with `--static-only` if that CI checks out
   untrusted PRs, because the default mode EXECUTES the registered command).
-- **A hook wired with the cmd-style spelling** (`%CLAUDE_PROJECT_DIR%`)
-  is dead wiring on every platform — the hook shell is sh-like everywhere
-  (Git Bash on Windows; verified empirically 2026-08-24) — and the check
-  names it as a VIOLATION wherever it runs.
-- **User-level `~/.claude` settings are not read** by the wiring check —
-  the install rule is per-repo; a gate wired globally (against
-  adapt/README's explicit rule) is invisible to it.
+- **A hook wired with the cmd-style spelling** (`%CLAUDE_PROJECT_DIR%`),
+  or with the placeholder inside **single quotes** / escaped, is dead
+  wiring on every platform — the hook shell is sh-like everywhere (Git
+  Bash on Windows; verified empirically 2026-08-24) and leaves those
+  literal — and the check names each as a VIOLATION wherever it runs.
+- **Hook forms other than the one adapt/README prescribes are not
+  certified — they are named VIOLATIONs, not silent passes.** `async` /
+  `asyncRewake` (cannot block a close), exec-form `command` + `args`
+  (not modeled), `shell: "powershell"` (not modeled),
+  `disableAllHooks: true` in either project settings file (no hook runs).
+  The check vouches for one form: synchronous, shell-form command string,
+  default (bash) hook shell. Fixture: one case per rejected form.
+- **Settings the check does not read.** User-level `~/.claude/settings.json`,
+  managed policy settings, and a `claude --settings` command-line
+  override all take part in Claude Code's hook merge and can carry a
+  `disableAllHooks: true` (or a gate) the check never sees — the install
+  rule is per-repo, so a gate wired globally (against adapt/README's
+  explicit rule) is invisible to it, and a global `disableAllHooks` turns
+  the gate off while the check says `WIRING-OK`. Resolved by: the
+  red/green self-test steps 2–3 run **through Claude Code** on the
+  machine in question, not only by hand.
+- **A Windows host without Git Bash** runs hooks through PowerShell
+  (Claude Code's documented fallback); the check models sh and does not
+  verify Git Bash's presence, so a `WIRING-OK` there certifies a string
+  PowerShell will not run the same way. Resolved by: installing Git Bash
+  (Claude Code's stated requirement on Windows).
 
 ## Coverage
 
 | Promised | Mechanically covered | Not covered / known bypass | Classification |
 |---|---|---|---|
-| VERIFIED without backing impossible via close | 67 cases: red blocks, stale blocks, planted receipts deleted (start, block-exit, guard route) | forgery on a WIP turn persists | fixed KNOWN-LIMITATION |
+| VERIFIED without backing impossible via close | 73 cases: red blocks, stale blocks, planted receipts deleted (start, block-exit, guard route) | forgery on a WIP turn persists | fixed KNOWN-LIMITATION |
 | Honest close always reachable | fixtures: broken/unreadable/non-git/no-git card — all exit 0 with a conservative receipt | — | covered |
 | Binding catches verify mutation | tracked, untracked-dir (-uall), CARD family, stash, assume-unchanged | non-git cp-restore; inside .git | accepted limitation |
-| Fail-closed | pyyaml absent, git absent, empty stdin, unborn HEAD, unreadable card ⇒ named exit 2 | broken wiring (shell exit≠2) — resolved by: adapt/check_wiring.py (+ self-test; reads settings.json AND settings.local.json, sh-hook-shell CLAUDE_PROJECT_DIR expansion, rejects shell operators, warns on broken sibling hooks); an interpreter that vanishes after install stays undetected until the check is re-run (detection, not prevention); `--static-only` mode does NOT prove the gate answers | accepted limitation |
+| Fail-closed | pyyaml absent, git absent, empty stdin, unborn HEAD, unreadable card ⇒ named exit 2 | broken wiring (shell exit≠2) — resolved by: adapt/check_wiring.py (+ self-test; reads settings.json AND settings.local.json, quote-aware sh CLAUDE_PROJECT_DIR expansion, rejects shell operators, rejects async / exec-form / non-bash-shell hooks and `disableAllHooks` by name, warns on broken sibling hooks; `--static-only` non-execution sentinel-proven); an interpreter that vanishes after install stays undetected until the check is re-run (detection, not prevention); `--static-only` mode does NOT prove the gate answers; user/managed/CLI settings and the Windows no-Git-Bash PowerShell fallback are not inspected | accepted limitation |

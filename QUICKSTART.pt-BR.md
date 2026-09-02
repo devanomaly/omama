@@ -90,11 +90,13 @@ python3 <OMAMA>/receipt-gate/adapt/check_wiring.py
 
 **Esperado: `WIRING-OK ...` e exit 0.** Ele resolve o comando de Stop hook
 registrado e o executa a seco com stdin vazio — interpretador ausente,
-caminho de script errado, ou um `CLAUDE_PROJECT_DIR` grafado para o shell da
-outra plataforma vira uma `VIOLATION` nomeada (exit 1) em vez da ausência
-silenciosa 127/9009. (Ele EXECUTA o comando registrado — esse é o ponto;
-detalhes, uso em CI e `--static-only` no
-[adapt/README.md](receipt-gate/adapt/README.md).)
+caminho de script errado, um `CLAUDE_PROJECT_DIR` que o shell do hook
+deixaria literal (grafia `%VAR%`, aspas simples), um hook numa forma que o
+cheque não certifica (`async`, `args` em forma exec, `shell: powershell`)
+ou `disableAllHooks` num arquivo de settings vira uma `VIOLATION` nomeada
+(exit 1) em vez da ausência silenciosa 127/9009. (Ele EXECUTA o comando
+registrado — esse é o ponto; detalhes, a forma certificada, uso em CI e
+`--static-only` no [adapt/README.md](receipt-gate/adapt/README.md).)
 
 **Passos 2–3 — vermelho, depois verde.** Adicione o snippet do gitignore primeiro — um card é por tarefa e por
 máquina, não algo para versionar (veja
