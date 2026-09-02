@@ -55,6 +55,18 @@ def leaks_path(repo, text):
     return repo in text or repo.replace("\\", "/") in text
 
 
+def checkout(repo, *args):
+    """A failed checkout is a broken FIXTURE, never a finding: report it
+    as such (rc=2) instead of letting the merge below fail on a branch
+    that does not exist and blame the hook. CI sets
+    `init.defaultBranch main`, so the base branch is never assumed."""
+    r = lib.git(repo, "checkout", "-q", *args)
+    if r.returncode != 0:
+        sys.stderr.write("FIXTURE BUG: git checkout %s failed:\n%s%s\n"
+                         % (" ".join(args), r.stdout, r.stderr))
+        sys.exit(2)
+
+
 def main(argv):
     merge_hook = "launcher"
     if argv == ["--merge-hook-as-shipped-wrapper"]:
@@ -66,6 +78,12 @@ def main(argv):
 
     repo = lib.make_versioned_repo(merge_hook=merge_hook)
     ok = True
+    # Whatever `git init` named it -- `master` here, `main` under CI's
+    # `init.defaultBranch main` -- the base branch is read, not assumed.
+    base = lib.git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    if not base or base == "HEAD":
+        sys.stderr.write("FIXTURE BUG: could not name the base branch\n")
+        return 2
 
     # --- 1. route (a) + 2c: a planted key on a plain commit is refused --
     lib.write_file(repo, VIOLATING_PATH, VIOLATION)
@@ -86,19 +104,19 @@ def main(argv):
     lib.git(repo, "rm", "--cached", "-q", VIOLATING_PATH)
     os.remove(os.path.join(repo, VIOLATING_PATH))
 
-    # master must diverge from the branch point, or the merges below would
-    # fast-forward and no merge commit -- hence no pre-merge-commit --
-    # would ever be created.
+    # The base branch must diverge from the branch point, or the merges
+    # below would fast-forward and no merge commit -- hence no
+    # pre-merge-commit -- would ever be created.
     lib.write_file(repo, "src/app.py", b"def main():\n    return 0\n")
     lib.git(repo, "add", "src/app.py")
-    r = lib.commit(repo, "master moves on")
+    r = lib.commit(repo, "base branch moves on")
     if r.returncode != 0:
-        sys.stderr.write("FIXTURE BUG: clean commit on master was refused:\n"
-                         "%s%s\n" % (r.stdout, r.stderr))
+        sys.stderr.write("FIXTURE BUG: clean commit on the base branch was "
+                         "refused:\n%s%s\n" % (r.stdout, r.stderr))
         return 2
 
     # --- 2. the colleague's leak arrives through an automatic merge -----
-    lib.git(repo, "checkout", "-q", "-b", "colleague", "master~1")
+    checkout(repo, "-b", "colleague", base + "~1")
     lib.write_file(repo, VIOLATING_PATH, VIOLATION)
     lib.git(repo, "add", VIOLATING_PATH)
     r = lib.git(repo, "commit", "-q", "--no-verify", "-m",
@@ -107,7 +125,7 @@ def main(argv):
         sys.stderr.write("FIXTURE BUG: --no-verify commit failed:\n%s%s\n"
                          % (r.stdout, r.stderr))
         return 2
-    lib.git(repo, "checkout", "-q", "master")
+    checkout(repo, base)
     r = lib.git(repo, "merge", "--no-edit", "colleague")
     out = r.stdout + r.stderr
     if r.returncode == 0:
@@ -135,7 +153,7 @@ def main(argv):
         return 2
 
     # --- 3. a clean automatic merge goes through, and the scan ran ------
-    lib.git(repo, "checkout", "-q", "-b", "clean-branch", "master~1")
+    checkout(repo, "-b", "clean-branch", base + "~1")
     lib.write_file(repo, "docs/note.md", b"# notes\n\nnothing secret here\n")
     lib.git(repo, "add", "docs/note.md")
     r = lib.commit(repo, "clean branch commit")
@@ -143,16 +161,21 @@ def main(argv):
         sys.stderr.write("FIXTURE BUG: clean branch commit was refused:\n"
                          "%s%s\n" % (r.stdout, r.stderr))
         return 2
-    lib.git(repo, "checkout", "-q", "master")
+    checkout(repo, base)
     r = lib.git(repo, "merge", "--no-edit", "clean-branch")
     out = r.stdout + r.stderr
     parents = lib.git(repo, "rev-list", "--parents", "-1", "HEAD").stdout.split()
-    if r.returncode != 0:
+    if r.returncode != 0 and "missing-scanner" in out:
         sys.stderr.write(
             "FAIL: a CLEAN automatic merge was refused (rc=%d) -- the "
             "pre-merge-commit hook does not reach the relocated scanner; "
             "this is the old ADOPTION step 3 (bare wrapper copied under "
             "the second name):\n%s\n" % (r.returncode, out))
+        ok = False
+    elif r.returncode != 0:
+        sys.stderr.write(
+            "FAIL: a CLEAN automatic merge was refused (rc=%d), and not by "
+            "the missing-scanner path:\n%s\n" % (r.returncode, out))
         ok = False
     elif len(parents) != 3:
         sys.stderr.write(

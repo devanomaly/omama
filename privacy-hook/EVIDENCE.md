@@ -264,8 +264,8 @@ launcher under **both** hook names — and charges three assertions (real
 | # | Route | Charged output | rc |
 |---|---|---|---|
 | 1 | plain commit, `AKIA…` staged, through `.githooks/pre-commit` | `BLOCKED aws-access-key config/deploy.env`; notice names `tools/scan_staged.py` | 1 |
-| 2 | colleague's branch carries the key (committed `--no-verify`: no hook there), automatic merge into master | refused **by the scanner's verdict** — `BLOCKED aws-access-key`, not a hook-error; no absolute path | 1 |
-| 3 | clean branch, automatic merge into master | rc=0, HEAD has two parents (not a fast-forward, so `pre-merge-commit` ran), notice on stderr proves the scan happened | 0 |
+| 2 | colleague's branch carries the key (committed `--no-verify`: no hook there), automatic merge into the base branch | refused **by the scanner's verdict** — `BLOCKED aws-access-key`, not a hook-error; no absolute path | 1 |
+| 3 | clean branch, automatic merge into the base branch | rc=0, HEAD has two parents (not a fast-forward, so `pre-merge-commit` ran), notice on stderr proves the scan happened | 0 |
 
 Red, with `--merge-hook-as-shipped-wrapper` (installs `pre-merge-commit`
 the way step 3 used to say): assertion 1 passes, then
