@@ -7,3 +7,8 @@ CARD.yaml
 CARD.close
 CARD.receipt.json
 *.receipt.json
+
+# .claude/ is session-local (worktrees, local settings, skill pointers) except the
+# one file that IS this repo's hook wiring; allowlist it, ignore the rest
+.claude/*
+!.claude/settings.json

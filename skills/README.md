@@ -15,8 +15,10 @@ Port of the three on-demand skills referenced by the reduced global CLAUDE.md
 - **Single-home:** THIS folder is the only editable home. The plugin's
   local copies carry `DEPRECATED.md`; durable deprecation in the upstream repo is a
   pending operator action (the cache note dies on plugin update).
-- **Invocability:** `.claude/skills/` at the omama root holds thin pointers
-  (they load and defer to the canonical SKILL.md here) — invocable in a
-  session in omama without duplicating content.
+- **Not wired into omama's own sessions:** `.claude/` is untracked in this repo
+  except `settings.json` (see `.gitignore`), so no pointer files live here. To
+  invoke one in a session, point your own `.claude/skills/<name>/SKILL.md` at the
+  canonical file; Claude Code reads the pointer's frontmatter `description` for
+  triggering, so that one field is a copy — keep it in sync.
 - **No behavior change** beyond the rename/scrub (a non-goal of the card);
   they are not part of the measured dogfood.
