@@ -312,6 +312,25 @@ it — none of these is a "generic limitation."
   nothing says so. Resolved by: **CI / pre-receive**, which sees the
   pushed commit regardless of what ran locally.
 
+- **This piece's own files colliding with its own rules.** Guarded for
+  the fixture only: `fixture/check.py` (`fixture-source-self-clean`)
+  copies every `fixture/` file into a throwaway repo with the hook
+  installed **as shipped** — wrapper, `privacy-deny.json`,
+  `privacy-tokens.txt` — and makes a real commit; a non-zero exit is a
+  failed fixture run, so a fixture edit that reintroduces a contiguous
+  credential shape or one of the shipped example team values goes red
+  in CI (receipt in [EVIDENCE.md](EVIDENCE.md)). Two boundaries. It
+  judges **working-tree bytes**, not this repo's index: a partially
+  staged fixture edit is judged on what is on disk, which is what a
+  plain `git add` and CI commit anyway. And nothing guards the rest of
+  the piece: this README and `EVIDENCE.md` spell the shipped example
+  token in prose and **block under the shipped config** (`deny-token`,
+  rc=1, measured 2026-09-02); `ADOPTION.md`, `scan_staged.py` and the
+  wrapper commit clean. Resolved by: an adopting team's config carries
+  **its own** vocabulary, never the shipped examples, so the collision
+  exists only for a repo committing this piece's docs through the
+  unmodified sample config.
+
 ### What only a human decides
 
 See [ADOPTION.md](ADOPTION.md) — deny-list vocabulary, allowlist
@@ -328,6 +347,7 @@ vs `.git/hooks`), and where `scan_staged.py` lives.
 | Block team literal token | `deny-token-literal` (rc=1) | spelling variant passes (P3, rc=0) — route: one line per spelling | defect |
 | Block team regex | `deny-regex-internal-hostname` (rc=1) | config neutralized in the working tree turns off the layer (P8, rc=0) — route: CI with the committed config | defect |
 | Generic high-entropy secret | none — capability removed on purpose; 6 tripwire cases charge the rc=0 so silent reintroduction goes red | the entire class — route: gitleaks / trufflehog in CI | defect |
+| The piece's own fixture source commits through the shipped hook | `fixture-source-self-clean` in `fixture/check.py`: all 9 `fixture/` files staged in a throwaway repo with the shipped wrapper + config, real `git commit`, rc=0 — red on the un-split source was 4 `BLOCKED` lines (`aws-access-key` ×2, `deny-list:internal-hostname`, `deny-token`) | judged on working-tree bytes, not this repo's index; fixture-only — this README and `EVIDENCE.md` block under the shipped config (`deny-token`, rc=1) — route: an adopter's config carries its own vocabulary | defect |
 | Fail-closed on missing / malformed config / missing tokens_file | 4 `fail-closed-*` cases (rc=1), each charging the diagnostic in the output | the `bad-tokens-file` branch (file present but unreadable) has no case or probe | not assessed |
 | Scan the blob's wide-Unicode reading | `utf16le-builtin-pattern`, `utf16-bom-deny-token` (rc=1); mutation M1 goes red only on these 2 | no NUL in the first 4 KB (P5, rc=0); blob >8 MB (P6, rc=0) — route: raise `WIDE_PROBE_BYTES` / `WIDE_MAX_BLOB`, or CI | defect |
 | Config exemption restricted to self-referential layers | `secret-inside-deny-config`, `tokens-file-redirect`, `case-variant-config-name` (rc=1); P11 (rc=1); mutations M2/M3 go red only on these cases | content that only the team layers would catch, inside `tokens_file` itself, passes (P10, rc=0) — route: PR review of the config | defect |
