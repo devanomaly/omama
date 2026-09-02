@@ -80,6 +80,21 @@ Python 3, plus PyYAML (work-order, receipt-gate), `git` (receipt-gate), and Node
 hook globally, edit a user-level `~/.claude` path, or add an installer that touches
 anything outside the target repo will be declined regardless of merit.
 
+**7. The piece passes itself, as shipped.** Every guard here is applied to this repo's
+own files, through the artifact and configuration a team actually installs — not a
+neutralized stand-in. Two reasons. A guard that blocks its own maintainers teaches the
+bypass (`--no-verify`, a disabled hook), which is the exact failure class this repo
+exists to prevent; and a fixture that proves "committable" under a config nobody ships
+proves nothing (privacy-hook's first self-check was green with empty team rules while
+the shipped config blocked the same files — the review caught it by making a real
+commit). Two corollaries: prove through the shipped artifact (`fixture/lib.make_repo`
+installs the wrapper and config byte-for-byte for that reason), and get to self-clean on
+the **source** side — spell a planted literal so the source does not carry the shape —
+never on the **detection** side: no allowlist entry, no exemption, no weakened payload to
+make the piece's own files pass. When the piece's own files still cannot pass (privacy-
+hook's README and EVIDENCE spell the sample token in prose), that is a measured residual
+in "What it does NOT catch", not a reason to widen an exemption.
+
 ## Prose is not an escape hatch
 
 If your change says an agent *should* do something, name the hook, validator, or exit code
