@@ -875,10 +875,14 @@ def w_both_wrong(tmp):
           f"the two violations must name interpreter AND hook script: {vl}", r)
 
 
-# The hook shell is sh-like on every platform (Git Bash on Windows;
-# verified empirically 2026-08-24: both sh spellings expanded in a live
-# Stop hook, %VAR% stayed literal), so the sh spellings are the live
-# forms everywhere and the cmd spelling is dead wiring everywhere.
+# The modeled hook shell is sh on POSIX and Git Bash on Windows (verified
+# empirically 2026-08-24 on a Git-Bash-equipped Windows 11 host: both sh
+# spellings expanded in a live Stop hook, %VAR% stayed literal), so the sh
+# spellings are the live forms under the modeled shells, and the cmd
+# spelling is dead wiring under every hook shell Claude Code documents
+# (PowerShell, the no-Git-Bash fallback, leaves %VAR% literal too). A
+# Windows host without Git Bash is NOT-RUN before any of this is evaluated
+# (w_no_git_bash).
 HOST_FORMS = ("$CLAUDE_PROJECT_DIR", "${CLAUDE_PROJECT_DIR}")
 ALIEN_FORMS = ("%CLAUDE_PROJECT_DIR%",)
 
@@ -890,8 +894,8 @@ def _copy_gate_under(repo):
 
 
 def w_project_dir_host_form(tmp):
-    """The sh spellings ($VAR and ${VAR}) are what the hook shell expands
-    on every platform (Git Bash on Windows) and must certify WIRING-OK."""
+    """The sh spellings ($VAR and ${VAR}) are what the modeled hook shell
+    (sh on POSIX, Git Bash on Windows) expands and must certify WIRING-OK."""
     repo = make_repo(tmp)
     _copy_gate_under(repo)
     for form in HOST_FORMS:
@@ -904,9 +908,9 @@ def w_project_dir_host_form(tmp):
 
 
 def w_project_dir_alien_form(tmp):
-    """%CLAUDE_PROJECT_DIR% is left LITERAL by the sh hook shell on every
-    platform (Git Bash on Windows) -- dead wiring, and must be a named
-    VIOLATION, not a false WIRING-OK."""
+    """%CLAUDE_PROJECT_DIR% is left LITERAL by the modeled hook shell (sh
+    on POSIX, Git Bash on Windows) -- and by PowerShell too -- dead wiring,
+    and must be a named VIOLATION, not a false WIRING-OK."""
     repo = make_repo(tmp)
     _copy_gate_under(repo)
     for form in ALIEN_FORMS:
@@ -1018,15 +1022,16 @@ def w_static_only(tmp):
     WIRING-STATIC-OK, a dead path is still a named VIOLATION.
 
     Non-execution is PROVEN, not assumed: the planted "gate" is a script
-    that writes a sentinel file when run AND answers exactly like the real
-    gate (the BAD-INPUT block on exit 2), so an execution in static mode
-    would leave the exit code untouched and ONLY the sentinel could tell.
-    Static mode must leave no sentinel; the default mode run on the same
-    settings must certify WIRING-OK and leave one, which proves the
-    sentinel would have caught an execution in static mode."""
+    named receipt_gate.py (the argument name the check requires) that
+    writes a sentinel file when run AND answers exactly like the real gate
+    (the BAD-INPUT block on exit 2), so an execution in static mode would
+    leave the exit code untouched and ONLY the sentinel could tell. Static
+    mode must leave no sentinel; the default mode run on the same settings
+    must certify WIRING-OK and leave one, which proves the sentinel would
+    have caught an execution in static mode."""
     repo = make_repo(tmp)
     sentinel = Path(tmp) / "EXECUTED.sentinel"
-    writer = Path(tmp) / "sentinel_gate.py"
+    writer = Path(tmp) / "receipt_gate.py"
     writer.write_text(
         "import pathlib, sys\n"
         "pathlib.Path(sys.argv[1]).write_text('ran')\n"
@@ -1056,6 +1061,95 @@ def w_static_only(tmp):
           f"got {r.returncode}", r)
     check(any("interpreter" in v for v in viol_lines(r)),
           "violation does not name the interpreter", r)
+
+
+def w_interpreter_only_rejected(tmp):
+    """A command that is just the interpreter -- no receipt_gate.py
+    argument -- is not the gate. --static-only used to certify it
+    WIRING-STATIC-OK (a line that claims "interpreter and script exist"
+    while there is no script): the script-argument finder returned None
+    and nothing recorded a violation (review finding, 2026-09-03). Both
+    modes must be a named VIOLATION citing the missing receipt_gate.py
+    argument; static mode must never print a WIRING-*OK line."""
+    repo = make_repo(tmp)
+    plant_settings(repo, '"{0}"'.format(PY))
+    for extra in (("--static-only",), ()):
+        mode = " ".join(extra) or "default"
+        r = run_wiring(repo, extra=extra)
+        check(r.returncode == 1,
+              f"interpreter-only command ({mode}) must be exit 1, "
+              f"got {r.returncode}", r)
+        check("WIRING" not in r.stdout,
+              f"interpreter-only command ({mode}) printed a WIRING-*OK line", r)
+        vl = viol_lines(r)
+        check(any("receipt_gate.py" in v and "missing" in v for v in vl),
+              f"violation must name the missing receipt_gate.py argument "
+              f"({mode}): {vl}", r)
+
+
+def w_unrelated_script_rejected(tmp):
+    """An interpreter plus an existing script that is NOT receipt_gate.py
+    resolves (both paths exist) but is not receipt-gate wiring: static
+    mode used to certify it WIRING-STATIC-OK, and the default mode
+    EXECUTED the unrelated script before finding it did not answer
+    (review finding, 2026-09-03). Both modes must be a named VIOLATION
+    citing the missing receipt_gate.py argument, before anything runs --
+    the planted script writes a sentinel that must stay absent."""
+    repo = make_repo(tmp)
+    sentinel = Path(tmp) / "UNRELATED.sentinel"
+    other = Path(tmp) / "other.py"
+    other.write_text(
+        "import pathlib, sys\n"
+        "pathlib.Path(sys.argv[1]).write_text('ran')\n", encoding="utf-8")
+    plant_settings(repo, '"{0}" "{1}" "{2}"'.format(PY, other, sentinel))
+    for extra in (("--static-only",), ()):
+        mode = " ".join(extra) or "default"
+        r = run_wiring(repo, extra=extra)
+        check(r.returncode == 1,
+              f"unrelated script ({mode}) must be exit 1, got {r.returncode}", r)
+        check("WIRING" not in r.stdout,
+              f"unrelated script ({mode}) printed a WIRING-*OK line", r)
+        vl = viol_lines(r)
+        check(any("receipt_gate.py" in v and "missing" in v for v in vl),
+              f"violation must name the missing receipt_gate.py argument "
+              f"({mode}): {vl}", r)
+        check(not sentinel.exists(),
+              f"the unrelated script was EXECUTED by the check ({mode})", r)
+
+
+def w_bare_launcher_rejected(tmp):
+    """adapt/README step 3 mandates the interpreter's ABSOLUTE path: a
+    bare launcher name (`py`, `python3`, `python`) resolves through PATH
+    at hook time, so the same settings are live on one machine and dead
+    on the next (exit 127/9009, or the Windows-Store stub) -- the silent
+    absence this piece exists to catch. The checker used to accept bare
+    launchers through shutil.which and certify WIRING-STATIC-OK (review
+    finding, 2026-09-03). A launcher that IS on PATH here must still be a
+    named VIOLATION citing the absolute-path rule, in both modes: the
+    rejection is by form, not by lookup failure."""
+    repo = make_repo(tmp)
+    candidates = (Path(PY).stem, Path(PY).name)
+    on_path = [c for c in candidates if shutil.which(c) is not None]
+    check(on_path,
+          f"FIXTURE ENV NOT ESTABLISHED: none of {candidates} is on PATH, "
+          f"so this case cannot prove rejection-by-form")
+    bare = on_path[0]
+    plant_settings(repo, '{0} "{1}"'.format(bare, GATE))
+    for extra in (("--static-only",), ()):
+        mode = " ".join(extra) or "default"
+        r = run_wiring(repo, extra=extra)
+        check(r.returncode == 1,
+              f"bare launcher {bare!r} ({mode}) must be exit 1, "
+              f"got {r.returncode}", r)
+        check("WIRING" not in r.stdout,
+              f"bare launcher {bare!r} ({mode}) printed a WIRING-*OK line", r)
+        vl = viol_lines(r)
+        check(any("absolute" in v and bare in v for v in vl),
+              f"violation must name the absolute-path rule and the launcher "
+              f"({mode}): {vl}", r)
+        check(not any("not on PATH" in v or "not found" in v for v in vl),
+              f"rejection must be by form, not by a lookup failure "
+              f"({mode}): {vl}", r)
 
 
 def w_async_rejected(tmp):
@@ -1245,13 +1339,14 @@ def w_no_stop_hook(tmp):
 
 
 def w_gate_does_not_answer(tmp):
-    """Separates 'exit 2' from 'the gate answered': an interpreter that
-    exists and exits 2 without the RECEIPT-GATE BLOCK[BAD-INPUT] block
-    (e.g. a Windows-Store python3 stub) is NOT a present gate."""
+    """Separates 'exit 2' from 'the gate answered': a script named
+    receipt_gate.py that exists and exits 2 WITHOUT the RECEIPT-GATE
+    BLOCK[BAD-INPUT] block (the way a Windows-Store python3 stub exits
+    non-zero without it) is NOT a present gate."""
     repo = make_repo(tmp)
-    # No semicolon: a `;` would (correctly) trip the shell-operator
-    # rejection before the answer check this case exists to pin.
-    plant_settings(repo, f'"{PY}" -c "exit(2)"')
+    stub = Path(tmp) / "receipt_gate.py"
+    stub.write_text("import sys\nsys.exit(2)\n", encoding="utf-8")
+    plant_settings(repo, '"{0}" "{1}"'.format(PY, stub))
     r = run_wiring(repo)
     check(r.returncode == 1,
           f"exit-2-without-the-block must be a violation, got {r.returncode}", r)
@@ -1346,6 +1441,9 @@ CASES = [
     ("wiring: gate wired only in settings.local.json is seen", w_local_settings),
     ("wiring: broken sibling hook is WARNED about, not swallowed", w_sibling_reported),
     ("wiring: --static-only resolves paths without executing the command (sentinel-proven)", w_static_only),
+    ("wiring: interpreter alone (no receipt_gate.py argument) is a named VIOLATION in both modes", w_interpreter_only_rejected),
+    ("wiring: interpreter + unrelated script is a named VIOLATION in both modes, never executed", w_unrelated_script_rejected),
+    ("wiring: bare launcher name instead of the absolute interpreter path is a named VIOLATION", w_bare_launcher_rejected),
     ("wiring: async / asyncRewake gate cannot block -> named VIOLATION", w_async_rejected),
     ("wiring: exec-form (command + args) is not the certified form -> named VIOLATION", w_exec_form_rejected),
     ("wiring: shell: bash certifies, shell: powershell is a named VIOLATION", w_shell_field),

@@ -13,8 +13,11 @@ code the adopting repo (or its CI) can re-check at any time.
 WHAT IS CERTIFIED -- one hook form, the one adapt/README prescribes:
   a SYNCHRONOUS Stop hook of type "command", written as ONE shell-form
   command string (no `args`), run by the default hook shell (`shell`
-  absent or "bash" -- sh-like on every platform, Git Bash on Windows),
-  with an absolute interpreter path and the gate script as an argument.
+  absent or "bash": sh on POSIX, Git Bash on Windows -- a Windows host
+  without Git Bash is NOT-RUN, see below), with the interpreter's
+  ABSOLUTE path as argv[0] (a bare launcher name is a VIOLATION) and the
+  gate script -- an argument ending in receipt_gate.py -- present and
+  existing (an interpreter alone, or another script, is a VIOLATION).
   Every other form Claude Code accepts is a NAMED VIOLATION here, not a
   silently accepted configuration: an async hook cannot block a close,
   an exec-form (`command` + `args`) hook is not modeled, a PowerShell
@@ -62,14 +65,17 @@ Resolution steps per handler (hooks.Stop[*].hooks[*], type "command"):
      the repo root (forward slashes, as the live hook environment carries
      it) the way sh does it: NOT inside single quotes, NOT after a
      backslash; an occurrence sh would leave literal is a named
-     VIOLATION (the hook could never find its script). The hook shell is
-     sh-like on EVERY platform (Git Bash on Windows) -- verified
-     empirically 2026-08-24: a live Stop hook received CLAUDE_PROJECT_DIR
-     in its environment, both sh spellings expanded to the repo root, and
-     `%CLAUDE_PROJECT_DIR%` reached the hook as a literal. The cmd-style
-     spelling is therefore dead wiring on every platform and a named
-     VIOLATION -- expanding it here would certify a hook that can never
-     run.
+     VIOLATION (the hook could never find its script). The modeled hook
+     shell is sh on POSIX and Git Bash on Windows -- verified empirically
+     2026-08-24 on a Git-Bash-equipped Windows 11 host: a live Stop hook
+     received CLAUDE_PROJECT_DIR in its environment, both sh spellings
+     expanded to the repo root, and `%CLAUDE_PROJECT_DIR%` reached the
+     hook as a literal. Windows without Git Bash falls back to PowerShell,
+     which this check does not model (NOT-RUN -- "Hook shell on Windows"
+     below). The cmd-style spelling is dead wiring under every hook shell
+     Claude Code documents -- sh, Git Bash and PowerShell all leave
+     `%VAR%` literal -- and a named VIOLATION: expanding it here would
+     certify a hook that can never run.
   3. Shell operators (`| & ; < >` backtick, newline) are named
      VIOLATIONs: the real hook is SHELL-form, so sh would run them, while
      the dry run below exec's plain argv and would never see them (`||
@@ -86,10 +92,18 @@ Resolution steps per handler (hooks.Stop[*].hooks[*], type "command"):
      quotes only `\\\\` and `\\"` are escapes) -- pinned by a fixture case.
      A path that itself contains `\\\\` or ends its quoted form with `\\"`
      would be mangled; don't write those.
-  5. argv[0]: absolute -> must exist; bare launcher name (py, python3,
-     python) -> shutil.which; anything else -> which OR repo-relative file.
-  6. The script path (first arg ending in receipt_gate.py, else the first
-     path-looking arg) must exist (absolute, or relative to the repo root).
+  5. argv[0] must be the interpreter's ABSOLUTE path (adapt/README step
+     3) and an existing file. A bare launcher name (`py`, `python3`,
+     `python`) or a relative path is a named VIOLATION even when PATH
+     resolves it here: it resolves through PATH at hook time, so the same
+     settings are live on one machine and dead (127/9009, or the
+     Windows-Store stub) on the next -- the silent absence this check
+     exists to catch.
+  6. An argument ending in receipt_gate.py must be present -- an
+     interpreter alone, or another script, is a named VIOLATION ("gate
+     script missing") in BOTH modes, before anything is run -- and must
+     exist (absolute, or relative to the repo root). Static mode checks
+     it by name and existence only; the name is not proof.
   7. Only if 1-6 are clean AND --static-only was not given: the exact
      parsed command is dry-run with empty stdin (time-boxed), and must
      answer the BAD-INPUT block on exit 2.
@@ -123,12 +137,12 @@ import sys
 
 DRY_RUN_TIMEOUT = 30.0
 BAD_INPUT_MARKER = "RECEIPT-GATE BLOCK[BAD-INPUT]"
-BARE_LAUNCHERS = ("py", "python3", "python")
 
-# The hook shell is sh-like on EVERY platform -- Git Bash on Windows --
-# so only the sh spellings are substituted. Verified empirically
-# (2026-08-24, Windows 11 host): a live Stop hook received
-# CLAUDE_PROJECT_DIR in env; "$CLAUDE_PROJECT_DIR" and
+# Only the sh spellings are substituted: the modeled hook shell is sh on
+# POSIX and Git Bash on Windows (a Windows host without Git Bash is
+# NOT-RUN before this matters -- see _git_bash_missing). Verified
+# empirically (2026-08-24, Git-Bash-equipped Windows 11 host): a live Stop
+# hook received CLAUDE_PROJECT_DIR in env; "$CLAUDE_PROJECT_DIR" and
 # "${CLAUDE_PROJECT_DIR}" expanded to the repo root,
 # "%CLAUDE_PROJECT_DIR%" reached the hook as a literal.
 HOST_SHELL = "sh (Git Bash)" if os.name == "nt" else "sh"
@@ -275,7 +289,8 @@ def _expand_host_forms(command, root):
     Returns (expanded, literal_forms) where literal_forms lists every
     occurrence sh would have left as text -- dead wiring, the caller's
     VIOLATION. The root is substituted with forward slashes, the value the
-    live hook environment carries on every platform."""
+    live hook environment carries under the modeled shells (POSIX paths by
+    nature; measured 2026-08-24 under Git Bash on Windows)."""
     root_sh = root.replace("\\", "/")
     out = []
     literal = []
@@ -330,15 +345,13 @@ def _expand_host_forms(command, root):
 
 
 def _find_script_arg(args):
-    """First arg ending in receipt_gate.py, else the first path-looking
-    arg (contains a separator or ends in .py, and is not an option)."""
+    """First arg ending in receipt_gate.py, else None: the certified form
+    registers the copied gate script by that name (adapt/README step 1).
+    An interpreter alone, or any other script, is not the gate -- the
+    caller names that as a VIOLATION instead of guessing at a
+    path-looking argument."""
     for a in args:
         if a.lower().endswith("receipt_gate.py"):
-            return a
-    for a in args:
-        if a.startswith("-"):
-            continue
-        if "/" in a or "\\" in a or a.lower().endswith(".py"):
             return a
     return None
 
@@ -347,7 +360,6 @@ def _check_command(command, root, static_only=False):
     """List of violation strings for one Stop hook command; [] == present."""
     import os
     import shlex
-    import shutil
     import subprocess
 
     pre_violations = []
@@ -391,21 +403,25 @@ def _check_command(command, root, static_only=False):
 
     violations = []
     interp = argv[0]
-    if os.path.isabs(interp):
-        if not os.path.isfile(interp):
-            violations.append("interpreter not found: {0}".format(interp))
-    elif interp in BARE_LAUNCHERS:
-        if shutil.which(interp) is None:
-            violations.append("interpreter not on PATH: {0}".format(interp))
-    else:
-        if (shutil.which(interp) is None
-                and not os.path.isfile(os.path.join(root, interp))):
-            violations.append(
-                "interpreter not resolvable (not absolute, not on PATH, "
-                "not a file under the repo root): {0}".format(interp))
+    if not os.path.isabs(interp):
+        violations.append(
+            "interpreter is not an absolute path: {0!r} -- the certified "
+            "form requires the interpreter's absolute path (adapt/README "
+            "step 3): a bare launcher name or relative path resolves "
+            "through PATH at hook time, so the same settings are live on "
+            "one machine and dead (127/9009, or the Windows-Store stub) "
+            "on the next".format(interp))
+    elif not os.path.isfile(interp):
+        violations.append("interpreter not found: {0}".format(interp))
 
     script = _find_script_arg(argv[1:])
-    if script is not None:
+    if script is None:
+        violations.append(
+            "gate script missing: no argument ending in receipt_gate.py "
+            "in the hook command -- an interpreter alone, or another "
+            "script, is not the gate; register the copied receipt_gate.py "
+            "as an argument (adapt/README step 1): {0!r}".format(command))
+    else:
         spath = script if os.path.isabs(script) \
             else os.path.join(root, script)
         if not os.path.isfile(spath):
