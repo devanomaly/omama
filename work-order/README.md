@@ -146,10 +146,17 @@ Named gaps, each with the layer that resolves it:
   - A quoted `; echo` / `; True` body — `python -c "import sys; True if ok else sys.exit(1)"`
     — and a heredoc line that reads as operator + no-op. Move the body or the heredoc
     into a script that `verify` calls.
-  - A `#` comment that mentions an operator plus a no-op: `pytest -q  # do not add || true`.
-    Drop the comment.
+  - A `#` comment that mentions an operator plus a no-op, quoted or in a block scalar:
+    `verify: "pytest -q  # do not add || true"`. Drop the comment. Unquoted, the comment
+    never reaches the rule at all — YAML strips it and the card validates as plain
+    `pytest -q`, so this is a silent drop, not a rejection.
   - `:>file` truncation, glued or spaced: `:>out.log && pytest -q >>out.log`. Rewrite
-    with `>`, which truncates on its own.
+    with `>`, which truncates on its own, put on the real command: `pytest -q > out.log`.
+    Do not paste `>out.log && pytest -q >>out.log` as an unquoted `verify:` value. A
+    leading `>` (or `|`) is YAML's block-scalar indicator — the same class of trap as
+    the leading `[` above — so the validator rejects that card as not valid YAML. Quote
+    it (`">out.log && pytest -q >>out.log"`) if you keep that shape; the spaced original
+    `: >out.log ...` is not a plain scalar either and can only be written quoted.
   - A quoted `& ` or `&)` at a command boundary: `python -c "... (3 & 1) ..."`,
     PowerShell's call operator `"& .\run.ps1"`, sed's whole-match back-reference in
     parentheses `s/PASS/(&)/`. Write `(3&1)` unspaced, call the script by path without
