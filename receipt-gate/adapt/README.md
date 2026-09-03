@@ -131,9 +131,13 @@ is the reference (env vars, troubleshooting, rationale).
 
    **Steps 2–3 — red AND green close test**, running the EXACT command
    string registered in settings.json (copy-pasted, not retyped): (a) a
-   synthetic red close in a scratch repo must produce the BLOCK (exit 2,
-   `VERIFY-RED`); (b) a synthetic GREEN close must reach `VERIFIED` (exit
-   0, receipt written) — the green test is what catches a forgotten step 4:
+   synthetic red close must produce the BLOCK (exit 2, `VERIFY-RED`); (b) a
+   synthetic GREEN close must reach `VERIFIED` (exit 0, receipt written).
+   Run both **in the adopting repository itself, not in a scratch checkout**:
+   the gate resolves its validator relative to its own location, and a green
+   measured in a scratch layout passed while the first real close ended
+   `SCHEMA: validator unrunnable` (the 2026-09-03 dry run, recorded in #25).
+   The green test is what catches a forgotten step 4:
    an install with a dead validator passes the red test (it blocks on
    `SCHEMA`) and would never emit VERIFIED, and the wiring check does not
    see the validator either (BAD-INPUT fires before card resolution).
