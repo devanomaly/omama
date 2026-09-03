@@ -1,0 +1,7 @@
+# Clean case: a real `|&` pipeline whose last segment can fail (`|&` is not a bare `&`)
+goal: "whatever"
+non_goals: ["nothing"]
+tier: S1
+task_type: implementation
+done_when: ["something observable"]
+verify: 'python -c "print(''PASS'')" |& grep -q PASS'

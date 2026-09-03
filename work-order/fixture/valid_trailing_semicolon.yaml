@@ -1,0 +1,7 @@
+# Clean case: a trailing `;` leaves an EMPTY segment, which is not a violation
+goal: "whatever"
+non_goals: ["nothing"]
+tier: S1
+task_type: implementation
+done_when: ["something observable"]
+verify: "pytest -q;"

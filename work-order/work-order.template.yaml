@@ -27,7 +27,17 @@ done_when: []
 
 # ONE shell command that proves done_when. The validator rejects vacuous
 # commands (empty, `true`, `:`, `echo ...`) — a command that cannot fail
-# proves nothing. The receipt gate re-runs THIS command at close.
+# proves nothing. The deny-list is applied to the FIRST WORD OF EVERY
+# SEGMENT: after `||`, `;`, `&&`, `|`, `|&` and a newline, and inside quotes
+# — `pytest -q || true` is rejected, and so are `cd app && echo ok` and
+# `pytest -q; true`. A BACKGROUNDED command (a bare `&` followed by
+# whitespace, `)` or the end of the line) is rejected too: its exit status
+# is discarded; a `&` glued to the next word is read as one more separator
+# (`pytest -q&echo ok` is rejected, `pytest -q &wait` is not). The rule reads
+# this field as a POSIX/bash command line; the receipt gate re-runs THIS
+# command at close with `Popen(shell=True)` — /bin/sh on POSIX, cmd.exe on
+# Windows. work-order/README.md names what that leaves uncovered and the
+# rewrite for every real command the rule rejects by design.
 verify:
 
 # Required iff task_type: bugfix — the ATTACHED reproduction itself (command +

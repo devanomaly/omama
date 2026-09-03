@@ -1,0 +1,7 @@
+# Planted violation: a bare `&` glued to a no-op -- the shell backgrounds pytest and the line's status is echo's
+goal: "whatever"
+non_goals: ["nothing"]
+tier: S1
+task_type: implementation
+done_when: ["something observable"]
+verify: "pytest -q&echo ok"

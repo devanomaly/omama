@@ -1,0 +1,7 @@
+# Planted violation: the no-op spelled uppercase -- on a case-insensitive filesystem (macOS default, Windows with Git's usr/bin on PATH) `TRUE` resolves to the `true` binary
+goal: "whatever"
+non_goals: ["nothing"]
+tier: S1
+task_type: implementation
+done_when: ["something observable"]
+verify: "pytest -q || TRUE"

@@ -1,0 +1,7 @@
+# Clean case: a one-liner whose QUOTED body carries `;` and an inner assignment
+goal: "whatever"
+non_goals: ["nothing"]
+tier: S1
+task_type: implementation
+done_when: ["something observable"]
+verify: 'python3 -c "import json,sys; d=json.load(sys.stdin); sys.exit(0 if d else 1)" < receipt.json'
