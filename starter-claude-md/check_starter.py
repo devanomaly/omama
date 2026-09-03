@@ -289,15 +289,20 @@ def check_leftover_placeholders(lines: list[str]):
 
 
 def check_stale_schema(lines: list[str]):
-    """One finding per line (the line is quoted, so a second literal on the
-    same line adds no information) -- same shape as forbidden-vocab."""
+    """One finding per line, naming EVERY distinct stale literal on it. A
+    second literal on the same line is not a second finding (the line is
+    quoted anyway), but it IS named: a first-match-only report left
+    `allowed.commands` unpinnable wherever it shares a line with
+    `allowed.files`, so the runner could not lock each literal on its own
+    (PR #36 review)."""
     violations = []
     for i, line in enumerate(lines, start=1):
-        match = STALE_SCHEMA_RE.search(line)
-        if match:
+        names = list(dict.fromkeys(
+            m.group(0) for m in STALE_SCHEMA_RE.finditer(line)))
+        if names:
             violations.append(
-                f"line {i}: [stale-schema] matched {match.group(0)!r} -- a "
-                f"field name from the superseded piece-02 schema; the card "
+                f"line {i}: [stale-schema] matched {', '.join(map(repr, names))} "
+                f"-- a field name from the superseded piece-02 schema; the card "
                 f"shipped today is CARD.yaml with goal/non_goals/tier/"
                 f"task_type/done_when/verify/repro: {line.strip()!r}"
             )

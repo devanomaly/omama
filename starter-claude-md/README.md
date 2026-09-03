@@ -67,7 +67,7 @@ case-by-case table is the runner itself.
 
 ### What it catches
 
-Twelve red cases, each locked to its named reason (locks in the runner).
+Twelve red cases, each locked to every reason it names (locks in the runner).
 Classes: rule with no tag or with a tag outside the set (including `[05]`
 and `[06]`, which name internal pieces this toolkit does not ship), doctrine
 vocabulary, template leftovers, heading with a trailing `:`, a governed
@@ -120,5 +120,5 @@ dev's global, granting `--allow-vocab`.
 | Every governed rule traces to a real piece via `[NN]` | tag absent/outside the set (`violating`); heading with `:` (`violating_colon`); no governed section (`violating_empty`) | semantically wrong tag passes | not assessed |
 | File free of internal process vocabulary, PT and EN | "Pilar" (`violating`); same-line mask + EN "doctrine"/"pillar" (`violating_vocab_mask`); `--allow-vocab=pilar` → exit 2 | paraphrased doctrine passes | not assessed |
 | No copy-paste leftovers from the template | raw template → 11 × `leftover-placeholder` (every placeholder now greppable via `<ADJUST:`) | `<ADJUST:` resolved with wrong content passes | not assessed |
-| No rule pointing at a superseded piece-02 field | the four literals, anywhere in the file (`violating_stale_schema`, a byte copy of the clean case as it stood before the check existed) | a paraphrase, or a field name not on the closed list | accepted limitation |
+| No rule pointing at a superseded piece-02 field | the four literals, anywhere in the file (`violating_stale_schema`, a byte copy of the clean case as it stood before the check existed; each literal locked on its own); the shipped template asserted free of them by a runner invariant | a paraphrase, or a field name not on the closed list | accepted limitation |
 | Repo rules live in the governed sections | empty governed section flagged per section (`violating_empty_governed`, `violating_persection`); renamed/de-accented heading flagged (`violating_renamed`); numbered/`*` rule visible to the tag check (`violating_numbered`) | a rule in a new, non-governed section doesn't require a tag | accepted limitation |

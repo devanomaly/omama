@@ -72,10 +72,11 @@ implementation, refactor, config, do-nothing, ask-first — enters through a
 card. A bugfix is only the one that additionally owes a `repro`.
 
 - Before editing code for a task of any `task_type`, request (or fill in
-  yourself) the task's card as `CARD.yaml` at the repo root, using piece
-  02's slim schema (`goal`, `non_goals`, `tier`, `task_type`, `done_when`,
-  `verify`, plus `repro` for a bugfix) — don't start from a loose "fix bug
-  X" in prose. Run
+  yourself) the task's card as `CARD.yaml`, at the repo root or at the path
+  `OMAMA_CARD` names when this repo sets it (that is the card the gate
+  reads), using piece 02's slim schema (`goal`, `non_goals`, `tier`,
+  `task_type`, `done_when`, `verify`, plus `repro` for a bugfix) — don't
+  start from a loose "fix bug X" in prose. Run
   `python3 <ADJUST: path to the validator>/validate_work_order.py CARD.yaml`
   before the first edit; it must exit 0. [02]
 - `tier`, `verify` and (for a bugfix) `repro` are human-owned: you may
@@ -111,10 +112,12 @@ card. A bugfix is only the one that additionally owes a `repro`.
   something the agent decides on its own to unblock a green — fix the code
   instead of disabling the test. [04]
 - This repo has a `Stop` hook (`receipt-gate`) that owns the close. When the
-  card's work is done, write `CLOSE` to `CARD.close` and stop — the gate
-  re-runs the card's own `verify` against the current tree and writes
-  `CARD.receipt.json`; only the gate emits VERIFIED. Stopping with no
-  `CARD.close` is a work-in-progress turn and is allowed. If the gate blocks
+  card's work is done, write `CLOSE` to `CARD.close` **next to the card** (the
+  gate reads it from the card's directory: the repo root by default, or
+  wherever `OMAMA_CARD` points) and stop — the gate re-runs the card's own
+  `verify` against the current tree and writes `CARD.receipt.json`; only the
+  gate emits VERIFIED. Stopping with no `CARD.close` is a work-in-progress
+  turn and is allowed. If the gate blocks
   the close, report the named block — do not route around it: no deleting
   `CARD.yaml`, no editing `verify`, no retrying `CLOSE` until something
   gives. Closing honestly (`FAILED: <reason>`, `UNVERIFIED: <reason>`) is

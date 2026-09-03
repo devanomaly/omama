@@ -166,34 +166,43 @@ means.
 
 ## 5. Dispatch
 
-The loop is installed. Dispatching a task through it is one line — the card
-is already on disk (`CARD.yaml`, validated, `tier` ratified), the branch is
-already cut, and the prompt says nothing the card and the repo's `CLAUDE.md`
-don't already say:
+The loop is installed. Dispatching a task through it is one line:
 
 ```
-Implement the CARD.yaml at this repo root. It is the contract: if it is wrong or incomplete, stop and report it defective — do not redefine it.
+Implement CARD.yaml at the repo root.
 ```
+
+Three things have to be true first, and §§1–4 produce none of them: the real
+card is on disk where §4's sample was (`CARD.yaml`, validated, `tier`
+ratified by a human); the branch is cut from the default branch's tip; and
+the repo's `CLAUDE.md` was adopted from
+[starter-claude-md](starter-claude-md/ADOPTION.md) (piece 08) and passes its
+checker. §§1–4 install the gate, not the starter — and the starter is where
+the close and branch rules in the table below live. Without it the agent
+stops with no `CARD.close`, the gate correctly reads that as WIP, and the
+task ends with no receipt.
 
 That line is sufficient **because the pieces carry the rest**. Each time a
 dispatch here needed an extra line, the extra line turned out to name
 something a piece already owns:
 
-| Extra line the dispatch needed | What already owns it | Piece |
+| Extra line the dispatch needed | What already owns it | Carried by |
 |---|---|---|
 | "touch nothing outside this directory" | the card's `non_goals` — the frozen list of what the diff must not contain | 02 |
-| "write `CLOSE` to `CARD.close` when you're done, then stop" | the starter file's Stop-hook rule, under "Hooks installed in this repo" | 08 |
-| "branch off the default branch's tip and open a PR against it" | the starter file's branch rule, under "Bugfix requires a work order" | 08 |
+| "write `CLOSE` to `CARD.close` when you're done, then stop" | the starter file's Stop-hook rule, under "Hooks installed in this repo", tagged `[10]` | 08 |
+| "branch off the default branch's tip and open a PR against it" | the starter file's branch rule, under "Bugfix requires a work order", tagged `[02]` | 08 |
 
 **A dispatch prompt that needs a second line names a missing or unadopted
 piece.** Read the extra line as a finding, not as prose to keep: either the
 card's `non_goals` is too loose, or this repo's `CLAUDE.md` is missing the
 rule (see [starter-claude-md](starter-claude-md/README.md), whose checker
-rejects a rule that traces to no piece). Fix the artifact, not the prompt.
+rejects an untagged or out-of-set rule; whether a tag names the *right*
+piece stays human review). Fix the artifact, not the prompt.
 
 **Closing, from the agent's side.** When the card's work is done the agent
-writes `CLOSE` to `CARD.close` and stops — that is the whole protocol it
-owns. The gate does the rest: re-runs the card's own `verify` against the
+writes `CLOSE` to `CARD.close` next to the card — the gate reads it from the
+card's directory, here the repo root — and stops; that is the whole protocol
+it owns. The gate does the rest: re-runs the card's own `verify` against the
 current tree, writes `CARD.receipt.json`, and blocks a red close (exit 2,
 named) instead of letting it claim VERIFIED. Stopping with no `CARD.close`
 is a WIP turn and is allowed. Every value `CARD.close` can carry — including

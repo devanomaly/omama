@@ -23,6 +23,20 @@ fixture cases under `fixture/`, run by `fixture/run_fixture.py`.
    `~/.claude/CLAUDE.md` — never the hooks section, specific to this repo
    (see "Where to put it" in the template).
 
+## If your `CLAUDE.md` was copied before the CARD-01 rewrite (2026-09-03)
+
+A copy taken from the template before that date names `work-order.yaml`,
+`reproduction.required` and `allowed.files`/`allowed.commands` in its
+"Bugfix requires a work order" bullets, and now fails the checker with
+`[stale-schema]` findings — by design: none of those fields is in the card
+that ships (`fixture/violating_stale_schema/CLAUDE.md` is exactly such a
+copy). Replace that section's bullets, and add the Stop-hook bullet under
+"Hooks installed in this repo", from the current template. There is no
+exemption flag for this check, because none of the four names is ever
+legitimate in a starter file; a repo that really keeps a file called
+`work-order.yaml` leaves that mention out of `CLAUDE.md` — the check reads
+only the file you point it at.
+
 ## When the apex file is not `CLAUDE.md`
 
 Some repos keep their agent rules in `AGENTS.md` (or another apex file) and
