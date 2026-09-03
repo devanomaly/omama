@@ -20,6 +20,13 @@ the self-test, and a new item 7 records the harness version at start and any cha
 piece during the window. No threshold, window, trigger, or classification changed. The
 registration rev is the commit that lands this amended file.
 
+**Amended 2026-09-03 (second), still before the first pilot card:** the two-developer premise did
+not hold — the pilot runs with **one developer, the maintainer, dispatching agent executors**. §1's
+`tier_dispute` definition, §2's scope sentence, §3's concatenation note, §4, §5 and §7 items 5–6
+are reworded to say so. No threshold, window, or trigger changed; what changed is what a result is
+worth — a non-refutation from the author's own use is worth less (§5), a refutation more. The
+registration rev is the commit that lands this amended file.
+
 **No efficacy claim is made here, and none is made by running this pilot.** The README says the
 mechanics are what's proven — red-green fixtures and an external adversarial review that converged
 on what to measure — and nothing more. This document does not add a claim; it fixes, in advance,
@@ -54,7 +61,7 @@ One row per card that reaches a receipt, plus one row per card that is abandoned
 | `close_reason` | free text, present on FAILED/UNVERIFIED | `reason` in the receipt | yes |
 | `close_reason_class` | `work` \| `harness` \| `external` | classified by the developer at close — the sixth argument to the export command; **required** on FAILED/UNVERIFIED, refused on VERIFIED | by hand |
 | `self_test_skipped` | `y` \| `n` | did this close happen on a worktree/machine where the receipt-gate install self-test (red AND green, per `receipt-gate/adapt/README.md`) had been run? | by hand |
-| `tier_dispute` | `y` \| `n` (+ proposed → ratified, if `y`) | did the human ratify a tier different from the one the agent proposed, or did the two developers disagree on the tier? | by hand |
+| `tier_dispute` | `y` \| `n` (+ proposed → ratified, if `y`) | did the human ratify a tier different from the one the agent proposed? | by hand |
 | `review_artifact` | `y` \| `n` \| `n/a` | S3 only: was `CARD.review.md` produced before close? | yes (S3 close implies `y`) |
 
 **Two intervals, not one.** `minutes_card_to_receipt` is elapsed task time; most of it is the work,
@@ -159,7 +166,7 @@ artifacts costing real time is the design working as documented, not evidence ag
 
 ### What a non-refutation is worth
 
-If no trigger fires, the correct statement is: **"in one repository, with two developers, over
+If no trigger fires, the correct statement is: **"in one repository, with one developer dispatching agent executors, over
 `30` cards, no pre-registered refutation trigger fired."** That is the whole claim. It is
 not "this works", it is not "the harness pays for itself", and no stronger sentence should appear
 in this repository's README or anywhere else on the strength of this pilot.
@@ -232,7 +239,7 @@ directory** (`~/PILOT-LOG.jsonl`), or to the path in `$PILOT_LOG` if set — nev
 to the card directory. Parallel cards belong to separate worktrees by design (§6), so a relative
 sink would have produced one log per worktree, with rows omitted from consolidation or deleted with
 a removed worktree. One developer, one sink, regardless of how many worktrees the cards ran in. The
-two developers' logs are concatenated at the end of the window; no shared file, no merge conflict,
+the logs of every machine the developer used are concatenated at the end of the window; no shared file, no merge conflict,
 and no ordering assumption in the analysis.
 
 **Run the export at close time or lose the row.** The gate consumes `CARD.close` on every allowed
@@ -244,7 +251,7 @@ discovered at week six.
 
 ## 4. Where the pilot runs
 
-**An internal two-developer repository.** Two developers, one repository, one stack. The repository
+**An internal one-developer repository.** One developer — the maintainer — dispatching agent executors, one repository, one stack. The repository
 adopts the LOOP as documented — `work-order` at the root, the gate wired into that repository's own
 `.claude/settings.json` (per-repo, with the mandatory install self-test), output-discipline's
 templates for plans and reviews — not loose pieces. Passive layers (privacy-hook, protect-tests)
@@ -270,9 +277,14 @@ Stated up front so it cannot be quietly dropped from the write-up:
   *the failure it prevents*. The pilot measures only the first term. A trigger firing shows the
   cost was high; no result shows the prevented failures were few, and no result shows they were
   many.
-- **Two developers.** Both are already committed to the approach; one is the maintainer. That is
-  self-selection at the maximum, and it biases every number toward the harness. Habit, tooling
-  fluency, and shared vocabulary are confounded with the design throughout.
+- **One developer, and it is the maintainer.** The author of the harness is its only human user in
+  this pilot: self-selection at the maximum, no second reader of any card, tier, or close, and it
+  biases every number toward the harness. Habit, tooling fluency, and vocabulary are confounded
+  with the design throughout. The asymmetry cuts one way: a non-refutation from the author's own
+  use is worth close to nothing; a refutation from it is the most credible result this pilot can
+  produce. Throughput is also one person's — the `30`-card window is reachable inside `90` days
+  only if the cadence holds, so INCONCLUSIVE is the likeliest outcome, and an extension "with more
+  developers" means recruiting one.
 - **One repository.** One stack, one review culture, one branching model, one CI. Nothing here
   generalizes to a repository with more developers at different rhythms — which the motivating
   issue names as exactly where S2/S3 cost is expected to show up. A two-developer repository is the
@@ -320,13 +332,15 @@ In the style every other README here follows — what this measurement does NOT 
 4. Add `PILOT-LOG.jsonl` to the adopting repository's `.gitignore` alongside the card family
    anyway — the export writes outside every worktree by default, but a `$PILOT_LOG` pointed inside
    the repository must not become a committed file.
-5. Run the receipt-gate install self-test (red AND green) on each developer's machine, and record
+5. Run the receipt-gate install self-test (red AND green) on every machine the developer uses, and record
    that date — it is the baseline `self_test_skipped = n` depends on. Record, on the same date and
    per machine, the output of `receipt-gate/adapt/check_wiring.py` (`WIRING-OK` and the command it
    certified): a self-test run once does not survive a later wiring change, and a Stop hook that
    is absent does not announce itself.
-6. Agree in advance that the write-up gets published whichever way the triggers land. A refutation
-   that only gets written down if it is flattering is not a stopping rule.
+6. Commit in advance, in writing and dated, that the write-up gets published whichever way the
+   triggers land. With one developer this is a commitment device, not an agreement — and it is the
+   only thing that makes the stopping rule a rule. A refutation that only gets written down if it
+   is flattering is not a stopping rule.
 7. Record the harness version the adopting repository runs — the upstream `omama` rev in its
    provenance note — at start. Any change during the window to a measured piece (the validator,
    the gate, the card schema) is recorded as a dated harness-version change next to the log. A
