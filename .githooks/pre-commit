@@ -1,0 +1,12 @@
+#!/bin/sh
+# omama-public runs its own privacy-hook (CONTRIBUTING, "This repository runs its own
+# hooks"). This file is the thin chainer from privacy-hook/ADOPTION.md ("Chaining after
+# an existing pre-commit"): the scanner lives in privacy-hook/, not at the repo root, so
+# the ONE knob is set here and the byte-identical upstream wrapper
+# (.githooks/privacy-pre-commit) does everything else -- interpreter probe, fail-closed
+# config, the announced override. Nothing here is edited from upstream.
+#
+# Per clone, once:  git config core.hooksPath .githooks
+PRIVACY_HOOK_SCANNER=privacy-hook/scan_staged.py
+export PRIVACY_HOOK_SCANNER
+exec sh .githooks/privacy-pre-commit

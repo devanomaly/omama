@@ -5,3 +5,4 @@
 * text=auto eol=lf
 *.sh text eol=lf
 privacy-hook/pre-commit text eol=lf
+.githooks/* text eol=lf
