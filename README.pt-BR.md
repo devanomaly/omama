@@ -6,8 +6,8 @@
 um toolkit cujo trabalho é dar forma e regra ao comportamento de agentes.*
 
 **Caminho mais rápido: [QUICKSTART.pt-BR.md](QUICKSTART.pt-BR.md)** — do clone
-ao primeiro recibo, todo comando pré-executado, as armadilhas de instalação
-apontadas onde mordem.
+ao primeiro recibo e daí ao despacho de uma linha, todo comando pré-executado,
+as armadilhas de instalação apontadas onde mordem.
 
 **Regra sem enforcement é desejo.**
 
@@ -89,6 +89,7 @@ toda regra de volta a uma peça via tag `[NN]`. Eis o que cada número mapeia ne
 | 07 | convenções de código, opcional — não incluída neste toolkit |
 | 08 | [starter-claude-md](starter-claude-md/README.md) |
 | 09 | [output-discipline](output-discipline/README.md) |
+| 10 | [receipt-gate](receipt-gate/README.md) |
 
 ## Pré-requisitos
 

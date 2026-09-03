@@ -169,7 +169,46 @@ quebrada — ver a seção de self-test do
 [adapt/README.md](receipt-gate/adapt/README.md) para o que cada resultado
 parcial significa.
 
-## 5. Você agora tem
+## 5. Despacho
+
+O loop está instalado. Despachar uma tarefa por ele é uma linha — o card já
+está em disco (`CARD.yaml`, validado, `tier` ratificado), o branch já está
+cortado, e o prompt não diz nada que o card e o `CLAUDE.md` do repo já não
+digam:
+
+```
+Implement the CARD.yaml at this repo root. It is the contract: if it is wrong or incomplete, stop and report it defective — do not redefine it.
+```
+
+Essa linha basta **porque as peças carregam o resto**. Toda vez que um
+despacho aqui precisou de uma linha extra, a linha extra acabou nomeando
+algo que uma peça já governa:
+
+| Linha extra que o despacho precisou | Quem já governa isso | Peça |
+|---|---|---|
+| "não toque em nada fora deste diretório" | o `non_goals` do card — a lista congelada do que o diff não pode conter | 02 |
+| "escreva `CLOSE` em `CARD.close` quando terminar, e pare" | a regra do Stop hook no arquivo starter, em "Hooks installed in this repo" | 08 |
+| "corte o branch da ponta do branch padrão e abra um PR contra ele" | a regra de branch no arquivo starter, em "Bugfix requires a work order" | 08 |
+
+**Um prompt de despacho que precisa de uma segunda linha está nomeando uma
+peça ausente ou não adotada.** Leia a linha extra como achado, não como
+prosa a manter: ou o `non_goals` do card está frouxo demais, ou o
+`CLAUDE.md` deste repo está sem a regra (ver
+[starter-claude-md](starter-claude-md/README.md), cujo checker rejeita
+regra que não rastreia para peça nenhuma). Conserte o artefato, não o
+prompt.
+
+**O fechamento, do lado do agente.** Quando o trabalho do card termina, o
+agente escreve `CLOSE` em `CARD.close` e para — esse é todo o protocolo que
+lhe cabe. O gate faz o resto: re-roda o `verify` do próprio card contra a
+árvore atual, escreve `CARD.receipt.json`, e bloqueia um close vermelho
+(exit 2, nomeado) em vez de deixá-lo alegar VERIFIED. Parar sem `CARD.close`
+é um turno WIP e é permitido. Todo valor que `CARD.close` pode carregar —
+inclusive os closes honestos `FAILED:`/`UNVERIFIED:` — está na tabela em
+[receipt-gate/README.md](receipt-gate/README.md#close-model-the-gate-locks-the-claim-not-the-session);
+não é repetido aqui, para haver uma cópia só a manter verdadeira.
+
+## 6. Você agora tem
 
 - Cards que congelam goal/non-goals/verify antes do dispatch, validados por
   `tools/validate_work_order.py`.

@@ -118,6 +118,34 @@ CASES = [
         ["--allow-vocab=pilar"],
         "cannot exempt",
     ),
+    (
+        "violating_stale_schema/CLAUDE.md",
+        1,
+        "planted violation: stale piece-02 field names (this file is a "
+        "BYTE COPY of the clean case as it stood before this change -- it "
+        "was green then and is red now, and only for the new reason)",
+        [],
+        "[stale-schema]",
+    ),
+    (
+        "violating_internal_tag/CLAUDE.md",
+        1,
+        "planted violation: [05] and [06] name internal pieces this "
+        "toolkit does not ship and stay OUT of the closed set, even now "
+        "that [10] is in it",
+        [],
+        "not in the closed set",
+    ),
+    (
+        "pointer_only/CLAUDE.md",
+        1,
+        "PIN, not a bug: a CLAUDE.md whose whole body points at another "
+        "apex file (AGENTS.md) answers FAIL with one finding per governed "
+        "section -- what ADOPTION.md's 'apex file is not CLAUDE.md' "
+        "section describes; measured, not asserted",
+        [],
+        "[missing-governed-section]",
+    ),
 ]
 
 

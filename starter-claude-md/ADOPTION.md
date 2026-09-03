@@ -23,6 +23,37 @@ fixture cases under `fixture/`, run by `fixture/run_fixture.py`.
    `~/.claude/CLAUDE.md` — never the hooks section, specific to this repo
    (see "Where to put it" in the template).
 
+## When the apex file is not `CLAUDE.md`
+
+Some repos keep their agent rules in `AGENTS.md` (or another apex file) and
+leave `CLAUDE.md` as a two-line pointer to it. The checker reads a **path**,
+not a filename — so run it on the apex file itself:
+
+```
+python3 <path-to-the-toolkit>/starter-claude-md/check_starter.py AGENTS.md
+```
+
+What the checker answers on the *pointer* file is pinned by a fixture case
+(`fixture/pointer_only/CLAUDE.md`), not asserted here: a `CLAUDE.md` whose
+whole body is a pointer to the apex file is **FAIL, exit 1, one
+`[missing-governed-section]` finding per governed section** — three, on the
+shipped governed set. That is the checker working as designed (governance is
+accounted per section, and a file with none of them present is never
+silently green), but it is not a useful reading of a pointer file. Point the
+checker at the apex; if you also run it on the pointer, read the red for
+what it is.
+
+Two consequences for an adopter:
+
+- The three governed headings — "Code conventions", "Bugfix requires a work
+  order", "Hooks installed in this repo" — must exist in whichever file you
+  check. Naming them differently in your apex file is a template departure
+  the checker will name, one absent heading at a time; make it explicit
+  rather than silencing it.
+- Nothing in this piece knows which file your agents actually read. Wiring
+  the checker at the right path is an adoption decision, like every other
+  one on this page.
+
 ## The `--allow-vocab` escape hatch
 
 `--allow-vocab=TOK1,TOK2,...` exempts, **only for this run**, exact matches
