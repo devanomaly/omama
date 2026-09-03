@@ -23,6 +23,38 @@ Exit 1 on a clean checkout is the bug — open a card about it before opening on
 anything else. Exit 2 usually means a prerequisite is missing on **your** machine (the
 detail line names which); fix your environment and re-run before concluding anything.
 
+## This repository runs its own hooks
+
+Rule 7 (below) at repository level: every guard here is applied to this repository through
+the artifacts it ships, not a neutralized stand-in.
+
+- **Git side.** `.githooks/pre-commit` and `.githooks/pre-merge-commit` are the thin chainer
+  from privacy-hook/ADOPTION.md ("Chaining after an existing pre-commit"): they set the one
+  knob (`PRIVACY_HOOK_SCANNER=privacy-hook/scan_staged.py`, because the scanner lives in the
+  piece's directory, not at the root) and `exec` `.githooks/privacy-pre-commit`, a
+  byte-identical copy of `privacy-hook/pre-commit`. The deny-list is the root
+  `privacy-deny.json` — this repository's own, not the shipped sample: the sample would block
+  the privacy-hook docs that spell its literals in prose (measured in #22). **Per clone,
+  once:** `git config core.hooksPath .githooks`. Nothing sets it for you (rule 6).
+- **Claude side.** `.claude/settings.json` is the one tracked file under `.claude/`. It
+  registers the receipt-gate Stop hook in the certified form — an absolute interpreter
+  located outside any user home directory, and
+  `"$CLAUDE_PROJECT_DIR/receipt-gate/receipt_gate.py"` — with no env vars: the in-tree gate
+  resolves the validator and the artifact checker relative to itself. Check it from the
+  repo root: `py -3 receipt-gate/adapt/check_wiring.py` (`python3` elsewhere) answers
+  `WIRING-OK`.
+- **On another machine** the committed interpreter path is a named `VIOLATION` (interpreter
+  missing) — never a silent absence. Today the repair is local: a second Stop hook in
+  `.claude/settings.local.json` (hooks merge; the check warns on the broken sibling), or an
+  uncommitted edit of the path. The machine-independent form is #12.
+- **What this does NOT catch.** The deny-list flags a Windows (`C:\Users\<name>\`) or macOS
+  (`/Users/<name>/`) home path whose name starts with a letter, digit, `_` or `-` — so the
+  placeholders this tree already carries (`C:\Users\...\`, `C:\Users\<user>\`) are not
+  usernames. `/home/<name>/` is deliberately not a rule: a tracked fixture artifact records
+  `/home/dev/.claude`, and rule 7 forbids self-cleaning on the detection side. There is no
+  `tokens_file`. protect-tests is not wired here (companion piece; its wiring is certified by
+  nothing — #12 / #13).
+
 ## The card comes first
 
 Contributions enter the same way tasks do. Open an issue containing a card built from

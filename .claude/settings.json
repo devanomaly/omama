@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"C:/Program Files/Python310/python.exe\" \"$CLAUDE_PROJECT_DIR/receipt-gate/receipt_gate.py\""
+          }
+        ]
+      }
+    ]
+  }
+}
