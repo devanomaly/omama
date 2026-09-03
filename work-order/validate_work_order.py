@@ -44,6 +44,7 @@ Legacy schema (observed_failure/hypothesis/allowed/budget/...) was retired
 by CARD-01; its fixtures live in fixture/archive/ and its validator in git
 history (this file, before 2026-08-19).
 """
+import re
 import sys
 
 try:
@@ -78,6 +79,121 @@ TASK_TYPE_ENUM = {
 # Vacuous first tokens: commands that exit 0 without testing anything.
 # `true` and `:` are shell no-ops; `echo ...` prints success it never earned.
 VACUOUS_FIRST_TOKENS = {"true", ":", "echo"}
+
+# WHERE the deny-list is applied: to the first word of EVERY
+# operator-separated segment of `verify`, not only to the first word of the
+# command line -- `pytest -q || true` proves exactly as little as `true`.
+# This is deliberately NOT a shell parser (no new dependency, no quote /
+# comment / heredoc / `$( )` parsing); the shapes it over-rejects and the
+# rewrite for each are named in work-order/README.md.
+#
+# Longest operators first so `|&`, `&&` and `||` win over `|`.
+SEGMENT_OPERATORS = re.compile(r"\|&|&&|\|\||;|\||\n")
+
+# A backslash-newline pair is a line continuation: the shell joins the lines
+# into one word, so `tr\` + newline + `ue` IS `true`.
+LINE_CONTINUATION = re.compile(r"\\\n")
+
+# A bare `&` at a command boundary backgrounds the command and discards its
+# exit status. Excluded: the operators that merely contain `&` (`&&`, `|&`,
+# `>&`, `<&`, `&>`) and a `&` inside a word (`"a&b"`, `?a=1&b=2`, `&#39;`).
+# `wait $!` would collect the status; the rule does not read that far, so
+# every bare `&` is rejected (rewrite documented in the piece README).
+BACKGROUND_AMP = re.compile(r"(?<![&|<>])&(?![&>])(?=[\s)]|$)")
+
+# Reserved words that only introduce the real command behind them.
+# `if`, `elif`, `while`, `until` and `!` are NOT here, on purpose: a no-op
+# CONDITION is a named residual, and skipping `!` could not expose a
+# cannot-fail no-op (`! true`, `! :`, `! echo x` all exit 1).
+LEADING_RESERVED_WORDS = {"then", "else", "do", "time"}
+
+# Redirection operators written as their own word: each takes the word after.
+BARE_REDIRECTIONS = {">", ">>", "<", "2>", ">&", "<&", "&>"}
+
+# A redirection with its target glued on (`>x`, `2>&1`, `&>x`, `<x`).
+REDIRECTION_WORD = re.compile(r"(?:&>|[0-9]*(?:>>|>&|>|<&|<))\S")
+
+# A leading `NAME=value` / `NAME+=value` assignment prefix.
+ASSIGNMENT_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
+
+# Stripped from a segment's edges: a group's `(`, `)` and `{` never belong to
+# the command (`{ true; }`, `( true )`, `(pytest -q || true)` all expose
+# `true`). `}` is NOT stripped -- in valid bash it never glues to a token, so
+# a lone `}` segment is an ordinary non-denied word like `fi`, `done`, `esac`.
+SEGMENT_EDGE_CHARS = " \t\r\n\f\v(){"
+
+
+def _segment_first_word(segment):
+    """Return the segment's first real word, lowercased and normalized.
+
+    Returns "" when the segment carries no command at all: empty (a trailing
+    `;`, an operator followed by a newline, the trailing newline of a block
+    scalar) or only reserved words, redirections and assignments. An empty
+    segment is skipped, never a violation.
+    """
+    words = segment.split()
+    while words:
+        word = words[0]
+        if word.lower() in LEADING_RESERVED_WORDS:
+            words.pop(0)
+        elif word in BARE_REDIRECTIONS:
+            words.pop(0)            # the operator ...
+            if words:
+                words.pop(0)        # ... and the target word it takes
+        elif REDIRECTION_WORD.match(word):
+            words.pop(0)
+        elif ASSIGNMENT_WORD.match(word):
+            words.pop(0)
+        else:
+            break
+    if not words:
+        return ""
+    token = words[0].lower()
+    for quote in ('"', "'", "\\"):   # `'tr'"ue"` and `\true` are both `true`
+        token = token.replace(quote, "")
+    for cut in ("<", ">"):           # `true>/dev/null` exposes `true`
+        at = token.find(cut)
+        if at != -1:
+            token = token[:at]
+    return token
+
+
+def vacuity_violations(verify):
+    """Return the vacuity violations of one `verify` command line.
+
+    Empty list == not vacuous. Every string operation here is total: a
+    malformed or hostile value yields a VIOLATION or nothing, never a raise.
+    """
+    text = verify.strip()
+    line = LINE_CONTINUATION.sub("", text)
+    found = []
+
+    # Reported ALONE, not alongside a segment violation: that is what makes a
+    # slip in this regex visible. `>& 2`, `<& 0` and `&> /dev/null` have no
+    # clean case of their own, so if one of the exclusions above were dropped,
+    # this line would replace the segment line the bare-redirection fixture
+    # locks -- and its runner reports it as red for the WRONG reason instead
+    # of quietly passing.
+    if BACKGROUND_AMP.search(line):
+        found.append(
+            f"verify={text!r} is vacuous (backgrounded command): a bare `&` "
+            "at a command boundary discards the exit status of what it "
+            "starts -- the card would close on a result nobody collected"
+        )
+        return found
+
+    for raw_segment in SEGMENT_OPERATORS.split(line):
+        segment = raw_segment.strip(SEGMENT_EDGE_CHARS)
+        token = _segment_first_word(segment)
+        if token in VACUOUS_FIRST_TOKENS:
+            found.append(
+                f"verify={text!r} is vacuous (deny-list: true, :, echo ...): "
+                f"segment {segment!r} begins with {token!r} -- a command "
+                "that cannot fail proves nothing"
+            )
+            break
+
+    return found
 
 
 class StrictLoader(yaml.SafeLoader):
@@ -209,13 +325,7 @@ def validate(doc):
                 "(one real shell command is the contract)"
             )
         else:
-            first_token = verify.strip().split()[0].lower()
-            if first_token in VACUOUS_FIRST_TOKENS:
-                violations.append(
-                    f"verify={verify.strip()!r} is vacuous (deny-list: "
-                    "true, :, echo ...): a command that cannot fail "
-                    "proves nothing"
-                )
+            violations.extend(vacuity_violations(verify))
 
     # 8. repro: required iff bugfix; when present, the attached reproduction
     # itself -- a non-empty string or list of non-empty strings. A boolean

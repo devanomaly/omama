@@ -1,0 +1,7 @@
+# Clean case: `!` is NOT skipped: `pytest -q || ! true` fails when pytest fails
+goal: "whatever"
+non_goals: ["nothing"]
+tier: S1
+task_type: implementation
+done_when: ["something observable"]
+verify: "pytest -q || ! true"

@@ -1,0 +1,7 @@
+# Planted violation: vacuous verify behind three more glued redirection words
+goal: "whatever"
+non_goals: ["nothing"]
+tier: S1
+task_type: implementation
+done_when: ["something observable"]
+verify: "pytest -q || 2>&1 &>/dev/null </dev/null true"

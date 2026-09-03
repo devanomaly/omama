@@ -1,0 +1,7 @@
+# Planted violation: vacuous verify after `||` -- the deny-list applies to EVERY segment
+goal: "whatever"
+non_goals: ["nothing"]
+tier: S1
+task_type: implementation
+done_when: ["something observable"]
+verify: "pytest -q || true"

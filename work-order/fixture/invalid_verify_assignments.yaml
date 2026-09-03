@@ -1,0 +1,7 @@
+# Planted violation: vacuous verify behind NAME=value and NAME+=value assignments
+goal: "whatever"
+non_goals: ["nothing"]
+tier: S1
+task_type: implementation
+done_when: ["something observable"]
+verify: "pytest -q || X=1 Y+=2 true"

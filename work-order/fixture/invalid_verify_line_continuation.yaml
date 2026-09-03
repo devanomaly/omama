@@ -1,0 +1,9 @@
+# Planted violation: vacuous verify split by a backslash-newline line continuation
+goal: "whatever"
+non_goals: ["nothing"]
+tier: S1
+task_type: implementation
+done_when: ["something observable"]
+verify: |
+  pytest -q || tr\
+  ue

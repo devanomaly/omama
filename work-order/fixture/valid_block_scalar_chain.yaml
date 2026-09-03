@@ -1,0 +1,9 @@
+# Clean case: block scalar: operator-then-newline, plus the trailing newline
+goal: "whatever"
+non_goals: ["nothing"]
+tier: S1
+task_type: implementation
+done_when: ["something observable"]
+verify: |
+  cd sub &&
+  pytest -q

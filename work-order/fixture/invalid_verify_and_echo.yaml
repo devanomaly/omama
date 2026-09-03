@@ -1,0 +1,7 @@
+# Planted violation: vacuous verify after `&&` -- `echo ok` prints success it never earned
+goal: "whatever"
+non_goals: ["nothing"]
+tier: S1
+task_type: implementation
+done_when: ["something observable"]
+verify: "cd /tmp && echo ok"
