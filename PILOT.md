@@ -13,6 +13,13 @@ dropped `close_reason` and `close_reason_class`, the two fields T4 depends on (�
 (§1, §3 b); and the log sink was a path relative to the card directory, i.e. per-worktree, not
 per-developer (§3 b). The registration rev is the commit that lands this amended file.
 
+**Amended 2026-09-03, still before the first pilot card**, after the mechanical wiring check
+landed (`receipt-gate/adapt/check_wiring.py`) and a machine that had been installed and
+self-tested was found with no Stop hook at all: §7 item 5 now records the wiring check alongside
+the self-test, and a new item 7 records the harness version at start and any change to a measured
+piece during the window. No threshold, window, trigger, or classification changed. The
+registration rev is the commit that lands this amended file.
+
 **No efficacy claim is made here, and none is made by running this pilot.** The README says the
 mechanics are what's proven — red-green fixtures and an external adversarial review that converged
 on what to measure — and nothing more. This document does not add a claim; it fixes, in advance,
@@ -314,6 +321,15 @@ In the style every other README here follows — what this measurement does NOT 
    anyway — the export writes outside every worktree by default, but a `$PILOT_LOG` pointed inside
    the repository must not become a committed file.
 5. Run the receipt-gate install self-test (red AND green) on each developer's machine, and record
-   that date — it is the baseline `self_test_skipped = n` depends on.
+   that date — it is the baseline `self_test_skipped = n` depends on. Record, on the same date and
+   per machine, the output of `receipt-gate/adapt/check_wiring.py` (`WIRING-OK` and the command it
+   certified): a self-test run once does not survive a later wiring change, and a Stop hook that
+   is absent does not announce itself.
 6. Agree in advance that the write-up gets published whichever way the triggers land. A refutation
    that only gets written down if it is flattering is not a stopping rule.
+7. Record the harness version the adopting repository runs — the upstream `omama` rev in its
+   provenance note — at start. Any change during the window to a measured piece (the validator,
+   the gate, the card schema) is recorded as a dated harness-version change next to the log. A
+   harness change is not a protocol change and does not void the registration; an unrecorded one
+   makes `close_reason_class = harness` uninterpretable, because the harness that failed the card
+   would not be identifiable.
