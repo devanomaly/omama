@@ -94,6 +94,8 @@ Python 3 on PATH — `python3` on macOS/Linux, `py -3` on Windows. Every command
 written with `python3`; substitute `py -3` if you're on Windows. The code itself is
 launcher-agnostic (it shells out via `sys.executable`), but it is **developed and routinely
 exercised on Windows** — POSIX is supported by construction and covered by CI, not by daily use.
+CI's own `check_pr_base.py` is this repo's PR-hygiene check, not a numbered piece; it's portable
+to a repo whose required branch isn't `master` as-is, by setting `PR_REQUIRED_BASE`.
 
 **work-order** and **receipt-gate** need PyYAML (`pip install pyyaml`); **receipt-gate** needs
 `git`; **protect-tests** needs Node.js. validator, starter-claude-md, and output-discipline run

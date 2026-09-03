@@ -169,7 +169,9 @@ both PRs, and a human decides which one is actually the fork; and once a sibling
 merged, its commits become indistinguishable from legitimate `master` history, so
 contamination that survives until the sibling merges is not caught. Rebase
 (`git rebase origin/master`) before opening the PR if you are not sure your branch is
-current.
+current. `check_pr_base.py` is CI-internal to this repo, not one of the numbered pieces
+above, and it is portable to a repo whose required branch isn't `master` as-is, by setting
+the `PR_REQUIRED_BASE` environment variable.
 
 ## Found a bypass?
 

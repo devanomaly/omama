@@ -78,7 +78,8 @@ jobs:
       # check_pr_base.py is CI-internal (this repo's own PR hygiene), not a
       # shippable piece -- it runs against the real PR above, and its own
       # correctness fixture runs here directly rather than through
-      # verify_all.py's piece list.
+      # verify_all.py's piece list. Portable as-is via PR_REQUIRED_BASE; not
+      # set here -- this repo's own required base stays master.
       - name: check_pr_base's own fixture (proves the checker's exit codes)
         run: python fixture/run_check_pr_base_fixture.py
 
