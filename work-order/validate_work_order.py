@@ -29,8 +29,13 @@ are rejected; both inherited from the legacy schema's 5th external review):
               inside quotes (`|| 'tr'"ue"`), behind a group, a redirection,
               an assignment or a `then`/`else`/`do`/`time` -- because
               `pytest -q || true` proves exactly as little as `true`. A
-              BACKGROUNDED command (a bare `&` at a command boundary) is
-              rejected too: its exit status is discarded. The rule reads
+              BACKGROUNDED command (a bare `&` followed by whitespace, `)`
+              or the end of the line) is rejected too: its exit status is
+              discarded. A bare `&` glued to the next word cannot be told
+              from a `&` inside a quoted word without parsing quotes, so it
+              is read as one more separator: `pytest -q&echo ok` is
+              rejected for the `echo`, while `pytest -q &wait` and
+              `pytest -q&b=2` (also backgrounding) are not. The rule reads
               `verify` as a POSIX/bash command line; the receipt gate runs
               it with `Popen(shell=True)` -- /bin/sh on POSIX, cmd.exe on
               Windows -- so cmd.exe no-ops are outside its reach. Both the
@@ -100,8 +105,13 @@ VACUOUS_FIRST_TOKENS = {"true", ":", "echo"}
 # comment / heredoc / `$( )` parsing); the shapes it over-rejects and the
 # rewrite for each are named in work-order/README.md.
 #
-# Longest operators first so `|&`, `&&` and `||` win over `|`.
-SEGMENT_OPERATORS = re.compile(r"\|&|&&|\|\||;|\||\n")
+# Longest operators first so `|&`, `&&` and `||` win over `|`. The last
+# alternative is a bare `&` with the same exclusions as BACKGROUND_AMP
+# below; BACKGROUND_AMP is checked first and returns alone, so by the time
+# the line is split the only bare `&` left is one glued to the next word
+# (`pytest -q&echo ok`, `pytest -q &true`) -- and the word after it is
+# deny-checked like any other segment's first word.
+SEGMENT_OPERATORS = re.compile(r"\|&|&&|\|\||;|\||\n|(?<![&|<>])&(?![&>])")
 
 # A backslash-newline pair is a line continuation: the shell joins the lines
 # into one word, so `tr\` + newline + `ue` IS `true`.
@@ -109,9 +119,13 @@ LINE_CONTINUATION = re.compile(r"\\\n")
 
 # A bare `&` at a command boundary backgrounds the command and discards its
 # exit status. Excluded: the operators that merely contain `&` (`&&`, `|&`,
-# `>&`, `<&`, `&>`) and a `&` inside a word (`"a&b"`, `?a=1&b=2`, `&#39;`).
+# `>&`, `<&`, `&>`), and a `&` glued to what follows it -- the rule does not
+# parse quotes, so it cannot tell `"a&b"`, `?a=1&b=2`, `&#39;` (inside a
+# word) from `pytest -q &true` (backgrounding); those fall to the segment
+# split above, which rejects a denied word after the `&` and nothing else.
 # `wait $!` would collect the status; the rule does not read that far, so
-# every bare `&` is rejected (rewrite documented in the piece README).
+# a bare `&` followed by whitespace, `)` or the end of the line is always
+# rejected (rewrite documented in the piece README).
 BACKGROUND_AMP = re.compile(r"(?<![&|<>])&(?![&>])(?=[\s)]|$)")
 
 # Reserved words that only introduce the real command behind them.

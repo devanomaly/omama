@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """Fixture runner for validate_work_order.py (slim card schema).
 
-Runs the validator against eleven clean cases and thirty-five
+Runs the validator against eleven clean cases and thirty-six
 planted-violation cases, asserts the validator's exit code matches
 expectation for each, and prints the violation the validator named for each
-rejected case.
+rejected case. The case count itself is a lock (EXPECTED_CASE_COUNT): a
+case that silently disappears is a weakened validator, so the runner goes
+red on the count as well as on any case.
 
-Twenty-three of the planted cases are the segment rule (issue #18): the
+Twenty-four of the planted cases are the segment rule (issue #18): the
 deny-list applies to the first word of EVERY segment -- after `||`, `;`,
-`&&`, `|`, `|&`, a newline and inside quotes -- and a backgrounded command
-(a bare `&` at a command boundary) is rejected. Ten of the clean cases pin
-what that rule must NOT reject. The rule reads `verify` as a POSIX/bash
-command line; the receipt gate runs it with `Popen(shell=True)` (/bin/sh on
-POSIX, cmd.exe on Windows).
+`&&`, `|`, `|&`, a newline, a `&` glued to the next word, and inside quotes
+-- and a backgrounded command (a bare `&` at a command boundary) is
+rejected. Ten of the clean cases pin what that rule must NOT reject. The
+rule reads `verify` as a POSIX/bash command line; the receipt gate runs it
+with `Popen(shell=True)` (/bin/sh on POSIX, cmd.exe on Windows).
 
 The legacy-schema fixtures live in archive/ (CARD-01, 2026-08-19).
 
@@ -38,6 +40,10 @@ VALIDATOR = HERE.parent / "validate_work_order.py"
 # EVERY planted violation gets its own lock -- a single-substring lock let
 # two of shape_theater's three planted guards vanish while the fixture
 # stayed green (5th external review, 2026-08-18).
+# The count is the anti-weakening lock: a case removed without touching this
+# number is a red run, not a quieter green one.
+EXPECTED_CASE_COUNT = 47
+
 CASES = [
     ("valid_slim.yaml", 0, "clean case: valid slim card", []),
     ("invalid_verify_true.yaml", 1,
@@ -127,6 +133,10 @@ CASES = [
     ("invalid_verify_background_paren.yaml", 1,
      "planted violation: backgrounded verify at a `&)` boundary",
      ["verify='(pytest -q &)' is vacuous"]),
+    ("invalid_verify_glued_amp.yaml", 1,
+     "planted violation: bare `&` glued to a no-op -- `pytest -q&echo ok` "
+     "(a glued `&` is read as one more separator)",
+     ["verify='pytest -q&echo ok' is vacuous"]),
     ("invalid_verify_redir_word_true.yaml", 1,
      "planted violation: vacuous segment behind a glued `>/dev/null`",
      ["verify='pytest -q || >/dev/null true' is vacuous"]),
@@ -217,6 +227,11 @@ def run_case(filename, expected_exit, label, want_texts):
 
 def main():
     all_ok = True
+    if len(CASES) != EXPECTED_CASE_COUNT:
+        print(f"[FAIL] case count is {len(CASES)}, expected "
+              f"{EXPECTED_CASE_COUNT} (a case vanished or the lock was not "
+              "updated with the change that added one)")
+        all_ok = False
     for filename, expected_exit, label, want_texts in CASES:
         if not run_case(filename, expected_exit, label, want_texts):
             all_ok = False

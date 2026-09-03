@@ -30,8 +30,10 @@ done_when: []
 # proves nothing. The deny-list is applied to the FIRST WORD OF EVERY
 # SEGMENT: after `||`, `;`, `&&`, `|`, `|&` and a newline, and inside quotes
 # — `pytest -q || true` is rejected, and so are `cd app && echo ok` and
-# `pytest -q; true`. A BACKGROUNDED command (a bare `&` at a command
-# boundary) is rejected too: its exit status is discarded. The rule reads
+# `pytest -q; true`. A BACKGROUNDED command (a bare `&` followed by
+# whitespace, `)` or the end of the line) is rejected too: its exit status
+# is discarded; a `&` glued to the next word is read as one more separator
+# (`pytest -q&echo ok` is rejected, `pytest -q &wait` is not). The rule reads
 # this field as a POSIX/bash command line; the receipt gate re-runs THIS
 # command at close with `Popen(shell=True)` — /bin/sh on POSIX, cmd.exe on
 # Windows. work-order/README.md names what that leaves uncovered and the

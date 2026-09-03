@@ -27,10 +27,10 @@ the receipt gate, not this validator.
   - `tier` from the closed enum S1|S2|S3 (proposed by the agent, ratified by the human);
   - `verify` is ONE non-vacuous command — minimal deny-list: empty, `true`, `:`,
     `echo ...` — applied to the **first word of every segment** of the command line
-    (after `||`, `;`, `&&`, `|`, `|&` and a newline, and inside quotes), so
-    `pytest -q || true` and `cd app && echo ok` are rejected; a **backgrounded**
-    command (a bare `&` at a command boundary) is rejected too, because its exit
-    status is discarded;
+    (after `||`, `;`, `&&`, `|`, `|&`, a newline and a `&` glued to the next word, and
+    inside quotes), so `pytest -q || true`, `cd app && echo ok` and `pytest -q&echo ok`
+    are rejected; a **backgrounded** command (a bare `&` followed by whitespace, `)` or
+    the end of the line) is rejected too, because its exit status is discarded;
   - `bugfix => repro` attached and typed (non-empty string/list; `repro: true` is a
     checkbox and is rejected);
   - **duplicate YAML key rejected** (the default parser would silently keep the last
@@ -39,9 +39,10 @@ the receipt gate, not this validator.
     a traceback.
 - (GUIA.md used to describe the legacy schema; removed in the 2026-08-19 reorg —
   the commented template is the guide now.)
-- `fixture/` — 11 clean cases + 35 cases with a planted violation + runner with
-  regression locks (each red pinned to ALL of its named reasons). Legacy-schema
-  fixtures: `fixture/archive/`.
+- `fixture/` — 11 clean cases + 36 cases with a planted violation + runner with
+  regression locks (each red pinned to ALL of its named reasons, and the case count
+  itself asserted, so a case cannot vanish quietly). Legacy-schema fixtures:
+  `fixture/archive/`.
 
 ## Command and states
 
@@ -61,10 +62,11 @@ Fixture: `python3 fixture/run_fixture.py` (exit 0 = validator correct).
 
 ### What it catches
 
-Forty-six fixture cases, each red pinned to all of its named reasons. Classes
+Forty-seven fixture cases, each red pinned to all of its named reasons. Classes
 covered: missing/unknown/duplicate key, null values, tier outside the enum,
-vacuous `verify` (four whole-command deny-list variants plus twenty-three segment
-shapes: after `||`, `;`, `&&`, `|`, `|&` and a newline; inside a `( )` or `{ }`
+vacuous `verify` (four whole-command deny-list variants plus twenty-four segment
+shapes: after `||`, `;`, `&&`, `|`, `|&`, a newline and a glued `&`
+(`pytest -q&echo ok`); inside a `( )` or `{ }`
 group; spelled with quotes (`'tr'"ue"`) or a backslash (`\true`); split by a
 backslash-newline continuation; behind a redirection, an assignment or a
 `then`/`else`/`do`/`time`; and a backgrounded `&`), bugfix without repro,
@@ -89,20 +91,23 @@ Named gaps, each with the layer that resolves it:
 - **Vacuity beyond the deny-list.** The rule changed WHERE the three denied tokens
   (`true`, `:`, `echo`) are looked for — the first word of every segment — not WHICH
   tokens are denied, and it is deliberately not a shell parser. Still undetected:
-  - `|| exit 0`; the wrapper words `command`, `env`, `exec`, `nohup`; a path spelling
-    of the no-op (`/bin/true`).
+  - `|| exit 0`; the wrapper words `command`, `builtin`, `env`, `exec`, `nohup`; a
+    path spelling of the no-op (`/bin/true`).
   - **The shell model itself.** The rule reads `verify` as a POSIX/bash command line,
     but the receipt gate runs it with `Popen(shell=True)` — /bin/sh on POSIX, **cmd.exe
     on Windows**. cmd.exe no-ops (`|| ver`, `|| rem x`, `|| echo.`, `|| exit /b 0`) and
     `true.exe` on a PATH that carries Git's `usr/bin` are not detected.
   - `| tee` masking the exit status of the command that fed it.
-  - A no-op produced by expansion — `$(echo true)`, `${X:-true}`, `$'true'`,
-    `true$(:)`, or brace expansion `tr{,}ue` / `{true,}` — since a token beginning with
-    `$` or carrying a brace pair is legitimate (`$PYTHON -m pytest`, `cp a{,.bak}`).
+  - A no-op produced by expansion — `$(echo true)`, `` `true` ``, `${X:-true}`,
+    `$'true'`, `true$(:)`, or brace expansion `tr{,}ue` / `{true,}` — since a token
+    beginning with `$` or a backtick, or carrying a brace pair, is legitimate
+    (`$PYTHON -m pytest`, `cp a{,.bak}`).
   - An assignment whose value carries whitespace, or whose target is not a bare NAME:
     `X="a b" true`, `X=(1 2) true`, `X=$(a b) true`, `X[0]=1 true`.
-  - Redirection operators outside the seven listed (`&>>`, `>|`, `<>`, `{fd}>`) — a
-    segment behind one of them exposes the wrong first word — and `time` with a flag
+  - A redirection operator outside the seven bare ones, written spaced — `2>> f true`,
+    `&>> f true`, `>| f true`, `<> f true`, `{fd}> f true` — exposes the operator as the
+    segment's first word instead of the no-op. (Glued, `2>>f true` and `&>>f true` ARE
+    caught: the redirection-word pattern matches their prefix.) Also `time` with a flag
     (`time -p true`).
   - `! false`, and a doubled `! ! true`.
   - A loop or conditional whose CONDITION is the no-op: `until true; do A; done`,
@@ -114,8 +119,14 @@ Named gaps, each with the layer that resolves it:
   - An always-true shell test (`[[ 1 ]]`, `((1))`, `test 1`) or an always-green pytest.
   - A segment that is only an assignment or a redirection (`|| X=1`, `|| >/dev/null`):
     it is skipped, never a violation.
-  - Backgrounding is caught only when the `&` is followed by whitespace, `)` or the end
-    of `verify` — `&}`, `&#` and a `&` inside a word are not inspected.
+  - Backgrounding is caught as such only when the `&` is followed by whitespace, `)`
+    or the end of `verify`. A `&` glued to the next word cannot be told from a `&`
+    inside a quoted word without parsing quotes, so it is read as one more separator:
+    the word after it is deny-checked, and nothing else. `pytest -q &true` and
+    `pytest -q&echo ok` are rejected; `pytest -q &wait` (`wait` with no operand exits
+    0), `pytest -q &sleep 1`, `pytest -q&b=2`, an **unquoted**
+    `curl -fsS http://host/health?a=1&b=2` (the shell backgrounds curl and runs `b=2`),
+    `&}` and `&#` all pass — and each discards the status of what precedes the `&`.
   - `python -c "pass"`, and vacuity inside a script that `verify` calls.
 
   Resolved by: **the human read of the card — and nothing else.** This corrects an
@@ -161,10 +172,15 @@ Named gaps, each with the layer that resolves it:
     PowerShell's call operator `"& .\run.ps1"`, sed's whole-match back-reference in
     parentheses `s/PASS/(&)/`. Write `(3&1)` unspaced, call the script by path without
     the `&`, or use a capture group: `s/\(PASS\)/(\1)/`.
+  - A quoted `&` glued to a word the deny-list names: `grep -q 'a&true' f`,
+    `grep -q "x&echo" f`. Rewrite with a bracket expression (`'a&tru[e]'`) — the same
+    move as the `|true` alternation above.
   - An unquoted `&` that starts a helper before the real check:
     `server.py & sleep 2 && curl -fsS .../health`, `A & wait $!` (the rule does not read
     as far as the `wait`). Move the helper's start and stop into a script that `verify`
-    calls, so `verify` itself carries no `&`.
+    calls, so `verify` itself carries no `&`. Deleting the space (`server.py &sleep 2`)
+    is not a rewrite: the card then passes, but the helper's status is still discarded —
+    the residual above.
 
   Resolved by: the rewrite. In every case above the rewrite is a `verify` whose exit
   status is itself the proof — which is what the field is for.
@@ -179,6 +195,6 @@ non-goals, veracity of the repro, ratification of the tier.
 | Promised | Covered mechanically | Not covered / known bypass | Classification |
 |---|---|---|---|
 | Bugfix without attached reproduction does not pass | `invalid_bugfix_no_repro` + `invalid_repro_checkbox` → exit 1 | dispatch that skips the validator | accepted limitation |
-| Vacuous `verify` does not pass | 4 whole-command deny-list variants + 23 segment shapes (after `\|\|`, `;`, `&&`, `\|`, `\|&`, newline; quoted; grouped; redirected; assigned; `then`/`else`/`do`/`time`; backgrounded `&`) → exit 1, and 10 clean cases pin what stays accepted | vacuity outside the deny-list (`python -c "pass"`, `\|\| exit 0`, `/bin/true`, expansions, cmd.exe no-ops under the gate's `shell=True`) — and, in the other direction, real commands the rule over-rejects (`A && echo done`), each with a documented rewrite | accepted limitation |
+| Vacuous `verify` does not pass | 4 whole-command deny-list variants + 24 segment shapes (after `\|\|`, `;`, `&&`, `\|`, `\|&`, newline, glued `&`; quoted; grouped; redirected; assigned; `then`/`else`/`do`/`time`; backgrounded `&`) → exit 1, and 10 clean cases pin what stays accepted | vacuity outside the deny-list (`python -c "pass"`, `\|\| exit 0`, `/bin/true`, expansions, a glued `&` before a real word — `A &wait`, an unquoted `?a=1&b=2` — cmd.exe no-ops under the gate's `shell=True`) — and, in the other direction, real commands the rule over-rejects (`A && echo done`), each with a documented rewrite | accepted limitation |
 | Closed schema, no silent key | unknown/duplicate/null → exit 1 | — | covered |
 | Tier routes S3 to plan+review | enum value → exit 1 | the invariant itself (enforcement is the receipt gate's) | out of scope (by design) |
