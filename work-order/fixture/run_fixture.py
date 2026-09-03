@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """Fixture runner for validate_work_order.py (slim card schema).
 
-Runs the validator against eleven clean cases and thirty-six
+Runs the validator against eleven clean cases and thirty-seven
 planted-violation cases, asserts the validator's exit code matches
 expectation for each, and prints the violation the validator named for each
 rejected case. The case count itself is a lock (EXPECTED_CASE_COUNT): a
 case that silently disappears is a weakened validator, so the runner goes
 red on the count as well as on any case.
 
-Twenty-four of the planted cases are the segment rule (issue #18): the
-deny-list applies to the first word of EVERY segment -- after `||`, `;`,
-`&&`, `|`, `|&`, a newline, a `&` glued to the next word, and inside quotes
--- and a backgrounded command (a bare `&` at a command boundary) is
-rejected. Ten of the clean cases pin what that rule must NOT reject. The
+Twenty-five of the planted cases are the segment rule (issue #18): the
+deny-list applies, case-insensitively, to the first word of EVERY segment
+-- after `||`, `;`, `&&`, `|`, `|&`, a newline, a `&` glued to the next
+word, and inside quotes -- and a backgrounded command (a bare `&` at a
+command boundary) is rejected. Ten of the clean cases pin what that rule must NOT reject. The
 rule reads `verify` as a POSIX/bash command line; the receipt gate runs it
 with `Popen(shell=True)` (/bin/sh on POSIX, cmd.exe on Windows).
 
@@ -42,7 +42,7 @@ VALIDATOR = HERE.parent / "validate_work_order.py"
 # stayed green (5th external review, 2026-08-18).
 # The count is the anti-weakening lock: a case removed without touching this
 # number is a red run, not a quieter green one.
-EXPECTED_CASE_COUNT = 47
+EXPECTED_CASE_COUNT = 48
 
 CASES = [
     ("valid_slim.yaml", 0, "clean case: valid slim card", []),
@@ -127,6 +127,10 @@ CASES = [
     ("invalid_verify_line_continuation.yaml", 1,
      "planted violation: vacuous segment split by a backslash-newline",
      ["verify='pytest -q || tr\\\\\\nue' is vacuous"]),
+    ("invalid_verify_upper_true.yaml", 1,
+     "planted violation: vacuous segment spelled uppercase -- `|| TRUE` "
+     "(the token is lowercased before the deny-list)",
+     ["verify='pytest -q || TRUE' is vacuous"]),
     ("invalid_verify_background.yaml", 1,
      "planted violation: backgrounded verify -- trailing `&` discards the status",
      ["verify='pytest -q &' is vacuous"]),

@@ -39,7 +39,7 @@ the receipt gate, not this validator.
     a traceback.
 - (GUIA.md used to describe the legacy schema; removed in the 2026-08-19 reorg —
   the commented template is the guide now.)
-- `fixture/` — 11 clean cases + 36 cases with a planted violation + runner with
+- `fixture/` — 11 clean cases + 37 cases with a planted violation + runner with
   regression locks (each red pinned to ALL of its named reasons, and the case count
   itself asserted, so a case cannot vanish quietly). Legacy-schema fixtures:
   `fixture/archive/`.
@@ -62,12 +62,13 @@ Fixture: `python3 fixture/run_fixture.py` (exit 0 = validator correct).
 
 ### What it catches
 
-Forty-seven fixture cases, each red pinned to all of its named reasons. Classes
+Forty-eight fixture cases, each red pinned to all of its named reasons. Classes
 covered: missing/unknown/duplicate key, null values, tier outside the enum,
-vacuous `verify` (four whole-command deny-list variants plus twenty-four segment
+vacuous `verify` (four whole-command deny-list variants plus twenty-five segment
 shapes: after `||`, `;`, `&&`, `|`, `|&`, a newline and a glued `&`
 (`pytest -q&echo ok`); inside a `( )` or `{ }`
-group; spelled with quotes (`'tr'"ue"`) or a backslash (`\true`); split by a
+group; spelled with quotes (`'tr'"ue"`), a backslash (`\true`) or uppercase
+(`TRUE`); split by a
 backslash-newline continuation; behind a redirection, an assignment or a
 `then`/`else`/`do`/`time`; and a backgrounded `&`), bugfix without repro,
 repro-checkbox, malformed `task_type` without a traceback. Ten of the eleven clean
@@ -195,6 +196,6 @@ non-goals, veracity of the repro, ratification of the tier.
 | Promised | Covered mechanically | Not covered / known bypass | Classification |
 |---|---|---|---|
 | Bugfix without attached reproduction does not pass | `invalid_bugfix_no_repro` + `invalid_repro_checkbox` → exit 1 | dispatch that skips the validator | accepted limitation |
-| Vacuous `verify` does not pass | 4 whole-command deny-list variants + 24 segment shapes (after `\|\|`, `;`, `&&`, `\|`, `\|&`, newline, glued `&`; quoted; grouped; redirected; assigned; `then`/`else`/`do`/`time`; backgrounded `&`) → exit 1, and 10 clean cases pin what stays accepted | vacuity outside the deny-list (`python -c "pass"`, `\|\| exit 0`, `/bin/true`, expansions, a glued `&` before a real word — `A &wait`, an unquoted `?a=1&b=2` — cmd.exe no-ops under the gate's `shell=True`) — and, in the other direction, real commands the rule over-rejects (`A && echo done`), each with a documented rewrite | accepted limitation |
+| Vacuous `verify` does not pass | 4 whole-command deny-list variants + 25 segment shapes (after `\|\|`, `;`, `&&`, `\|`, `\|&`, newline, glued `&`; quoted; uppercase; grouped; redirected; assigned; `then`/`else`/`do`/`time`; backgrounded `&`) → exit 1, and 10 clean cases pin what stays accepted | vacuity outside the deny-list (`python -c "pass"`, `\|\| exit 0`, `/bin/true`, expansions, a glued `&` before a real word — `A &wait`, an unquoted `?a=1&b=2` — cmd.exe no-ops under the gate's `shell=True`) — and, in the other direction, real commands the rule over-rejects (`A && echo done`), each with a documented rewrite | accepted limitation |
 | Closed schema, no silent key | unknown/duplicate/null → exit 1 | — | covered |
 | Tier routes S3 to plan+review | enum value → exit 1 | the invariant itself (enforcement is the receipt gate's) | out of scope (by design) |
