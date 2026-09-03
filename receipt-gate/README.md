@@ -2,7 +2,7 @@
 
 > Docs for this piece: **README** (promise, command, states, coverage) ·
 > [adapt/README.md](adapt/README.md) (how to install — per-repo, with a
-> mandatory self-test). The evidence is the re-runnable fixture (75 cases) +
+> mandatory self-test). The evidence is the re-runnable fixture (78 cases) +
 > the empirical spike ([fixture/spike/SPIKE.md](fixture/spike/SPIKE.md)).
 
 ## The decision this piece changes
@@ -46,7 +46,7 @@ the registered Stop command answers the gate's `BAD-INPUT` block on empty
 stdin, re-runnable from the adopting repo's CI). Fixture:
 
 ```
-python3 fixture/run_fixture.py        # exit 0 = gate correct (75 cases)
+python3 fixture/run_fixture.py        # exit 0 = gate correct (78 cases)
 ```
 
 | Gate exit | Means |
@@ -118,9 +118,11 @@ otherwise structurally valid S3 close.
   untrusted PRs, because the default mode EXECUTES the registered command).
 - **A hook wired with the cmd-style spelling** (`%CLAUDE_PROJECT_DIR%`),
   or with the placeholder inside **single quotes** / escaped, is dead
-  wiring on every platform — the hook shell is sh-like everywhere (Git
-  Bash on Windows; verified empirically 2026-08-24) and leaves those
-  literal — and the check names each as a VIOLATION wherever it runs.
+  wiring under the modeled hook shells — sh on POSIX and Git Bash on
+  Windows leave those literal (verified empirically 2026-08-24), and
+  PowerShell, the no-Git-Bash fallback, leaves `%VAR%` literal too — and
+  the check names each as a VIOLATION wherever it evaluates (on Windows,
+  once Git Bash is established; otherwise NOT-RUN, below).
 - **Hook forms other than the one adapt/README prescribes are not
   certified — they are named VIOLATIONs, not silent passes.** `async` /
   `asyncRewake` (cannot block a close), exec-form `command` + `args`
@@ -157,7 +159,7 @@ otherwise structurally valid S3 close.
 
 | Promised | Mechanically covered | Not covered / known bypass | Classification |
 |---|---|---|---|
-| VERIFIED without backing impossible via close | 75 cases: red blocks, stale blocks, planted receipts deleted (start, block-exit, guard route) | forgery on a WIP turn persists | fixed KNOWN-LIMITATION |
+| VERIFIED without backing impossible via close | 78 cases: red blocks, stale blocks, planted receipts deleted (start, block-exit, guard route) | forgery on a WIP turn persists | fixed KNOWN-LIMITATION |
 | Honest close always reachable | fixtures: broken/unreadable/non-git/no-git card — all exit 0 with a conservative receipt | — | covered |
 | Binding catches verify mutation | tracked, untracked-dir (-uall), CARD family, stash, assume-unchanged | non-git cp-restore; inside .git | accepted limitation |
-| Fail-closed | pyyaml absent, git absent, empty stdin, unborn HEAD, unreadable card ⇒ named exit 2 | broken wiring (shell exit≠2) — resolved by: adapt/check_wiring.py (+ self-test; reads settings.json AND settings.local.json, quote-aware sh CLAUDE_PROJECT_DIR expansion, rejects shell operators, rejects async / exec-form / non-bash-shell hooks, `disableAllHooks` and any leftover `$` expansion by name, warns on broken sibling hooks; `--static-only` non-execution sentinel-proven; Windows: NOT-RUN unless Git Bash is established); an interpreter that vanishes after install stays undetected until the check is re-run (detection, not prevention); `--static-only` mode does NOT prove the gate answers; user/managed/CLI settings are not inspected; the Git Bash probe is a proxy for Claude Code's detection (false NOT-RUN possible, false pass not) | accepted limitation |
+| Fail-closed | pyyaml absent, git absent, empty stdin, unborn HEAD, unreadable card ⇒ named exit 2 | broken wiring (shell exit≠2) — resolved by: adapt/check_wiring.py (+ self-test; reads settings.json AND settings.local.json, requires the interpreter's absolute path and a `receipt_gate.py` argument (a bare launcher, an interpreter alone or another script is a named VIOLATION in both modes), quote-aware sh CLAUDE_PROJECT_DIR expansion, rejects shell operators, rejects async / exec-form / non-bash-shell hooks, `disableAllHooks` and any leftover `$` expansion by name, warns on broken sibling hooks; `--static-only` non-execution sentinel-proven; Windows: NOT-RUN unless Git Bash is established); an interpreter that vanishes after install stays undetected until the check is re-run (detection, not prevention); `--static-only` mode does NOT prove the gate answers (script checked by name and existence only); user/managed/CLI settings are not inspected; the Git Bash probe is a proxy for Claude Code's detection (false NOT-RUN possible, false pass not) | accepted limitation |

@@ -55,9 +55,14 @@ is the reference (env vars, troubleshooting, rationale).
    **It certifies exactly one hook form — the one this page prescribes:**
    a **synchronous** Stop hook of type `command`, written as **one
    shell-form command string** (no `args`), run by the **default hook
-   shell** (`shell` absent or `"bash"`), absolute interpreter path first,
-   gate script as an argument. Claude Code accepts other forms; here each
-   is a named `VIOLATION`, never a quiet pass: `async: true` /
+   shell** (`shell` absent or `"bash"`), the interpreter's **absolute
+   path** first, the copied `receipt_gate.py` as an argument. Claude Code
+   accepts other forms; here each is a named `VIOLATION`, never a quiet
+   pass: a bare launcher name (`py`, `python3`, `python` — step 3;
+   rejected by form even when PATH resolves it here, because PATH is per
+   machine), a command with no `receipt_gate.py` argument (an interpreter
+   alone, or another script, is not the gate — "gate script missing", in
+   both modes, before anything runs), `async: true` /
    `asyncRewake: true` (a background hook cannot block the close — the
    gate is absent), exec-form `command` + `args` (not modeled — write one
    quoted string), `shell: "powershell"` (not modeled), and
@@ -65,21 +70,25 @@ is the reference (env vars, troubleshooting, rationale).
    all; a `false` in the other file is not assumed to win).
 
    `CLAUDE_PROJECT_DIR` is expanded the way the real hook shell does: the
-   hook shell is sh-like on every platform (Git Bash on Windows — verified
-   empirically 2026-08-24 with a live Stop hook), so
-   `"$CLAUDE_PROJECT_DIR"` / `"${CLAUDE_PROJECT_DIR}"` expand (double
-   quotes or none), while `%CLAUDE_PROJECT_DIR%`, a placeholder inside
-   **single quotes**, or an escaped `\$CLAUDE_PROJECT_DIR` is left
-   literal — dead wiring on every platform and a named `VIOLATION`, as are
+   modeled hook shell is sh on POSIX and Git Bash on Windows (verified
+   empirically 2026-08-24 with a live Stop hook on a Git-Bash-equipped
+   Windows host; Windows without Git Bash falls back to PowerShell and is
+   NOT-RUN here, see below), so `"$CLAUDE_PROJECT_DIR"` /
+   `"${CLAUDE_PROJECT_DIR}"` expand (double quotes or none), while
+   `%CLAUDE_PROJECT_DIR%`, a placeholder inside **single quotes**, or an
+   escaped `\$CLAUDE_PROJECT_DIR` is left literal — dead wiring under the
+   modeled shells (and `%VAR%` stays literal under PowerShell too) and a
+   named `VIOLATION`, as are
    shell operators (`|| true` would swallow the gate's blocking exit) and
    **any other `$`** left in the command (`$(...)`, `$OTHER_VAR`): the
    real hook is shell-form, so sh would expand or run it, the check cannot
    model it, and a `--static-only` pass on such a string would certify
    PR-author-controlled settings that execute code at every Stop — so it
    is a `VIOLATION` in both modes. Write literal paths plus the
-   placeholder, nothing else. A
-   missing interpreter or wrong script path is a named `VIOLATION` (exit
-   1) instead of the silent 127/9009 absence; when neither settings file
+   placeholder, nothing else. A missing interpreter, a wrong script path,
+   a bare launcher name, or a command without `receipt_gate.py` is a named
+   `VIOLATION` (exit 1) instead of the silent 127/9009 absence; when
+   neither settings file
    is readable the result is NOT-RUN (exit 2). With several Stop hooks,
    one working gate is enough for exit 0, but each broken sibling's
    failures are printed as `WARNING:` lines — read them. Re-run the check
@@ -116,8 +125,9 @@ is the reference (env vars, troubleshooting, rationale).
    that builds fork PRs, where the PR can rewrite `.claude/settings.json`
    to any command. Use `--static-only` there: it resolves the interpreter
    and script paths without executing anything and exits 0 with
-   `WIRING-STATIC-OK` — which does NOT prove the gate answers; keep the
-   full check (and steps 2–3) on trusted machines.
+   `WIRING-STATIC-OK` — which does NOT prove the gate answers (the script
+   is checked by name and existence only); keep the full check (and steps
+   2–3) on trusted machines.
 
    **Steps 2–3 — red AND green close test**, running the EXACT command
    string registered in settings.json (copy-pasted, not retyped): (a) a
