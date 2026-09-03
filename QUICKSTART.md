@@ -73,14 +73,34 @@ permanently blocking:
 The gate needs a git repo with at least one commit (an unborn HEAD
 fail-closes, by design).
 
-## 4. Prove the gate: red, then green (mandatory — do not skip)
+## 4. Prove the gate: wiring check, then red, then green (mandatory — do not skip)
 
 An install you haven't watched block is not installed. This section is the
 self-test that [adapt/README.md](receipt-gate/adapt/README.md) makes
-mandatory — run the gate via the EXACT command string you registered in
-`settings.json`, copy-pasted, not retyped.
+mandatory — first the mechanical wiring check, then run the gate via the
+EXACT command string you registered in `settings.json`, copy-pasted, not
+retyped.
 
-Add the gitignore snippet first — a card is per task and per machine, not
+**Step 1 — wiring check.** From your repo root:
+
+```
+python3 <OMAMA>/receipt-gate/adapt/check_wiring.py    # Windows: py -3 ...
+```
+
+**Expected: `WIRING-OK ...` and exit 0.** It resolves the registered Stop
+hook command and dry-runs it on empty stdin — a missing interpreter, a
+bare launcher name instead of its absolute path, a wrong or missing
+`receipt_gate.py` argument, a `CLAUDE_PROJECT_DIR` the hook shell would
+leave literal (`%VAR%` spelling, single quotes), a hook in a form the
+check does not certify (`async`, exec-form `args`, `shell: powershell`),
+any other `$` expansion in the command, or `disableAllHooks` in a
+settings file is a named `VIOLATION` (exit 1) instead of the silent
+127/9009 absence; on Windows without Git Bash the answer is NOT-RUN (exit
+2), because the hook would run through PowerShell. (It EXECUTES the
+registered command — that is the point; details, the certified form, CI
+use, and `--static-only` in [adapt/README.md](receipt-gate/adapt/README.md).)
+
+**Steps 2–3 — red, then green.** Add the gitignore snippet first — a card is per task and per machine, not
 something to version (see [work-order/ADOPTION.md](work-order/ADOPTION.md#the-card-and-its-receipt-stay-local)
 for why):
 
@@ -139,8 +159,8 @@ on disk** with the verify command, exit code, and tree hashes bound together.
 receipt is the durable record. Honest closes (`FAILED: <reason>`,
 `UNVERIFIED: <reason>`) always pass and always leave a receipt too.
 
-If you saw the red BLOCK **and** the green VERIFIED, the loop is installed.
-One without the other means broken wiring — see the self-test section of
+If you saw WIRING-OK, the red BLOCK **and** the green VERIFIED, the loop is
+installed. A red/green result without the other means broken wiring — see the self-test section of
 [adapt/README.md](receipt-gate/adapt/README.md) for what each partial result
 means.
 

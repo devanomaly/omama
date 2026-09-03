@@ -118,7 +118,7 @@ rotas conhecidas de forja residual estão documentadas e fixadas em fixture, nã
 
 Cada peça é opt-in por repositório; nada aqui se instala sozinho. Adote o LOOP, não peças
 avulsas: work-order na raiz do repo, o gate no `.claude/settings.json` DO repo (por-repo, nunca
-global — self-test vermelho E verde obrigatório, ver
+global — wiring check e self-test vermelho E verde obrigatórios, ver
 [receipt-gate/adapt/README.md](receipt-gate/adapt/README.md)), os templates de output-discipline
 para plano/review. As passivas (privacy-hook, protect-tests) entram junto (pre-commit e
 PreToolUse). **Código de terceiros:** protect-tests vendoriza um script MIT

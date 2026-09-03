@@ -2,7 +2,7 @@
 
 > Docs for this piece: **README** (promise, command, states, coverage) ·
 > [adapt/README.md](adapt/README.md) (how to install — per-repo, with a
-> mandatory self-test). The evidence is the re-runnable fixture (46 cases) +
+> mandatory self-test). The evidence is the re-runnable fixture (78 cases) +
 > the empirical spike ([fixture/spike/SPIKE.md](fixture/spike/SPIKE.md)).
 
 ## The decision this piece changes
@@ -40,10 +40,13 @@ cross-machine).
 ## Command and states
 
 Install: see [adapt/README.md](adapt/README.md) (per-repo, mandatory
-self-test with the exact registered command string). Fixture:
+self-test with the exact registered command string; step 1 of the self-test
+is the mechanical wiring check, `adapt/check_wiring.py` — exit 0 only when
+the registered Stop command answers the gate's `BAD-INPUT` block on empty
+stdin, re-runnable from the adopting repo's CI). Fixture:
 
 ```
-python3 fixture/run_fixture.py        # exit 0 = gate correct (46 cases)
+python3 fixture/run_fixture.py        # exit 0 = gate correct (78 cases)
 ```
 
 | Gate exit | Means |
@@ -107,12 +110,56 @@ otherwise structurally valid S3 close.
 - **Concurrency:** parallel sessions belong to separate worktrees (material
   is per-worktree); within one worktree, a tree moving during a close ⇒
   BLOCK by design, cheap to retry.
+- **An interpreter that vanishes AFTER install** (upgrade, clone on a new
+  machine) still leaves the gate silently absent until
+  `adapt/check_wiring.py` is run again — the check DETECTS dead wiring at
+  the moment it runs, nothing prevents it; re-run it (CI of the adopting
+  repo is the natural place — with `--static-only` if that CI checks out
+  untrusted PRs, because the default mode EXECUTES the registered command).
+- **A hook wired with the cmd-style spelling** (`%CLAUDE_PROJECT_DIR%`),
+  or with the placeholder inside **single quotes** / escaped, is dead
+  wiring under the modeled hook shells — sh on POSIX and Git Bash on
+  Windows leave those literal (verified empirically 2026-08-24), and
+  PowerShell, the no-Git-Bash fallback, leaves `%VAR%` literal too — and
+  the check names each as a VIOLATION wherever it evaluates (on Windows,
+  once Git Bash is established; otherwise NOT-RUN, below).
+- **Hook forms other than the one adapt/README prescribes are not
+  certified — they are named VIOLATIONs, not silent passes.** `async` /
+  `asyncRewake` (cannot block a close), exec-form `command` + `args`
+  (not modeled), `shell: "powershell"` (not modeled),
+  `disableAllHooks: true` in either project settings file (no hook runs).
+  The check vouches for one form: synchronous, shell-form command string,
+  default (bash) hook shell. Fixture: one case per rejected form.
+- **Settings the check does not read.** User-level `~/.claude/settings.json`,
+  managed policy settings, and a `claude --settings` command-line
+  override all take part in Claude Code's hook merge and can carry a
+  `disableAllHooks: true` (or a gate) the check never sees — the install
+  rule is per-repo, so a gate wired globally (against adapt/README's
+  explicit rule) is invisible to it, and a global `disableAllHooks` turns
+  the gate off while the check says `WIRING-OK`. Resolved by: the
+  red/green self-test steps 2–3 run **through Claude Code** on the
+  machine in question, not only by hand.
+- **A Windows host without Git Bash** runs hooks through PowerShell
+  (Claude Code's documented fallback), where nothing the check certifies
+  is what runs. The check establishes Git Bash first
+  (`CLAUDE_CODE_GIT_BASH_PATH`, then `bin/bash.exe` next to `git`, then
+  the standard install locations) and answers NOT-RUN naming Git Bash
+  when it cannot — a proxy for Claude Code's own detection, inferred
+  from the documented knob and paths, so a Git Bash it cannot see is a
+  false NOT-RUN (set the knob), never a false pass. Resolved by:
+  installing Git for Windows (Claude Code's stated requirement).
+- **Shell expansions other than the placeholder** — `$(...)`, `$VAR` —
+  would run in the real (shell-form) hook but never in the checker's
+  argv dry run; any `$` left after the placeholder substitution is a
+  named VIOLATION in both modes, so a `--static-only` run on
+  PR-author-controlled settings cannot certify a string that executes
+  code at every Stop. Fixture: `w_dollar_rejected`.
 
 ## Coverage
 
 | Promised | Mechanically covered | Not covered / known bypass | Classification |
 |---|---|---|---|
-| VERIFIED without backing impossible via close | 46 cases: red blocks, stale blocks, planted receipts deleted (start, block-exit, guard route) | forgery on a WIP turn persists | fixed KNOWN-LIMITATION |
+| VERIFIED without backing impossible via close | 78 cases: red blocks, stale blocks, planted receipts deleted (start, block-exit, guard route) | forgery on a WIP turn persists | fixed KNOWN-LIMITATION |
 | Honest close always reachable | fixtures: broken/unreadable/non-git/no-git card — all exit 0 with a conservative receipt | — | covered |
 | Binding catches verify mutation | tracked, untracked-dir (-uall), CARD family, stash, assume-unchanged | non-git cp-restore; inside .git | accepted limitation |
-| Fail-closed | pyyaml absent, git absent, empty stdin, unborn HEAD, unreadable card ⇒ named exit 2 | broken wiring (shell exit≠2) — resolved by: install self-test | accepted limitation |
+| Fail-closed | pyyaml absent, git absent, empty stdin, unborn HEAD, unreadable card ⇒ named exit 2 | broken wiring (shell exit≠2) — resolved by: adapt/check_wiring.py (+ self-test; reads settings.json AND settings.local.json, requires the interpreter's absolute path and a `receipt_gate.py` argument (a bare launcher, an interpreter alone or another script is a named VIOLATION in both modes), quote-aware sh CLAUDE_PROJECT_DIR expansion, rejects shell operators, rejects async / exec-form / non-bash-shell hooks, `disableAllHooks` and any leftover `$` expansion by name, warns on broken sibling hooks; `--static-only` non-execution sentinel-proven; Windows: NOT-RUN unless Git Bash is established); an interpreter that vanishes after install stays undetected until the check is re-run (detection, not prevention); `--static-only` mode does NOT prove the gate answers (script checked by name and existence only); user/managed/CLI settings are not inspected; the Git Bash probe is a proxy for Claude Code's detection (false NOT-RUN possible, false pass not) | accepted limitation |
