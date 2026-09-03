@@ -1,0 +1,15 @@
+{
+  "_comment": "omama-public's OWN deny-list (CONTRIBUTING rule 7 at repo level). Not the shipped sample -- that is privacy-hook/privacy-deny.json, and it would block this repository's own privacy-hook docs, which spell the sample literals in prose (measured, #22). Two layers. deny_filenames: the four sample names, unchanged. deny_regexes: the one leak class this repository nearly committed -- a home-directory path inside a committed .claude/settings.json, because the certified hook form needs an absolute interpreter and on Windows the default one lives under the user's home. A name must start with a letter, digit, _ or -, so the placeholders this tree already carries (C:/Users/.../, C:/Users/<user>/) are not usernames and do not match. /home/<name>/ is deliberately NOT a rule: a tracked fixture artifact records /home/dev/.claude, and rule 7 forbids self-cleaning on the detection side -- named as a residual in CONTRIBUTING. No tokens_file: deliberate absence, silent by design (#11).",
+
+  "deny_regexes": [
+    { "id": "home-path-windows", "pattern": "[A-Za-z]:[\\\\/]+Users[\\\\/]+(?![.<])[A-Za-z0-9_-][A-Za-z0-9._-]*[\\\\/]" },
+    { "id": "home-path-macos",   "pattern": "/Users/(?![.<])[A-Za-z0-9_-][A-Za-z0-9._-]*/" }
+  ],
+
+  "deny_filenames": [
+    "^credentials\\.json$",
+    "^\\.env$",
+    "^id_rsa$",
+    "^id_ed25519$"
+  ]
+}
