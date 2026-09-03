@@ -23,9 +23,22 @@ are rejected; both inherited from the legacy schema's 5th external review):
   done_when   non-empty list of non-empty strings: observable conditions.
   verify      ONE shell command, non-empty, NOT VACUOUS. Deny-list (at
               minimum): empty/whitespace, `true`, `:`, `echo ...` -- a
-              command that cannot fail proves nothing. The validator checks
-              the FIELD, not the truth of what the command tests; a
-              technically-real but irrelevant command is a human review item.
+              command that cannot fail proves nothing. The deny-list is
+              applied to the FIRST WORD OF EVERY SEGMENT of the command
+              line -- after `||`, `;`, `&&`, `|`, `|&` and a newline, and
+              inside quotes (`|| 'tr'"ue"`), behind a group, a redirection,
+              an assignment or a `then`/`else`/`do`/`time` -- because
+              `pytest -q || true` proves exactly as little as `true`. A
+              BACKGROUNDED command (a bare `&` at a command boundary) is
+              rejected too: its exit status is discarded. The rule reads
+              `verify` as a POSIX/bash command line; the receipt gate runs
+              it with `Popen(shell=True)` -- /bin/sh on POSIX, cmd.exe on
+              Windows -- so cmd.exe no-ops are outside its reach. Both the
+              remaining bypasses and the real commands this
+              over-approximation rejects (each with a rewrite) are named in
+              work-order/README.md. The validator checks the FIELD, not the
+              truth of what the command tests; a technically-real but
+              irrelevant command is a human review item.
   repro       required IFF task_type == bugfix (you don't fix what you have
               not reproduced); optional otherwise. When present: the
               ATTACHED reproduction itself as a non-empty string or list of

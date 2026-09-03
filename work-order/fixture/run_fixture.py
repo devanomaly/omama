@@ -1,10 +1,20 @@
 #!/usr/bin/env python3
 """Fixture runner for validate_work_order.py (slim card schema).
 
-Runs the validator against one clean case and twelve planted-violation
-cases, asserts the validator's exit code matches expectation for each, and
-prints the violation the validator named for each rejected case. The
-legacy-schema fixtures live in archive/ (CARD-01, 2026-08-19).
+Runs the validator against eleven clean cases and thirty-five
+planted-violation cases, asserts the validator's exit code matches
+expectation for each, and prints the violation the validator named for each
+rejected case.
+
+Twenty-three of the planted cases are the segment rule (issue #18): the
+deny-list applies to the first word of EVERY segment -- after `||`, `;`,
+`&&`, `|`, `|&`, a newline and inside quotes -- and a backgrounded command
+(a bare `&` at a command boundary) is rejected. Ten of the clean cases pin
+what that rule must NOT reject. The rule reads `verify` as a POSIX/bash
+command line; the receipt gate runs it with `Popen(shell=True)` (/bin/sh on
+POSIX, cmd.exe on Windows).
+
+The legacy-schema fixtures live in archive/ (CARD-01, 2026-08-19).
 
 Exit code 0  -> all cases behaved as expected (validator is correct),
                 each red for EVERY named reason (regression locks).
