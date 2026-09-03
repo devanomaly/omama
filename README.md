@@ -7,8 +7,9 @@
 *In Yanomami cosmology, Omama is the demiurge who gave the world its shape and its rules — a
 fitting name for a toolkit whose job is to give shape and rules to agent behavior.*
 
-**Fastest path: [QUICKSTART.md](QUICKSTART.md)** — clone to first receipt, every
-command pre-executed, the install landmines called out where they bite.
+**Fastest path: [QUICKSTART.md](QUICKSTART.md)** — clone to first receipt and on to
+the one-line dispatch, every command pre-executed, the install landmines called out
+where they bite.
 
 **A rule without enforcement is a wish.**
 
@@ -85,6 +86,7 @@ every rule back to a piece via a `[NN]` tag. Here's what each number maps to in 
 | 07 | code conventions, optional — not included in this toolkit |
 | 08 | [starter-claude-md](starter-claude-md/README.md) |
 | 09 | [output-discipline](output-discipline/README.md) |
+| 10 | [receipt-gate](receipt-gate/README.md) |
 
 ## Prerequisites
 

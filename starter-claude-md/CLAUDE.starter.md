@@ -59,26 +59,41 @@ elsewhere.
 ## Bugfix requires a work order
 
 <ADJUST: this section assumes this toolkit's work-order piece has been
-adopted in this repo (schema `work-order.template.yaml` + validator
-`validate_work_order.py` copied to some path in this repo). If piece 02 was
-not adopted here, remove this entire section instead of letting the file
-claim a work-order contract that doesn't exist in this repo — and adjust
-`<path to the validator>` below to wherever this repo actually keeps
-`validate_work_order.py`.>
+adopted in this repo (the slim card schema `work-order.template.yaml` +
+validator `validate_work_order.py` copied to some path in this repo). If
+piece 02 was not adopted here, remove this entire section instead of
+letting the file claim a card contract that doesn't exist in this repo —
+and adjust `<path to the validator>` below to wherever this repo actually
+keeps `validate_work_order.py`.>
 
-- Before implementing a production bugfix, request (or fill in yourself) the
-  task's `work-order.yaml`, using piece 02's `work-order.template.yaml`
-  schema — don't start editing code from a loose "fix bug X" in prose. [02]
-- A bugfix without an attached reproduction doesn't run: run
-  `python3 <ADJUST: path to the validator>/validate_work_order.py <file>.yaml`
-  before editing any code; if `reproduction.required` is `true` and there is
-  no reproduction evidence (failing test, recorded command, incident
-  artifact), the validator rejects it — stop and ask for the reproduction
-  instead of bypassing the check. [02]
-- Don't expand scope mid-execution. If you discover the problem is actually
-  something else, or that the work order is incomplete/wrong, stop and
-  report the contract as defective — don't redefine
-  `allowed.files`/`allowed.commands` on your own. [02]
+The heading says "bugfix" because that is where a missing contract hurts
+most, but the rule is not limited to it: **every** `task_type` — bugfix,
+implementation, refactor, config, do-nothing, ask-first — enters through a
+card. A bugfix is only the one that additionally owes a `repro`.
+
+- Before editing code for a task of any `task_type`, request (or fill in
+  yourself) the task's card as `CARD.yaml`, at the repo root or at the path
+  `OMAMA_CARD` names when this repo sets it (that is the card the gate
+  reads), using piece 02's slim schema (`goal`, `non_goals`, `tier`,
+  `task_type`, `done_when`, `verify`, plus `repro` for a bugfix) — don't
+  start from a loose "fix bug X" in prose. Run
+  `python3 <ADJUST: path to the validator>/validate_work_order.py CARD.yaml`
+  before the first edit; it must exit 0. [02]
+- `tier`, `verify` and (for a bugfix) `repro` are human-owned: you may
+  propose them, a human ratifies them, and you never invent one to make the
+  card validate — no fabricated reproduction, no proof command that cannot
+  fail. A bugfix card with no attached reproduction does not validate, and
+  the answer to that is to stop and ask for the reproduction, never to
+  supply one you did not observe. A field you don't have, you ask for. [02]
+- Don't expand scope mid-execution. `non_goals` is the frozen list of what
+  the diff must not contain. If you discover the problem is actually
+  something else, or that the card is incomplete or wrong, stop and report
+  the contract as defective — you may not redefine it on your own. [02]
+- A card's work lands as **one branch cut from the default branch's tip**,
+  opened as a pull request against it — never cut from another open PR's
+  branch, which silently carries that branch's commits along. The receipt
+  written at close names the `rev` the proof ran against, so the branch you
+  verified on is the branch under review. [02]
 
 ## Hooks installed in this repo
 
@@ -96,3 +111,14 @@ claim a work-order contract that doesn't exist in this repo — and adjust
   action, removing the test's protection is a deliberate human decision, not
   something the agent decides on its own to unblock a green — fix the code
   instead of disabling the test. [04]
+- This repo has a `Stop` hook (`receipt-gate`) that owns the close. When the
+  card's work is done, write `CLOSE` to `CARD.close` **next to the card** (the
+  gate reads it from the card's directory: the repo root by default, or
+  wherever `OMAMA_CARD` points) and stop — the gate re-runs the card's own
+  `verify` against the current tree and writes `CARD.receipt.json`; only the
+  gate emits VERIFIED. Stopping with no `CARD.close` is a work-in-progress
+  turn and is allowed. If the gate blocks
+  the close, report the named block — do not route around it: no deleting
+  `CARD.yaml`, no editing `verify`, no retrying `CLOSE` until something
+  gives. Closing honestly (`FAILED: <reason>`, `UNVERIFIED: <reason>`) is
+  always allowed and always leaves a receipt. [10]

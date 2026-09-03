@@ -169,7 +169,54 @@ quebrada — ver a seção de self-test do
 [adapt/README.md](receipt-gate/adapt/README.md) para o que cada resultado
 parcial significa.
 
-## 5. Você agora tem
+## 5. Despacho
+
+O loop está instalado. Despachar uma tarefa por ele é uma linha:
+
+```
+Implemente o CARD.yaml da raiz.
+```
+
+Três coisas precisam ser verdade antes, e as §§1–4 não produzem nenhuma
+delas: o card real está em disco onde estava o de exemplo da §4
+(`CARD.yaml`, validado, `tier` ratificado por um humano); o branch foi
+cortado da ponta do branch padrão; e o `CLAUDE.md` do repo foi adotado a
+partir do [starter-claude-md](starter-claude-md/ADOPTION.md) (peça 08) e
+passa no checker dela. As §§1–4 instalam o gate, não o starter — e é no
+starter que vivem as regras de close e de branch da tabela abaixo. Sem ele o
+agente para sem `CARD.close`, o gate lê isso corretamente como WIP, e a
+tarefa termina sem recibo.
+
+Essa linha basta **porque as peças carregam o resto**. Toda vez que um
+despacho aqui precisou de uma linha extra, a linha extra acabou nomeando
+algo que uma peça já governa:
+
+| Linha extra que o despacho precisou | Quem já governa isso | Carregada por |
+|---|---|---|
+| "não toque em nada fora deste diretório" | o `non_goals` do card — a lista congelada do que o diff não pode conter | 02 |
+| "escreva `CLOSE` em `CARD.close` quando terminar, e pare" | a regra do Stop hook no arquivo starter, em "Hooks installed in this repo", com tag `[10]` | 08 |
+| "corte o branch da ponta do branch padrão e abra um PR contra ele" | a regra de branch no arquivo starter, em "Bugfix requires a work order", com tag `[02]` | 08 |
+
+**Um prompt de despacho que precisa de uma segunda linha está nomeando uma
+peça ausente ou não adotada.** Leia a linha extra como achado, não como
+prosa a manter: ou o `non_goals` do card está frouxo demais, ou o
+`CLAUDE.md` deste repo está sem a regra (ver
+[starter-claude-md](starter-claude-md/README.md), cujo checker rejeita
+regra sem tag ou com tag fora do conjunto; se a tag aponta para a peça
+*certa* continua sendo revisão humana). Conserte o artefato, não o prompt.
+
+**O fechamento, do lado do agente.** Quando o trabalho do card termina, o
+agente escreve `CLOSE` em `CARD.close` ao lado do card — o gate o lê do
+diretório do card, aqui a raiz do repo — e para; esse é todo o protocolo que
+lhe cabe. O gate faz o resto: re-roda o `verify` do próprio card contra a
+árvore atual, escreve `CARD.receipt.json`, e bloqueia um close vermelho
+(exit 2, nomeado) em vez de deixá-lo alegar VERIFIED. Parar sem `CARD.close`
+é um turno WIP e é permitido. Todo valor que `CARD.close` pode carregar —
+inclusive os closes honestos `FAILED:`/`UNVERIFIED:` — está na tabela em
+[receipt-gate/README.md](receipt-gate/README.md#close-model-the-gate-locks-the-claim-not-the-session);
+não é repetido aqui, para haver uma cópia só a manter verdadeira.
+
+## 6. Você agora tem
 
 - Cards que congelam goal/non-goals/verify antes do dispatch, validados por
   `tools/validate_work_order.py`.

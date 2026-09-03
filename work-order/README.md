@@ -15,7 +15,12 @@ attached reproduction does not pass** (exit 1), **a vacuous `verify` does not pa
 whose proof command is `true`/`echo` closes nothing), and tier S3 carries the routing
 invariant — plan approval + review pass before close. The validator is preflight: it
 proves the card before dispatch; whoever re-runs `verify` at close and emits VERIFIED is
-the receipt gate, not this validator.
+the receipt gate, not this validator. One card, one branch, one PR: a card's work lands as
+a single branch cut from the default branch's tip and opened as a pull request against it,
+so the `rev` a receipt names is the rev under review — the starter file's branch bullet
+(piece 08) traces to this rule; the CI-side ancestry check,
+[`check_pr_base.py`](../check_pr_base.py), is not a numbered piece (see
+[CONTRIBUTING](../CONTRIBUTING.md)).
 
 ## What it is
 

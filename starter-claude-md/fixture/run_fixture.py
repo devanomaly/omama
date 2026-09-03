@@ -27,19 +27,23 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 CHECKER = HERE.parent / "check_starter.py"
 
-# (path, expected exit, label, extra_args, required output substring or None).
-# The substring is the REGRESSION LOCK: without it, a case with several
+# (path, expected exit, label, extra_args, required output substrings).
+# The substrings are the REGRESSION LOCKS: without them, a case with several
 # violations stays exit-1 even when the one check it exists to protect
 # regresses and a different check fires instead (4th external review,
 # 2026-08-18) -- a red is worth its reason, not merely its nonzero exit.
+# EVERY reason a case promises gets its own lock: one generic substring let
+# three of the four stale-schema literals, one of the two internal tags and
+# the pointer-only finding count regress with the runner still green
+# (PR #36 review, mutation probes).
 CASES = [
-    ("clean/CLAUDE.md", 0, "clean case: adopted starter file", [], None),
+    ("clean/CLAUDE.md", 0, "clean case: adopted starter file", [], []),
     (
         "violating/CLAUDE.md",
         1,
         "planted violation: untagged rule + doctrine vocabulary",
         [],
-        "[untagged-rule]",
+        ["[untagged-rule]"],
     ),
     (
         "../CLAUDE.starter.md",
@@ -47,7 +51,7 @@ CASES = [
         "raw shipped template (not yet adopted by any repo): still carries "
         "the header comment and <ADJUST: ...> placeholders on purpose",
         [],
-        "[leftover-placeholder]",
+        ["[leftover-placeholder]"],
     ),
     # Regression cases for the 2026-08-18 3rd/4th-review bypasses:
     (
@@ -56,7 +60,7 @@ CASES = [
         "planted violation: governed heading with trailing ':' must still "
         "be governed (punctuation opt-out bypass)",
         [],
-        "[untagged-rule]",
+        ["[untagged-rule]"],
     ),
     (
         "violating_empty/CLAUDE.md",
@@ -64,7 +68,7 @@ CASES = [
         "planted violation: no governed section at all (near-empty file "
         "must not pass silently)",
         [],
-        "[missing-governed-section]",
+        ["[missing-governed-section]"],
     ),
     (
         "violating_empty_governed/CLAUDE.md",
@@ -72,7 +76,7 @@ CASES = [
         "planted violation: governed heading present but zero rule bullets "
         "(prose is not governed)",
         [],
-        "[empty-governed-section]",
+        ["[empty-governed-section]"],
     ),
     (
         "violating_persection/CLAUDE.md",
@@ -81,7 +85,7 @@ CASES = [
         "governance for a sibling governed section with zero rule bullets "
         "(per-section accounting, 5th external review)",
         [],
-        "[empty-governed-section]",
+        ["[empty-governed-section]"],
     ),
     (
         "violating_renamed/CLAUDE.md",
@@ -90,7 +94,7 @@ CASES = [
         "missing governed section, never silently ungovern its rules "
         "(analysis audit, 2026-08-18)",
         [],
-        "[missing-governed-section]",
+        ["[missing-governed-section]"],
     ),
     (
         "violating_numbered/CLAUDE.md",
@@ -98,7 +102,7 @@ CASES = [
         "planted violation: numbered/'*' rules inside a governed section "
         "must be visible to the tag check (analysis audit, 2026-08-18)",
         [],
-        "[untagged-rule]",
+        ["[untagged-rule]"],
     ),
     (
         "violating_vocab_mask/CLAUDE.md",
@@ -108,7 +112,7 @@ CASES = [
         "also locks the EN doctrine lexicon ('doctrine'/'pillar') catching "
         "a planted English doctrine sentence, not just the PT terms",
         ["--allow-vocab=P2"],
-        "matched 'doctrine'",
+        ["matched 'doctrine'"],
     ),
     (
         "clean/CLAUDE.md",
@@ -116,12 +120,58 @@ CASES = [
         "usage refusal: --allow-vocab=pilar is never exemptable and must "
         "be refused loudly, not honored",
         ["--allow-vocab=pilar"],
-        "cannot exempt",
+        ["cannot exempt"],
+    ),
+    (
+        "violating_stale_schema/CLAUDE.md",
+        1,
+        "planted violation: stale piece-02 field names (this file is a "
+        "BYTE COPY of the clean case as it stood before this change -- it "
+        "was green then and is red now, and only for the new reason)",
+        [],
+        [
+            "[stale-schema]",
+            "'allowed.files'",
+            "'allowed.commands'",
+            "'reproduction.required'",
+            "'work-order.yaml'",
+        ],
+    ),
+    (
+        "violating_internal_tag/CLAUDE.md",
+        1,
+        "planted violation: [05] and [06] name internal pieces this "
+        "toolkit does not ship and stay OUT of the closed set, even now "
+        "that [10] is in it",
+        [],
+        [
+            "[untagged-rule] tag [05] is not in the closed set",
+            "[untagged-rule] tag [06] is not in the closed set",
+        ],
+    ),
+    (
+        "pointer_only/CLAUDE.md",
+        1,
+        "PIN, not a bug: a CLAUDE.md whose whole body points at another "
+        "apex file (AGENTS.md) answers FAIL, exit 1, exactly three "
+        "[missing-governed-section] findings, one per governed section -- "
+        "what ADOPTION.md's 'apex file is not CLAUDE.md' section describes; "
+        "measured, not asserted (count and section names locked)",
+        [],
+        [
+            "FAIL: 3 violation(s)",
+            "[missing-governed-section] governed section 'Bugfix requires a "
+            "work order' is absent",
+            "[missing-governed-section] governed section 'Code conventions' "
+            "is absent",
+            "[missing-governed-section] governed section 'Hooks installed in "
+            "this repo' is absent",
+        ],
     ),
 ]
 
 
-def run_case(rel_path, expected_exit, label, extra_args=(), want_text=None):
+def run_case(rel_path, expected_exit, label, extra_args=(), want_texts=()):
     path = HERE / rel_path
     result = subprocess.run(
         [sys.executable, str(CHECKER), str(path), *extra_args],
@@ -129,9 +179,12 @@ def run_case(rel_path, expected_exit, label, extra_args=(), want_text=None):
         text=True,
     )
     ok = result.returncode == expected_exit
-    if ok and want_text and want_text not in (result.stdout + result.stderr):
-        ok = False
-        label += f" [red for the WRONG reason: missing {want_text!r}]"
+    if ok:
+        output = result.stdout + result.stderr
+        missing = [t for t in want_texts if t not in output]
+        if missing:
+            ok = False
+            label += f" [red for the WRONG reason(s): missing {missing!r}]"
     status = "PASS" if ok else "FAIL"
     print(f"[{status}] {label} (exit={result.returncode}, expected={expected_exit})")
     if result.stdout.strip():
@@ -162,13 +215,40 @@ def check_clean_pairs_gate_with_antifabrication():
     return True
 
 
+def check_template_carries_no_stale_schema():
+    """Content invariant of the shipped TEMPLATE (PR #36 review): the
+    template case above is expected red for leftover placeholders, so an
+    added [stale-schema] finding on it changes nothing the exit code or the
+    placeholder lock reads. The card's done_when says CLAUDE.starter.md
+    names none of the four stale literals; this asserts it through the
+    checker itself, not by grepping the file."""
+    result = subprocess.run(
+        [sys.executable, str(CHECKER), str(HERE.parent / "CLAUDE.starter.md")],
+        capture_output=True,
+        text=True,
+    )
+    stale = [ln for ln in (result.stdout + result.stderr).splitlines()
+             if "[stale-schema]" in ln]
+    if stale:
+        print("[FAIL] CLAUDE.starter.md names a superseded piece-02 field -- "
+              "a red the template case's placeholder lock cannot see")
+        for line in stale:
+            print(f"    {line.strip()}")
+        return False
+    print("[PASS] CLAUDE.starter.md names no superseded piece-02 field "
+          "(the template is red for placeholders only)")
+    return True
+
+
 def main():
     all_ok = True
-    for rel_path, expected_exit, label, extra_args, want_text in CASES:
-        if not run_case(rel_path, expected_exit, label, extra_args, want_text):
+    for rel_path, expected_exit, label, extra_args, want_texts in CASES:
+        if not run_case(rel_path, expected_exit, label, extra_args, want_texts):
             all_ok = False
         print()
     if not check_clean_pairs_gate_with_antifabrication():
+        all_ok = False
+    if not check_template_carries_no_stale_schema():
         all_ok = False
     print()
     if all_ok:

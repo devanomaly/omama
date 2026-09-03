@@ -3,19 +3,19 @@
 check_starter.py
 
 Deterministic checker for a CLAUDE.md-style starter file (see
-CLAUDE.starter.md in this piece). Checks three things:
+CLAUDE.starter.md in this piece). Checks four things:
 
   1. untagged-rule: every top-level "- " bullet block (a bullet plus any
      indented continuation/sub-bullet lines that follow it, joined) inside
      a tagged section ("Code conventions", "Bugfix requires a work order",
      "Hooks installed in this repo") must end with a [NN] tag naming the
-     toolkit piece it traces back to, NN in {01,02,03,04,07,08,09} -- the
-     pieces this toolkit actually ships (05 and 06 are internal pieces not
-     included here, so they are not valid tags). A
-     bullet without a tag from that closed set is a finding -- it means
-     the rule was invented instead of traced to something the toolkit
-     actually ships. The tag may be followed by a trailing "." (end of
-     sentence) and still count.
+     toolkit piece it traces back to, NN in {01,02,03,04,07,08,09,10} --
+     the pieces this toolkit actually ships (05 and 06 are internal pieces
+     not included here, so they are not valid tags; 10 is receipt-gate,
+     which owns the close). A bullet without a tag from that closed set is
+     a finding -- it means the rule was invented instead of traced to
+     something the toolkit actually ships. The tag may be followed by a
+     trailing "." (end of sentence) and still count.
 
   2. forbidden-vocab: the file must not contain doctrine vocabulary, in
      Portuguese or English. This starter is operational instructions for an
@@ -37,6 +37,18 @@ CLAUDE.starter.md in this piece). Checks three things:
      looks like, versus CLAUDE.starter.md itself, which -- being the
      unadopted template -- is EXPECTED to fail this check; see
      fixture/run_fixture.py).
+
+  4. stale-schema: the file must not name a field from the SUPERSEDED
+     piece-02 schema. The card shipped today (CARD-01) has goal,
+     non_goals, tier, task_type, done_when, verify and repro -- it has no
+     `allowed.files`, no `allowed.commands`, no `reproduction.required`,
+     and it is not called `work-order.yaml`. A starter file still naming
+     one of those instructs the agent to obey a contract the validator
+     will never enforce, which is the drift class this piece exists to
+     surface. The list is CLOSED and LEXICAL (four literals, matched
+     case-insensitively wherever they appear in the file, not only inside
+     the governed sections): this check does not read a rule and decide
+     whether it matches its piece -- that stays human review.
 
 Usage:
     python3 check_starter.py <path-to-claude-md-file> [--allow-vocab TOK1,TOK2,...]
@@ -85,7 +97,7 @@ def _norm_heading(text: str) -> str:
 
 TAGGED_SECTIONS_NORM = {_norm_heading(s) for s in TAGGED_SECTIONS}
 
-VALID_TAGS = {"01", "02", "03", "04", "07", "08", "09"}
+VALID_TAGS = {"01", "02", "03", "04", "07", "08", "09", "10"}
 
 # Top-level bullets only (column 0). An indented "  - sub-item" is a
 # continuation of the enclosing bullet's block, not a new rule that needs
@@ -101,6 +113,22 @@ FORBIDDEN_VOCAB_RE = re.compile(
     r"pilar(es)?|doutrina|manifesto|swe.?pillars|pillar(s)?|doctrine"
     r"|\bP[1-9]\b|\bCC[0-9]+\b",
     re.IGNORECASE,
+)
+
+# Field names from the SUPERSEDED piece-02 schema. CARD-01 (2026-08-19)
+# replaced them: the card is `CARD.yaml`, its scope fence is `non_goals`,
+# and a bugfix's reproduction is `repro` (the evidence itself, not a
+# `reproduction.required` boolean). A starter file that still names one of
+# these tells the agent to obey a contract no validator enforces. Closed
+# list, lexical on purpose -- see the docstring.
+STALE_SCHEMA_NAMES = (
+    "allowed.files",
+    "allowed.commands",
+    "reproduction.required",
+    "work-order.yaml",
+)
+STALE_SCHEMA_RE = re.compile(
+    "|".join(re.escape(n) for n in STALE_SCHEMA_NAMES), re.IGNORECASE
 )
 
 LEFTOVER_ADJUST_RE = re.compile(r"<ADJUST:")
@@ -260,6 +288,27 @@ def check_leftover_placeholders(lines: list[str]):
     return violations
 
 
+def check_stale_schema(lines: list[str]):
+    """One finding per line, naming EVERY distinct stale literal on it. A
+    second literal on the same line is not a second finding (the line is
+    quoted anyway), but it IS named: a first-match-only report left
+    `allowed.commands` unpinnable wherever it shares a line with
+    `allowed.files`, so the runner could not lock each literal on its own
+    (PR #36 review)."""
+    violations = []
+    for i, line in enumerate(lines, start=1):
+        names = list(dict.fromkeys(
+            m.group(0) for m in STALE_SCHEMA_RE.finditer(line)))
+        if names:
+            violations.append(
+                f"line {i}: [stale-schema] matched {', '.join(map(repr, names))} "
+                f"-- a field name from the superseded piece-02 schema; the card "
+                f"shipped today is CARD.yaml with goal/non_goals/tier/"
+                f"task_type/done_when/verify/repro: {line.strip()!r}"
+            )
+    return violations
+
+
 # Tokens the docs promise can NEVER be exempted. Enforced here, not just
 # documented (doc said it; code didn't -- external review finding, 2026-08-18).
 NEVER_EXEMPT_RE = re.compile(
@@ -326,6 +375,7 @@ def main():
         check_untagged_rules(lines)
         + check_forbidden_vocab(lines, allowlist)
         + check_leftover_placeholders(lines)
+        + check_stale_schema(lines)
     )
     def _line_no(v):
         # File-level findings (no "line N:" prefix) sort first.
