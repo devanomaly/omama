@@ -216,6 +216,11 @@ inclusive os closes honestos `FAILED:`/`UNVERIFIED:` — está na tabela em
 [receipt-gate/README.md](receipt-gate/README.md#close-model-the-gate-locks-the-claim-not-the-session);
 não é repetido aqui, para haver uma cópia só a manter verdadeira.
 
+Quando a sessão que despacha **não** é a sessão dentro do worktree, o
+fechamento é uma execução `claude -p` em print mode com o worktree como cwd —
+ver [Closing from an orchestrator](receipt-gate/README.md#closing-from-an-orchestrator-worktree-dispatch),
+cujo `adapt/selftest_orchestrator_close.py` prova isso na sua máquina.
+
 ## 6. Você agora tem
 
 - Cards que congelam goal/non-goals/verify antes do dispatch, validados por
