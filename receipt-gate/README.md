@@ -110,9 +110,14 @@ subscription-login machine it answers `Not logged in` before any hook point
 whole Claude Code session; and Claude Code loads project settings from the
 session's cwd, so the worktree must carry its own `.claude/settings.json`
 (tracked in this repo; a per-machine copy where `.claude/` is gitignored); the
-gate then resolves the card from that same cwd.
-`adapt/selftest_orchestrator_close.py` proves both halves; run it once per
-machine.
+gate then resolves the card from that same cwd — unless `OMAMA_CARD` is set,
+which takes precedence over cwd, so a stray one exported by the dispatching
+session redirects the close to **that** card's repository instead of the
+worktree's, consuming its `CARD.close` and overwriting its receipt. If the
+dispatching session exports `OMAMA_CARD`, clear it for the child before
+closing; `adapt/selftest_orchestrator_close.py` scrubs `OMAMA_*` from the
+sessions it spawns for exactly that reason, and proves both halves — run it
+once per machine.
 
 ## What it does NOT catch (honest, named boundaries)
 

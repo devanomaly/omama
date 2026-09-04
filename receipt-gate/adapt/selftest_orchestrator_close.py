@@ -46,6 +46,13 @@ Exit contract:
      `claude --version` unspawnable, no git, or this checkout's gate /
      validator missing). A hole is reported as a hole, never as a pass.
 
+OMAMA_* is scrubbed from every session this script spawns: the gate resolves
+OMAMA_CARD BEFORE cwd, and an adopting repo exports one from its own settings,
+so an inherited value would point the scratch session's Stop hook at ANOTHER
+repository's card and consume its CARD.close and receipt. A decoy repo holding
+a declared close and a sentinel receipt is built, OMAMA_CARD is pointed at it
+for the duration, and both halves assert it came through byte-identical.
+
 Costs two Claude Code sessions and depends on a working login, which is why
 this is a developer-machine self-test and NOT wired into verify_all.py or CI.
 Each session is bounded by a fixed 180 s timeout; a timeout is a named FAIL.
@@ -61,6 +68,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -88,6 +96,21 @@ VERIFY_BODY = ("import sys; sys.exit(0 if "
 # start of EVERY close attempt, so these bytes surviving is positive evidence
 # that no hook ran at all -- not merely that no close succeeded.
 SENTINEL = {"sentinel": "orchestrator-selftest"}
+
+# The decoy repo's declared close and receipt. OMAMA_CARD points at the decoy's
+# card while the sessions run, so if a stray OMAMA_CARD ever reaches a spawned
+# session these bytes are what the gate destroys.
+DECOY_CLOSE_BYTES = b"CLOSE\n"
+DECOY_RECEIPT_BYTES = json.dumps(
+    {"sentinel": "orchestrator-selftest-decoy"}).encode("utf-8")
+
+# The timeout lock's subject: a process that leaves a grandchild holding its
+# output handles and then hangs itself. Under the old collection strategy the
+# grandchild -- not the deadline -- decided when the failure was reported.
+LOCK_LAUNCHER = (
+    "import subprocess, sys, time; "
+    "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
+    "time.sleep(30)")
 
 _PLAIN = re.compile(r"^[A-Za-z0-9._:/\\-]+$")
 
@@ -120,6 +143,14 @@ def read_bytes(p):
         return None
 
 
+def read_text(path):
+    try:
+        with open(path, "rb") as fh:
+            return fh.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
 def rmtree(root):
     """Remove the scratch repo, or SAY it survived.
 
@@ -141,6 +172,100 @@ def rmtree(root):
     if root.exists():
         print("WARNING: the scratch repo survived at %s -- delete it by hand"
               % root)
+
+
+class Result:
+    """What run_bounded returns: the shape the rest of this script reads."""
+
+    def __init__(self, returncode, stdout, stderr):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def kill_tree(proc):
+    if os.name == "nt":
+        taskkill = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
+                                "System32", "taskkill.exe")
+        subprocess.run([taskkill, "/F", "/T", "/PID", str(proc.pid)],
+                       capture_output=True)
+    else:
+        proc.kill()
+
+
+def scrubbed_env():
+    """The child must not inherit OMAMA_*.
+
+    The gate resolves OMAMA_CARD BEFORE cwd, and an adopting repo exports one
+    from its own settings -- so an inherited OMAMA_CARD would point a scratch
+    session's Stop hook at ANOTHER repository's card and consume its
+    CARD.close and receipt. Scrubbing rather than binding leaves the gate
+    resolving the card from cwd and the validator from its own relative
+    default: the path the docs describe and this self-test certifies.
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("OMAMA_")}
+
+
+def run_bounded(argv, cwd, timeout, env=None):
+    """Run argv under a deadline a surviving GRANDCHILD cannot extend.
+
+    subprocess.run(capture_output=True, timeout=T) kills only the direct
+    child on TimeoutExpired and then drains the pipes with communicate() and
+    NO timeout -- a grandchild holding the write ends delays the named
+    failure indefinitely. Collecting into files instead makes wait() the only
+    clock. The files live OUTSIDE the scratch repo: an untracked file inside
+    it would perturb the gate's own before/after tree comparison.
+
+    Returns (timed_out, Result).
+    """
+    out_fd, out_path = tempfile.mkstemp(prefix="omama-selftest-out-")
+    err_fd, err_path = tempfile.mkstemp(prefix="omama-selftest-err-")
+    timed_out = False
+    try:
+        with os.fdopen(out_fd, "wb") as out_fh, \
+                os.fdopen(err_fd, "wb") as err_fh:
+            proc = subprocess.Popen(argv, cwd=str(cwd), stdout=out_fh,
+                                    stderr=err_fh, env=env)
+            try:
+                rc = proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                kill_tree(proc)
+                try:
+                    rc = proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    rc = None
+        result = Result(rc, read_text(out_path), read_text(err_path))
+    finally:
+        for p in (out_path, err_path):
+            try:
+                os.unlink(p)
+            except OSError as e:
+                # A grandchild can still hold the handle (WinError 32). Say so
+                # and move on -- a leaked temp file must not mask the finding.
+                print("WARNING: could not delete %s (%s) -- a surviving "
+                      "grandchild may still hold it open"
+                      % (p, type(e).__name__))
+    return timed_out, result
+
+
+def timeout_lock():
+    """Prove the session deadline is real BEFORE spending a session on it."""
+    t0 = time.time()
+    timed_out, _ = run_bounded([sys.executable, "-c", LOCK_LAUNCHER],
+                               Path.cwd(), 2)
+    elapsed = time.time() - t0
+    if not timed_out:
+        raise Fail("TIMEOUT LOCK: the 2 s deadline never fired (returned "
+                   "after %.1f s) -- the %d s session bound is not a bound"
+                   % (elapsed, TIMEOUT))
+    if elapsed > 15:
+        raise Fail("TIMEOUT LOCK: the 2 s deadline took %.1f s to report. A "
+                   "grandchild holding the output handles can extend it, so a "
+                   "hung session would not fail at %d s either"
+                   % (elapsed, TIMEOUT))
+    print("TIMEOUT LOCK OK: a 2 s deadline reported in %.1f s against a "
+          "process that left a 30 s grandchild holding its output" % elapsed)
 
 
 def git(root, *args):
@@ -198,9 +323,8 @@ def preconditions():
     return claude
 
 
-def build_scratch(root):
-    """A throwaway repo carrying the whole loop: one committed file, a valid
-    card proving something about it, and this checkout's gate as Stop hook."""
+def build_repo(root):
+    """One committed file and a valid card proving something about it."""
     interpreter = Path(sys.executable).as_posix()
 
     git(root, "init", "-q")
@@ -235,14 +359,58 @@ def build_scratch(root):
                    "%s" % (r.returncode,
                            ((r.stdout or "") + (r.stderr or "")).strip()[:600]))
 
+
+def build_scratch(root):
+    """The repo the sessions actually run in: build_repo plus this checkout's
+    gate registered as its Stop hook."""
+    build_repo(root)
     # The certified form: absolute interpreter, absolute gate, forward slashes
     # (the hook shell on Windows is Git Bash), one shell-form command string.
     settings = {"hooks": {"Stop": [{"hooks": [{
         "type": "command",
-        "command": '"%s" "%s"' % (interpreter, GATE.as_posix())}]}]}}
+        "command": '"%s" "%s"' % (Path(sys.executable).as_posix(),
+                                  GATE.as_posix())}]}]}}
     (root / ".claude").mkdir()
     (root / ".claude" / "settings.json").write_text(
         json.dumps(settings, indent=1), encoding="utf-8")
+
+
+def build_decoy(root):
+    """A second repo of the same shape, standing in for the OTHER repository
+    an adopter's machine has a card open in. It carries a DECLARED close and a
+    receipt, so if a stray OMAMA_CARD reaches a spawned session the gate
+    closes THIS repo -- consuming its CARD.close and destroying its receipt.
+    Nothing here may change while the self-test runs."""
+    build_repo(root)
+    (root / "CARD.close").write_bytes(DECOY_CLOSE_BYTES)
+    (root / "CARD.receipt.json").write_bytes(DECOY_RECEIPT_BYTES)
+
+
+def state_of(now, before):
+    if now is None:
+        return "is gone (consumed)"
+    if now != before:
+        return "was rewritten"
+    return "is intact"
+
+
+def check_decoy(decoy, argv, r):
+    """Runs before every other assertion of a half: a session that closed an
+    unrelated repository is the finding, and it also explains whatever the
+    scratch repo did or did not get."""
+    close_now = read_bytes(decoy / "CARD.close")
+    receipt_now = read_bytes(decoy / "CARD.receipt.json")
+    if (close_now == DECOY_CLOSE_BYTES
+            and receipt_now == DECOY_RECEIPT_BYTES):
+        return
+    raise Fail("a stray OMAMA_CARD reached the session: the decoy repo's "
+               "close/receipt were touched -- its CARD.close %s, its "
+               "CARD.receipt.json %s. The gate resolves OMAMA_CARD BEFORE "
+               "cwd, so the spawned session closed an unrelated repository "
+               "and destroyed its durable evidence.  [%s]\n%s"
+               % (state_of(close_now, DECOY_CLOSE_BYTES),
+                  state_of(receipt_now, DECOY_RECEIPT_BYTES),
+                  shown(argv), tail(r)))
 
 
 def session(claude, root, disable_hooks):
@@ -250,17 +418,14 @@ def session(claude, root, disable_hooks):
             "--max-turns", "3"]
     if disable_hooks:
         argv += ["--settings", DISABLE_HOOKS]
-    try:
-        r = subprocess.run(argv, cwd=str(root), timeout=TIMEOUT,
-                           capture_output=True, text=True,
-                           encoding="utf-8", errors="replace")
-    except subprocess.TimeoutExpired:
+    timed_out, r = run_bounded(argv, root, TIMEOUT, env=scrubbed_env())
+    if timed_out:
         raise Fail("the claude session did not finish within %d s  [%s]"
                    % (TIMEOUT, shown(argv)))
     return argv, r
 
 
-def red(claude, root):
+def red(claude, root, decoy):
     close = root / "CARD.close"
     receipt = root / "CARD.receipt.json"
 
@@ -273,6 +438,7 @@ def red(claude, root):
     receipt.write_bytes(planted)
 
     argv, r = session(claude, root, disable_hooks=True)
+    check_decoy(decoy, argv, r)
 
     # The hook-fired check comes FIRST: a dead lever consumes CARD.close, and
     # a missing CARD.close read as "harness" would blame the wrong thing.
@@ -294,7 +460,7 @@ def red(claude, root):
 
     if not close.exists():
         raise Fail("RED: the session did not write CARD.close -- harness, not "
-                   "the hook (no login? no model access? exit %d)  [%s]\n%s"
+                   "the hook (no login? no model access? exit %s)  [%s]\n%s"
                    % (r.returncode, shown(argv), tail(r)))
     body = close.read_text(encoding="utf-8", errors="replace").strip()
     if body != "CLOSE":
@@ -307,15 +473,16 @@ def red(claude, root):
           % shown(argv))
 
 
-def green(claude, root):
+def green(claude, root, decoy):
     close = root / "CARD.close"
     receipt = root / "CARD.receipt.json"
     argv, r = session(claude, root, disable_hooks=False)
+    check_decoy(decoy, argv, r)
 
     if not receipt.exists():
         raise Fail("GREEN: no CARD.receipt.json after the plain session -- "
                    "the Stop hook did not fire, or it blocked the close "
-                   "(CARD.close %s; session exit %d)  [%s]\n%s"
+                   "(CARD.close %s; session exit %s)  [%s]\n%s"
                    % ("survived" if close.exists() else "is gone",
                       r.returncode, shown(argv), tail(r)))
     if close.exists():
@@ -341,13 +508,26 @@ def green(claude, root):
 
 def main():
     claude = preconditions()
+    timeout_lock()
     root = Path(tempfile.mkdtemp(prefix="omama-close-")).resolve()
+    decoy = Path(tempfile.mkdtemp(prefix="omama-close-decoy-")).resolve()
+    prior_card = os.environ.get("OMAMA_CARD")
     try:
         build_scratch(root)
-        red(claude, root)
-        green(claude, root)
+        build_decoy(decoy)
+        # Stand in for an adopting repo's own machine, whose settings export
+        # OMAMA_CARD into every session it starts. The sessions below must
+        # still close the scratch repo and leave the decoy untouched.
+        os.environ["OMAMA_CARD"] = str(decoy / "CARD.yaml")
+        red(claude, root, decoy)
+        green(claude, root, decoy)
     finally:
+        if prior_card is None:
+            os.environ.pop("OMAMA_CARD", None)
+        else:
+            os.environ["OMAMA_CARD"] = prior_card
         rmtree(root)
+        rmtree(decoy)
     return 0
 
 
