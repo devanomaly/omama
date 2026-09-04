@@ -12,12 +12,14 @@ master" promised.
 Two modes, two different questions:
 
   check_pr_base.py <base-ref-name>
-      Does this PR's declared base ref name equal `master`? Cheap, no git
-      needed, but only checks what the PR claims, not what actually happened.
+      Does this PR's declared base ref name equal the required base
+      (`master`, or `$PR_REQUIRED_BASE` when set)? Cheap, no git needed, but
+      only checks what the PR claims, not what actually happened.
 
   check_pr_base.py --ancestry <head-sha> <head-ref-name>
-      Of the commits unique to this PR's head (origin/master..<head-sha>), is
-      any of them also reachable from another unmerged remote branch? If so,
+      Of the commits unique to this PR's head
+      (origin/<required-base>..<head-sha>), is any of them also reachable
+      from another unmerged remote branch? If so,
       this branch was cut from that sibling, not from master's tip, regardless
       of what the base ref claims. This DOES partially recover the cut-point
       fact the base-ref check cannot see -- but only while the sibling stays
@@ -32,13 +34,17 @@ Usage:  python3 check_pr_base.py <base-ref-name>
         (in CI: python3 check_pr_base.py "$GITHUB_BASE_REF"
                 python3 check_pr_base.py --ancestry "<pr-head-sha>" "<pr-head-ref>")
 
+PR_REQUIRED_BASE overrides the required base (default master); set-but-blank
+is exit 2.
+
 Exit 0 -- OK: base is master (mode 1) / no unique commit is reachable from
           another remote branch (mode 2).
 Exit 1 -- VIOLATION: base is some other ref (mode 1) / a unique commit is also
           reachable from a named sibling branch (mode 2). Named either way.
 Exit 2 -- not runnable: missing/empty argument; and for --ancestry also a
-          shallow repository, a missing origin/master, or not-a-git-repo at
-          all -- a CI misconfiguration is a coverage hole, not a silent pass.
+          shallow repository, a missing origin/<required-base>, or
+          not-a-git-repo at all -- a CI misconfiguration is a coverage hole,
+          not a silent pass.
 """
 import os
 import subprocess

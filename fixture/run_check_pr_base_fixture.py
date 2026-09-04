@@ -220,6 +220,33 @@ def build_main_default(root):
     return checkout, head_sha, "feature-clean", None
 
 
+def build_master_sibling_under_main(root):
+    """Remote default branch is 'main' (PR_REQUIRED_BASE=main), and a real
+    'master' branch ALSO exists as an unrelated, unmerged remote branch that
+    the head was actually cut from. Locks the exclusion set, not just the
+    other three origin/<REQUIRED_BASE> git call sites: if that set ever
+    hardcodes 'refs/remotes/origin/master' instead of reading REQUIRED_BASE,
+    this 'master' sibling is silently excluded from the scan and the
+    violation is missed (exit 0 instead of 1). Green (exit 1, 'master'
+    named) only under PR_REQUIRED_BASE=main."""
+    origin, work = _init_bare_and_clone(root, branch="main")
+    _commit(work, "a.txt", "base\n", "main: initial")
+    _git(work, "push", "-q", "origin", "main")
+
+    _git(work, "checkout", "-q", "-b", "master")
+    sib_sha = _commit(work, "a.txt", "master sibling change\n",
+                       "master: unmerged sibling work")
+    _git(work, "push", "-q", "origin", "master")
+
+    _git(work, "checkout", "-q", "-b", "feature-from-master")
+    head_sha = _commit(work, "b.txt", "feature\n",
+                        "feature-from-master: cut from master sibling")
+    _git(work, "push", "-q", "origin", "feature-from-master")
+
+    checkout = _fresh_checkout(root, origin)
+    return checkout, head_sha, "feature-from-master", sib_sha
+
+
 # (builder, expected exit, label, required substrings, shared-sha marker,
 #  [optional env overrides -- default is PR_REQUIRED_BASE unset])
 ANCESTRY_REPO_CASES = [
@@ -234,6 +261,9 @@ ANCESTRY_REPO_CASES = [
     (build_main_default, 0,
      "ancestry clean: remote default branch is 'main', via PR_REQUIRED_BASE",
      ["OK"], None, {"PR_REQUIRED_BASE": "main"}),
+    (build_master_sibling_under_main, 1,
+     "ancestry violation: 'master' sibling not excluded under PR_REQUIRED_BASE=main",
+     ["VIOLATION", "master"], "sib_sha", {"PR_REQUIRED_BASE": "main"}),
 ]
 
 
@@ -297,9 +327,25 @@ def run_ancestry_repo_cases():
     return failures
 
 
+def check_docstring():
+    """PR_REQUIRED_BASE must be discoverable by reading check_pr_base.py's
+    own module docstring, not only by reading the runtime messages it
+    prints -- a reader of the script alone must be able to find the knob."""
+    text = CHECKER.read_text(encoding="utf-8")
+    quote = '"""'
+    start = text.find(quote)
+    end = text.find(quote, start + len(quote)) if start != -1 else -1
+    docstring = text[start:end] if start != -1 and end != -1 else ""
+    label = "module docstring names PR_REQUIRED_BASE"
+    ok = "PR_REQUIRED_BASE" in docstring
+    print(f"{'OK' if ok else 'FAIL'}  {label}")
+    return [] if ok else [label]
+
+
 def main():
     failures = run_static_cases()
     failures += run_ancestry_repo_cases()
+    failures += check_docstring()
     total = len(CASES) + len(ANCESTRY_REPO_CASES)
     print()
     if failures:
