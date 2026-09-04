@@ -210,6 +210,11 @@ the honest `FAILED:`/`UNVERIFIED:` closes — is in the table at
 [receipt-gate/README.md](receipt-gate/README.md#close-model-the-gate-locks-the-claim-not-the-session);
 it is not restated here, so there is only one copy to keep true.
 
+When the dispatching session is **not** the session in the worktree, the
+close is one print-mode `claude -p` run with the worktree as cwd — see
+[Closing from an orchestrator](receipt-gate/README.md#closing-from-an-orchestrator-worktree-dispatch),
+whose `adapt/selftest_orchestrator_close.py` proves it on your machine.
+
 ## 6. You now have
 
 - Cards that freeze goal/non-goals/verify before dispatch, validated by

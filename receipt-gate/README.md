@@ -90,6 +90,35 @@ violation (verdict absent/buried, missing section) still blocks; overrunning
 the line budget alone only produces a warning and does not block an
 otherwise structurally valid S3 close.
 
+## Closing from an orchestrator (worktree dispatch)
+
+When the dispatching session is not the one inside the worktree, the close is
+one non-interactive run with the worktree as cwd:
+
+```
+claude -p "Write the single word CLOSE to the file CARD.close at the repository root, then stop. Do not touch any other file." --allowedTools Write --max-turns 3
+```
+
+That print-mode session fires **that worktree's** Stop hook: the gate re-runs
+the card's `verify`, consumes `CARD.close`, writes the receipt. Adding
+`--settings '{"disableAllHooks":true}'` runs the same session with no hook at
+all — the switch `adapt/check_wiring.py` names as a VIOLATION — and is the red
+half of the proof. `--bare` is **not** that lever: its help line says it skips
+hooks, but it also never reads OAuth or the keychain, so on a
+subscription-login machine it answers `Not logged in` before any hook point
+(Claude Code 2.1.260, measured 2026-09-04). Two residuals: the close spends a
+whole Claude Code session; and Claude Code loads project settings from the
+session's cwd, so the worktree must carry its own `.claude/settings.json`
+(tracked in this repo; a per-machine copy where `.claude/` is gitignored); the
+gate then resolves the card from that same cwd — unless `OMAMA_CARD` is set,
+which takes precedence over cwd, so a stray one exported by the dispatching
+session redirects the close to **that** card's repository instead of the
+worktree's, consuming its `CARD.close` and overwriting its receipt. If the
+dispatching session exports `OMAMA_CARD`, clear it for the child before
+closing; `adapt/selftest_orchestrator_close.py` scrubs `OMAMA_*` from the
+sessions it spawns for exactly that reason, and proves both halves — run it
+once per machine.
+
 ## What it does NOT catch (honest, named boundaries)
 
 - **Receipt forgery outside a close (KNOWN-LIMITATION, fixed in the

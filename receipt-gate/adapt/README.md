@@ -2,7 +2,8 @@
 
 Configuration snippet to copy and adapt (piece-04 pattern), plus
 `check_wiring.py` — the mechanical "gate presence" check (step 1 of the
-self-test below). Nothing here is installed in any real repository. The
+self-test below) — and `selftest_orchestrator_close.py`, the orchestrator
+close-path proof (step 4). Nothing here is installed in any real repository. The
 ordered happy path lives in [QUICKSTART.md](../../QUICKSTART.md); this file
 is the reference (env vars, troubleshooting, rationale).
 
@@ -142,6 +143,16 @@ is the reference (env vars, troubleshooting, rationale).
    self-test after an interpreter upgrade AND after any edit to
    receipt_gate.py (a syntax error exits 1 at parse time, before the guard
    exists — the gate looks installed while actually absent).
+
+   **Step 4 of the self-test — the orchestrator's close path**, only when a dispatching
+   session will close worktrees it is not itself running in: run
+   `python3 selftest_orchestrator_close.py` (no arguments). Steps 1–3 prove
+   the gate answers; this one proves the *session* reaches it, by closing a
+   scratch repo through two real print-mode Claude Code sessions — red with
+   hooks disabled, green plain — so it costs two sessions and a login and
+   stays a developer-machine check, never CI (exit 2 NOT-RUN, named, when
+   `claude` is absent). See
+   [Closing from an orchestrator](../README.md#closing-from-an-orchestrator-worktree-dispatch).
 6. Set up the flow's reproduction requirement: cards live at
    `<repo>/CARD.yaml` (or `OMAMA_CARD` pointing at the active card); the
    close is declared in `CARD.close` (`CLOSE` | `FAILED: <reason>` |
