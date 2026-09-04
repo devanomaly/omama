@@ -107,9 +107,10 @@ half of the proof. `--bare` is **not** that lever: its help line says it skips
 hooks, but it also never reads OAuth or the keychain, so on a
 subscription-login machine it answers `Not logged in` before any hook point
 (Claude Code 2.1.260, measured 2026-09-04). Two residuals: the close spends a
-whole Claude Code session, and the gate resolves the card from the hook
-process's cwd, so the worktree must carry its own `.claude/settings.json` —
-tracked in this repo, a per-machine copy wherever `.claude/` is gitignored.
+whole Claude Code session; and Claude Code loads project settings from the
+session's cwd, so the worktree must carry its own `.claude/settings.json`
+(tracked in this repo; a per-machine copy where `.claude/` is gitignored); the
+gate then resolves the card from that same cwd.
 `adapt/selftest_orchestrator_close.py` proves both halves; run it once per
 machine.
 

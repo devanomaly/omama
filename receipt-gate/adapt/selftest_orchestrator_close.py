@@ -18,9 +18,13 @@ Stop hook. Then it opens two print-mode Claude Code sessions in that repo
 with the same one-line close instruction and reads what the gate did.
 
   RED    hooks disabled via `--settings '{"disableAllHooks":true}'`:
-         the session must run and write CARD.close, and NO receipt may
-         appear. A session that wrote no CARD.close is a broken HARNESS
-         (no login, no model access), named as such -- never a pass.
+         a sentinel CARD.receipt.json is planted first, and must survive
+         BYTE-IDENTICAL -- the gate unlinks any standing receipt at the
+         start of every close attempt, so surviving bytes prove no hook
+         ran, where a merely absent receipt would also be what a hook that
+         fired and BLOCKED leaves behind. The session must also write
+         CARD.close; one that did not is a broken HARNESS (no login, no
+         model access), named as such -- never a pass.
   GREEN  the same command with no override: CARD.close must be CONSUMED
          and CARD.receipt.json must carry verdict VERIFIED, exit 0, and
          the scratch repo's HEAD as `rev`.
@@ -45,11 +49,15 @@ Exit contract:
 Costs two Claude Code sessions and depends on a working login, which is why
 this is a developer-machine self-test and NOT wired into verify_all.py or CI.
 Each session is bounded by a fixed 180 s timeout; a timeout is a named FAIL.
-The scratch repo is removed on every exit path.
+The scratch repo is removed on every exit path -- and if the removal loses
+(Windows keeps git's loose objects read-only), the leftover is NAMED on
+stdout, never left silent.
 """
 import json
+import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -76,6 +84,11 @@ TIMEOUT = 180
 VERIFY_BODY = ("import sys; sys.exit(0 if "
                "open('app.txt').read().strip()=='hello' else 1)")
 
+# Planted before the red session. The gate unlinks a standing receipt at the
+# start of EVERY close attempt, so these bytes surviving is positive evidence
+# that no hook ran at all -- not merely that no close succeeded.
+SENTINEL = {"sentinel": "orchestrator-selftest"}
+
 _PLAIN = re.compile(r"^[A-Za-z0-9._:/\\-]+$")
 
 
@@ -98,6 +111,36 @@ def tail(result, n=5):
     if not lines:
         return "    (the session produced no output)"
     return "\n".join("    | " + ln for ln in lines[-n:])
+
+
+def read_bytes(p):
+    try:
+        return p.read_bytes()
+    except OSError:
+        return None
+
+
+def rmtree(root):
+    """Remove the scratch repo, or SAY it survived.
+
+    ignore_errors=True is not enough on Windows: git writes loose objects
+    read-only, unlink fails with EACCES, and the scratch repo silently
+    accumulates in %TEMP% one per run. Clear the read-only bit and retry.
+    """
+    def retry(func, path, _exc):
+        try:
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
+        except OSError:
+            pass
+
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(str(root), onexc=retry)
+    else:
+        shutil.rmtree(str(root), onerror=retry)
+    if root.exists():
+        print("WARNING: the scratch repo survived at %s -- delete it by hand"
+              % root)
 
 
 def git(root, *args):
@@ -138,6 +181,20 @@ def preconditions():
         raise NotRun("this checkout's validator is missing at %s -- the "
                      "scratch card cannot be validated before use, and the "
                      "gate would block every close on SCHEMA" % VALIDATOR)
+    # This interpreter is the one the scratch settings register as the hook.
+    # Without PyYAML the gate exits GATE-ERROR on every close, and GREEN would
+    # read as "print-mode sessions do not fire hooks" -- the exact opposite of
+    # the fact this self-test exists to certify.
+    r = subprocess.run([sys.executable, "-c", "import yaml"],
+                       capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", timeout=60)
+    if r.returncode != 0:
+        raise NotRun("this interpreter lacks PyYAML (%s -c 'import yaml' "
+                     "exited %d); it is the interpreter the scratch repo would "
+                     "register as its Stop hook, and the gate cannot parse a "
+                     "card without it -- GREEN would fail as if print-mode "
+                     "sessions did not fire hooks at all"
+                     % (sys.executable, r.returncode))
     return claude
 
 
@@ -206,7 +263,34 @@ def session(claude, root, disable_hooks):
 def red(claude, root):
     close = root / "CARD.close"
     receipt = root / "CARD.receipt.json"
+
+    # "No receipt appeared" is an ABSENCE, and a hook that fired and BLOCKED
+    # leaves that same absence: the gate deletes any standing receipt at the
+    # start of every close attempt and does not consume CARD.close on a block.
+    # So the red half asserts a POSITIVE fact instead -- these exact bytes are
+    # still here -- which no close attempt of any outcome can leave true.
+    planted = json.dumps(SENTINEL).encode("utf-8")
+    receipt.write_bytes(planted)
+
     argv, r = session(claude, root, disable_hooks=True)
+
+    # The hook-fired check comes FIRST: a dead lever consumes CARD.close, and
+    # a missing CARD.close read as "harness" would blame the wrong thing.
+    current = read_bytes(receipt)
+    if current is None:
+        observed = "is gone (or unreadable)"
+    elif current != planted:
+        observed = ("was replaced by: "
+                    + current.decode("utf-8", "replace").strip()[:300])
+    else:
+        observed = None
+    if observed is not None:
+        raise Fail("RED: hooks were disabled and the Stop hook fired anyway "
+                   "-- the planted sentinel receipt %s, and CARD.close was %s "
+                   " [%s]\n%s"
+                   % (observed,
+                      "consumed" if not close.exists() else "left in place",
+                      shown(argv), tail(r)))
 
     if not close.exists():
         raise Fail("RED: the session did not write CARD.close -- harness, not "
@@ -216,15 +300,11 @@ def red(claude, root):
     if body != "CLOSE":
         raise Fail("RED: CARD.close reads %r, expected 'CLOSE' -- harness, "
                    "not the hook  [%s]\n%s" % (body[:80], shown(argv), tail(r)))
-    if receipt.exists():
-        raise Fail("RED: hooks were disabled and the Stop hook fired anyway "
-                   "-- CARD.receipt.json exists:\n    %s\n  [%s]"
-                   % (receipt.read_text(encoding="utf-8",
-                                        errors="replace").strip()[:400],
-                      shown(argv)))
     close.unlink()
-    print("RED OK: hooks disabled -- session wrote CARD.close, no hook fired, "
-          "no receipt  [%s]" % shown(argv))
+    receipt.unlink()
+    print("RED OK: hooks disabled -- session wrote CARD.close, the planted "
+          "sentinel receipt survived byte-identical, no hook ran  [%s]"
+          % shown(argv))
 
 
 def green(claude, root):
@@ -267,7 +347,7 @@ def main():
         red(claude, root)
         green(claude, root)
     finally:
-        shutil.rmtree(str(root), ignore_errors=True)
+        rmtree(root)
     return 0
 
 

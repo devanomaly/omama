@@ -144,7 +144,7 @@ is the reference (env vars, troubleshooting, rationale).
    receipt_gate.py (a syntax error exits 1 at parse time, before the guard
    exists — the gate looks installed while actually absent).
 
-   **Step 4 — the orchestrator's close path**, only when a dispatching
+   **Step 4 of the self-test — the orchestrator's close path**, only when a dispatching
    session will close worktrees it is not itself running in: run
    `python3 selftest_orchestrator_close.py` (no arguments). Steps 1–3 prove
    the gate answers; this one proves the *session* reaches it, by closing a
