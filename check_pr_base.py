@@ -12,12 +12,14 @@ master" promised.
 Two modes, two different questions:
 
   check_pr_base.py <base-ref-name>
-      Does this PR's declared base ref name equal `master`? Cheap, no git
-      needed, but only checks what the PR claims, not what actually happened.
+      Does this PR's declared base ref name equal the required base
+      (`master`, or `$PR_REQUIRED_BASE` when set)? Cheap, no git needed, but
+      only checks what the PR claims, not what actually happened.
 
   check_pr_base.py --ancestry <head-sha> <head-ref-name>
-      Of the commits unique to this PR's head (origin/master..<head-sha>), is
-      any of them also reachable from another unmerged remote branch? If so,
+      Of the commits unique to this PR's head
+      (origin/<required-base>..<head-sha>), is any of them also reachable
+      from another unmerged remote branch? If so,
       this branch was cut from that sibling, not from master's tip, regardless
       of what the base ref claims. This DOES partially recover the cut-point
       fact the base-ref check cannot see -- but only while the sibling stays
@@ -32,14 +34,19 @@ Usage:  python3 check_pr_base.py <base-ref-name>
         (in CI: python3 check_pr_base.py "$GITHUB_BASE_REF"
                 python3 check_pr_base.py --ancestry "<pr-head-sha>" "<pr-head-ref>")
 
+PR_REQUIRED_BASE overrides the required base (default master); set-but-blank
+is exit 2.
+
 Exit 0 -- OK: base is master (mode 1) / no unique commit is reachable from
           another remote branch (mode 2).
 Exit 1 -- VIOLATION: base is some other ref (mode 1) / a unique commit is also
           reachable from a named sibling branch (mode 2). Named either way.
 Exit 2 -- not runnable: missing/empty argument; and for --ancestry also a
-          shallow repository, a missing origin/master, or not-a-git-repo at
-          all -- a CI misconfiguration is a coverage hole, not a silent pass.
+          shallow repository, a missing origin/<required-base>, or
+          not-a-git-repo at all -- a CI misconfiguration is a coverage hole,
+          not a silent pass.
 """
+import os
 import subprocess
 import sys
 
@@ -50,6 +57,29 @@ def _run_git(args):
     proc = subprocess.run(["git", *args], capture_output=True, text=True,
                           encoding="utf-8", errors="replace")
     return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
+
+
+def _resolve_required_base():
+    """Resolve REQUIRED_BASE from PR_REQUIRED_BASE (default 'master'),
+    announcing an override on stderr before any check runs (same shape as
+    the privacy-hook wrapper's PRIVACY_HOOK_SCANNER notice), and failing
+    closed -- exit 2, never a silent fallback to 'master' -- when the
+    variable is set but blank or whitespace-only. Returns the exit code to
+    use immediately, or None if resolution succeeded."""
+    global REQUIRED_BASE
+    if "PR_REQUIRED_BASE" not in os.environ:
+        return None
+    raw = os.environ["PR_REQUIRED_BASE"]
+    print(f"notice check_pr_base: required base = {raw} (PR_REQUIRED_BASE "
+          f"is set; the default is {REQUIRED_BASE})", file=sys.stderr)
+    value = raw.strip()
+    if not value:
+        print("VIOLATION: PR_REQUIRED_BASE is set but blank -- not runnable "
+              f"here, never a silent fallback to '{REQUIRED_BASE}' (unset "
+              "it, or set it to a base branch name)", file=sys.stderr)
+        return 2
+    REQUIRED_BASE = value
+    return None
 
 
 def check_base_ref(argv):
@@ -87,22 +117,23 @@ def check_ancestry(argv):
     rc, out, err = _run_git(["rev-parse", "--is-shallow-repository"])
     if rc != 0 or out != "false":
         print("VIOLATION: shallow repository -- ancestry needs full history "
-              "to compute origin/master..<head>; a shallow checkout would "
-              "silently hide the very commits this check reads (use "
-              "fetch-depth: 0), not runnable here", file=sys.stderr)
-        return 2
-
-    rc, _out, err = _run_git(["rev-parse", "--verify", "origin/master"])
-    if rc != 0:
-        print(f"VIOLATION: 'origin/master' does not resolve -- not runnable "
-              f"here ({err or 'ref not found'})", file=sys.stderr)
-        return 2
-
-    rc, out, err = _run_git(["rev-list", f"origin/master..{head_sha}"])
-    if rc != 0:
-        print(f"VIOLATION: could not compute origin/master..{head_sha} -- "
-              f"not runnable here ({err or 'git rev-list failed'})",
+              f"to compute origin/{REQUIRED_BASE}..<head>; a shallow "
+              "checkout would silently hide the very commits this check "
+              "reads (use fetch-depth: 0), not runnable here",
               file=sys.stderr)
+        return 2
+
+    rc, _out, err = _run_git(["rev-parse", "--verify", f"origin/{REQUIRED_BASE}"])
+    if rc != 0:
+        print(f"VIOLATION: 'origin/{REQUIRED_BASE}' does not resolve -- not "
+              f"runnable here ({err or 'ref not found'})", file=sys.stderr)
+        return 2
+
+    rc, out, err = _run_git(["rev-list", f"origin/{REQUIRED_BASE}..{head_sha}"])
+    if rc != 0:
+        print(f"VIOLATION: could not compute "
+              f"origin/{REQUIRED_BASE}..{head_sha} -- not runnable here "
+              f"({err or 'git rev-list failed'})", file=sys.stderr)
         return 2
     unique = set(out.splitlines()) if out else set()
 
@@ -119,17 +150,19 @@ def check_ancestry(argv):
               f"here ({err or 'git for-each-ref failed'})", file=sys.stderr)
         return 2
 
-    excluded = {"refs/remotes/origin/HEAD", "refs/remotes/origin/master",
+    excluded = {"refs/remotes/origin/HEAD",
+                f"refs/remotes/origin/{REQUIRED_BASE}",
                 f"refs/remotes/origin/{head_ref}"}
     candidates = sorted(ref for ref in out.splitlines()
                         if ref and ref not in excluded)
 
     for ref in candidates:
-        rc, branch_out, err = _run_git(["rev-list", f"origin/master..{ref}"])
+        rc, branch_out, err = _run_git(
+            ["rev-list", f"origin/{REQUIRED_BASE}..{ref}"])
         if rc != 0:
-            print(f"VIOLATION: could not compute origin/master..{ref} -- "
-                  f"not runnable here ({err or 'git rev-list failed'})",
-                  file=sys.stderr)
+            print(f"VIOLATION: could not compute "
+                  f"origin/{REQUIRED_BASE}..{ref} -- not runnable here "
+                  f"({err or 'git rev-list failed'})", file=sys.stderr)
             return 2
         branch_unique = set(branch_out.splitlines()) if branch_out else set()
         shared = sorted(unique & branch_unique)
@@ -151,6 +184,9 @@ def check_ancestry(argv):
 
 
 def main(argv):
+    err = _resolve_required_base()
+    if err is not None:
+        return err
     if argv and argv[0] == "--ancestry":
         return check_ancestry(argv[1:])
     return check_base_ref(argv)
