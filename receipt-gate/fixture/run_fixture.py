@@ -84,6 +84,11 @@ def make_repo(base, name="repo", commit=True):
     return repo
 
 
+def toplevel_str(repo):
+    """The toplevel exactly as the gate renders it (Path of rev-parse)."""
+    return str(Path(git(repo, "rev-parse", "--show-toplevel").stdout.strip()))
+
+
 def yaml_sq(s):
     return "'" + s.replace("'", "''") + "'"
 
@@ -365,6 +370,22 @@ def a_omama_card_custom(tmp):
     rc = receipt(repo, sub="cards")
     check(rc and rc["verdict"] == "VERIFIED",
           f"receipt not at card dir or bad: {rc}", r)
+
+
+def a_omama_card_same_repo(tmp):
+    """The CROSS-REPO block must not be over-broad: OMAMA_CARD pointing at the
+    session repo's OWN card is the same toplevel and still closes VERIFIED."""
+    repo = make_repo(tmp, name="session")
+    write_card(repo)
+    (repo / "CARD.close").write_text("CLOSE", encoding="utf-8")
+    env = gate_env({"OMAMA_CARD": str(repo / "CARD.yaml")})
+    r = run_gate(repo, env=env)
+    check(r.returncode == 0,
+          f"same-repo OMAMA_CARD close must allow, got {r.returncode}", r)
+    check("CROSS-REPO" not in r.stderr,
+          "CROSS-REPO fired on a card in the session's own repo", r)
+    rc = receipt(repo)
+    check(rc and rc["verdict"] == "VERIFIED", f"bad receipt {rc}", r)
 
 
 def a_honest_undecodable(tmp):
@@ -688,6 +709,63 @@ def b_omama_card_rewrite(tmp):
     check(r.returncode == 2,
           f"resolved-card rewrite mid-verify must trip, got {r.returncode}", r)
     check("UNEXPECTED-CHANGE" in r.stderr, "not named UNEXPECTED-CHANGE", r)
+
+
+CROSS_SENTINEL = b'{"sentinel": "cross-repo-fixture"}'
+
+
+def _cross_repo_pair(tmp, close_token):
+    """A card repo carrying a DECLARED close and a standing receipt, plus an
+    unrelated session repo. OMAMA_CARD points at the card repo's card."""
+    external = make_repo(tmp, name="external")
+    write_card(external)
+    (external / "CARD.receipt.json").write_bytes(CROSS_SENTINEL)
+    (external / "CARD.close").write_text(close_token, encoding="utf-8")
+    session = make_repo(tmp, name="session")
+    env = gate_env({"OMAMA_CARD": str(external / "CARD.yaml")})
+    return external, session, env
+
+
+def _check_cross_repo_refused(external, session, r):
+    check(r.returncode == 2,
+          f"cross-repo close must block, got exit {r.returncode}", r)
+    check("CROSS-REPO" in r.stderr, "block not named CROSS-REPO", r)
+    check(toplevel_str(external) in r.stderr,
+          "the card repo's toplevel is not named in the block message", r)
+    check(toplevel_str(session) in r.stderr,
+          "the session repo's toplevel is not named in the block message", r)
+    check("OMAMA_CARD" in r.stderr, "the remedy (unset OMAMA_CARD) is not named", r)
+    check((external / "CARD.close").exists(),
+          "the card repo's CARD.close was consumed by a refused cross-repo close", r)
+    check((external / "CARD.receipt.json").read_bytes() == CROSS_SENTINEL,
+          "the card repo's standing receipt is not byte-identical after a "
+          "refused cross-repo close", r)
+    check(receipt(session) is None,
+          "a receipt was written into the session repo", r)
+
+
+def b_cross_repo_close(tmp):
+    external, session, env = _cross_repo_pair(tmp, "CLOSE")
+    r = run_gate(session, env=env)
+    _check_cross_repo_refused(external, session, r)
+
+
+def b_cross_repo_honest_close(tmp):
+    """Every close intent writes a receipt into the card's repo, so an honest
+    FAILED close is refused exactly like a VERIFIED-intent one."""
+    external, session, env = _cross_repo_pair(tmp, "FAILED: wrong repo")
+    r = run_gate(session, env=env)
+    _check_cross_repo_refused(external, session, r)
+
+
+def b_cross_repo_worktree(tmp):
+    """A `git worktree add` of the card's OWN repo has a different toplevel --
+    the same hazard (OMAMA_CARD pinned at the main checkout), refused by name."""
+    external, _, env = _cross_repo_pair(tmp, "CLOSE")
+    wt = Path(tmp) / "wt"
+    git(external, "worktree", "add", "-q", str(wt), "-b", "wt")
+    r = run_gate(wt, env=env)
+    _check_cross_repo_refused(external, wt, r)
 
 
 def a_honest_review_dir(tmp):
@@ -1393,6 +1471,7 @@ CASES = [
     ("allow: S3 + PASS review", a_s3_pass_review),
     ("allow: S3 + over-budget PASS review", a_s3_overbudget_review),
     ("allow: OMAMA_CARD at non-default path", a_omama_card_custom),
+    ("allow: OMAMA_CARD at the session repo's own card still VERIFIED", a_omama_card_same_repo),
     ("allow: honest close on undecodable card", a_honest_undecodable),
     ("block: planted-red, output tail + hatch text", b_planted_red),
     ("block: UNEXPECTED-CHANGE tracked mutation", b_unexpected_tracked),
@@ -1428,6 +1507,9 @@ CASES = [
     ("block: mutate + --assume-unchanged mid-verify", b_assume_unchanged_mid),
     ("block: pre-seeded assume-unchanged at H1", b_assume_preseed),
     ("block: OMAMA_CARD card rewritten mid-verify", b_omama_card_rewrite),
+    ("block: cross-repo CLOSE intent refused, card repo's evidence intact", b_cross_repo_close),
+    ("block: cross-repo honest FAILED close refused the same way", b_cross_repo_honest_close),
+    ("block: session in a worktree of the card's repo is cross-repo", b_cross_repo_worktree),
     ("KNOWN-LIMITATION: forged WIP-turn receipt persists", k_forged_wip_receipt_persists),
     ("wiring: clean planted settings (absolute interpreter + real script)", w_clean),
     ("wiring: double-quoted single-backslash path survives shlex posix", w_backslash_survival),

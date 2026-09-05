@@ -46,13 +46,20 @@ the registered Stop command answers the gate's `BAD-INPUT` block on empty
 stdin, re-runnable from the adopting repo's CI). Fixture:
 
 ```
-python3 fixture/run_fixture.py        # exit 0 = gate correct (78 cases)
+python3 fixture/run_fixture.py        # exit 0 = gate correct (82 cases)
 ```
 
 | Gate exit | Means |
 |---|---|
 | 0 | stop allowed: NO-CARD, WIP turn, honest close, or VERIFIED |
-| 2 | named BLOCK on stderr (fed back to the model): `BAD-INPUT` · `CARD-CONFIGURED-BUT-MISSING` · `CLOSE-TOKEN` · `SCHEMA` · `GIT-ERROR` · `INDEX-FLAGS` · `UNEXPECTED-CHANGE` · `VERIFY-RED` · `TIMEOUT` · `S3-REVIEW` · `GATE-ERROR` |
+| 2 | named BLOCK on stderr (fed back to the model): `BAD-INPUT` · `CARD-CONFIGURED-BUT-MISSING` · `CROSS-REPO` · `CLOSE-TOKEN` · `SCHEMA` · `GIT-ERROR` · `INDEX-FLAGS` · `UNEXPECTED-CHANGE` · `VERIFY-RED` · `TIMEOUT` · `S3-REVIEW` · `GATE-ERROR` |
+
+`CROSS-REPO` is raised at card resolution — before the bookkeeping that
+unlinks a standing receipt — when the card's git toplevel and the session's
+git toplevel are both known and differ: the card repository's `CARD.close`
+and `CARD.receipt.json` are left exactly as they were. A card directory that
+is not in a git repository at all (no toplevel) is NOT refused; it keeps its
+degraded-honest behavior.
 
 Structural fail-closed: the entire body sits in a guard from line 1 (`import
 yaml` inside the guard); an unhandled exception ⇒ named exit 2, never 1 (1
@@ -112,12 +119,17 @@ session's cwd, so the worktree must carry its own `.claude/settings.json`
 (tracked in this repo; a per-machine copy where `.claude/` is gitignored); the
 gate then resolves the card from that same cwd — unless `OMAMA_CARD` is set,
 which takes precedence over cwd, so a stray one exported by the dispatching
-session redirects the close to **that** card's repository instead of the
-worktree's, consuming its `CARD.close` and overwriting its receipt. If the
-dispatching session exports `OMAMA_CARD`, clear it for the child before
-closing; `adapt/selftest_orchestrator_close.py` scrubs `OMAMA_*` from the
+session points the close at **that** card's repository instead of the
+worktree's. That is now REFUSED by name: the gate blocks `CROSS-REPO` (exit
+2) before touching anything, so the other repository's `CARD.close` and
+receipt survive, and the remedy is the same — run the close from the card's
+repository, or clear `OMAMA_CARD` for the child. A worktree's toplevel
+differs from its main checkout's, so `OMAMA_CARD` pinned at a main checkout
+with the close run inside a worktree of that same repository is refused by
+name too. `adapt/selftest_orchestrator_close.py` scrubs `OMAMA_*` from the
 sessions it spawns for exactly that reason, and proves both halves — run it
-once per machine.
+once per machine; `adapt/check_cross_repo.py` proves the refusal itself and
+costs no session.
 
 ## What it does NOT catch (honest, named boundaries)
 

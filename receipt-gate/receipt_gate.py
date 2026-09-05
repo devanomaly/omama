@@ -39,9 +39,9 @@ UNEXPECTED-CHANGE instead of splitting decisions across two versions. The
 review is re-read and compared once more after the S3 checks (the checker
 subprocess reads the file itself).
 
-Named block reasons: BAD-INPUT, CARD-CONFIGURED-BUT-MISSING, CLOSE-TOKEN,
-SCHEMA, GIT-ERROR, INDEX-FLAGS, UNEXPECTED-CHANGE, VERIFY-RED, TIMEOUT,
-S3-REVIEW, GATE-ERROR.
+Named block reasons: BAD-INPUT, CARD-CONFIGURED-BUT-MISSING, CROSS-REPO,
+CLOSE-TOKEN, SCHEMA, GIT-ERROR, INDEX-FLAGS, UNEXPECTED-CHANGE, VERIFY-RED,
+TIMEOUT, S3-REVIEW, GATE-ERROR.
 
 Honest boundaries (README carries the full list): a receipt forged on a WIP
 turn persists (pinned KNOWN-LIMITATION); non-git mutate-and-restore inside
@@ -150,9 +150,16 @@ def main(state):
 
     session_top = toplevel(cwd)
     if card_repo and session_top and card_repo != session_top:
-        print(f"WARNING: card repo ({card_repo}) is not the session repo "
-              f"({session_top}); a VERIFIED close attests the card's repo, "
-              "the session's own repo stops unbound.")
+        # Raised HERE, before the close-attempt bookkeeping below unlinks the
+        # standing receipt: a stray OMAMA_CARD must not consume another
+        # repository's CARD.close or destroy its durable evidence. A worktree
+        # is a different toplevel, so it is this same case. A non-git card
+        # directory (card_repo None) keeps its degraded-honest behavior.
+        raise Block("CROSS-REPO",
+                    f"card repo ({card_repo}) is not the session repo "
+                    f"({session_top}); refusing to close another "
+                    "repository's card. Run the close from the card's "
+                    "repository, or unset OMAMA_CARD.")
 
     # ------------------------------------------------------- hash material
     PIN = ["-c", "core.quotepath=false", "-c", "diff.noprefix=false",
