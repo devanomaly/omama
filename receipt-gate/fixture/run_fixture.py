@@ -388,6 +388,27 @@ def a_omama_card_same_repo(tmp):
     check(rc and rc["verdict"] == "VERIFIED", f"bad receipt {rc}", r)
 
 
+def a_nongit_card_dir_git_session(tmp):
+    """The load-bearing half of the non-git card directory: card_repo is None
+    while the SESSION repo has a toplevel. Only the `card_repo and` term keeps
+    this out of CROSS-REPO -- a_honest_nongit's cwd is non-git too, so it
+    would not notice that term going away."""
+    session = make_repo(tmp, name="session")
+    plaincard = Path(tmp) / "plaincard"
+    plaincard.mkdir()
+    (plaincard / "CARD.yaml").write_text(card_text(), encoding="utf-8")
+    (plaincard / "CARD.close").write_text("FAILED: probe", encoding="utf-8")
+    env = gate_env({"OMAMA_CARD": str(plaincard / "CARD.yaml")})
+    r = run_gate(session, env=env)
+    check(r.returncode == 0,
+          f"non-git card dir must stay degraded-honest, got {r.returncode}", r)
+    check("CROSS-REPO" not in r.stderr,
+          "CROSS-REPO fired on a card directory that is in no repo at all", r)
+    rc = receipt(plaincard)
+    check(rc and rc["verdict"] == "FAILED" and rc["rev"] is None,
+          f"degraded receipt must have null hashes: {rc}", r)
+
+
 def a_honest_undecodable(tmp):
     repo = make_repo(tmp)
     (repo / "CARD.yaml").write_bytes(card_text().encode("utf-16"))
@@ -716,17 +737,26 @@ CROSS_SENTINEL = b'{"sentinel": "cross-repo-fixture"}'
 
 def _cross_repo_pair(tmp, close_token):
     """A card repo carrying a DECLARED close and a standing receipt, plus an
-    unrelated session repo. OMAMA_CARD points at the card repo's card."""
+    unrelated session repo. OMAMA_CARD points at the card repo's card. The
+    close BYTES are returned: the lock is that they come through unchanged,
+    not merely that some CARD.close still exists."""
     external = make_repo(tmp, name="external")
     write_card(external)
     (external / "CARD.receipt.json").write_bytes(CROSS_SENTINEL)
-    (external / "CARD.close").write_text(close_token, encoding="utf-8")
+    close_bytes = close_token.encode("utf-8")
+    (external / "CARD.close").write_bytes(close_bytes)
     session = make_repo(tmp, name="session")
     env = gate_env({"OMAMA_CARD": str(external / "CARD.yaml")})
-    return external, session, env
+    return external, session, env, close_bytes
 
 
-def _check_cross_repo_refused(external, session, r):
+def _read_or_none(p):
+    """A destroyed file must report this fixture's authored message, not
+    crash the runner with FileNotFoundError."""
+    return p.read_bytes() if p.exists() else None
+
+
+def _check_cross_repo_refused(external, session, r, close_bytes):
     check(r.returncode == 2,
           f"cross-repo close must block, got exit {r.returncode}", r)
     check("CROSS-REPO" in r.stderr, "block not named CROSS-REPO", r)
@@ -735,37 +765,43 @@ def _check_cross_repo_refused(external, session, r):
     check(toplevel_str(session) in r.stderr,
           "the session repo's toplevel is not named in the block message", r)
     check("OMAMA_CARD" in r.stderr, "the remedy (unset OMAMA_CARD) is not named", r)
-    check((external / "CARD.close").exists(),
-          "the card repo's CARD.close was consumed by a refused cross-repo close", r)
-    check((external / "CARD.receipt.json").read_bytes() == CROSS_SENTINEL,
-          "the card repo's standing receipt is not byte-identical after a "
-          "refused cross-repo close", r)
+    close_now = _read_or_none(external / "CARD.close")
+    check(close_now == close_bytes,
+          f"the card repo's CARD.close is {close_now!r}, expected "
+          f"{close_bytes!r} -- a refused cross-repo close consumed or "
+          "rewrote another repository's close intent", r)
+    receipt_now = _read_or_none(external / "CARD.receipt.json")
+    check(receipt_now == CROSS_SENTINEL,
+          f"the card repo's standing receipt is {receipt_now!r}, expected the "
+          f"planted {CROSS_SENTINEL!r} -- a refused cross-repo close destroyed "
+          "another repository's durable evidence", r)
     check(receipt(session) is None,
           "a receipt was written into the session repo", r)
 
 
 def b_cross_repo_close(tmp):
-    external, session, env = _cross_repo_pair(tmp, "CLOSE")
+    external, session, env, close_bytes = _cross_repo_pair(tmp, "CLOSE")
     r = run_gate(session, env=env)
-    _check_cross_repo_refused(external, session, r)
+    _check_cross_repo_refused(external, session, r, close_bytes)
 
 
 def b_cross_repo_honest_close(tmp):
     """Every close intent writes a receipt into the card's repo, so an honest
     FAILED close is refused exactly like a VERIFIED-intent one."""
-    external, session, env = _cross_repo_pair(tmp, "FAILED: wrong repo")
+    external, session, env, close_bytes = _cross_repo_pair(
+        tmp, "FAILED: wrong repo")
     r = run_gate(session, env=env)
-    _check_cross_repo_refused(external, session, r)
+    _check_cross_repo_refused(external, session, r, close_bytes)
 
 
 def b_cross_repo_worktree(tmp):
     """A `git worktree add` of the card's OWN repo has a different toplevel --
     the same hazard (OMAMA_CARD pinned at the main checkout), refused by name."""
-    external, _, env = _cross_repo_pair(tmp, "CLOSE")
+    external, _, env, close_bytes = _cross_repo_pair(tmp, "CLOSE")
     wt = Path(tmp) / "wt"
     git(external, "worktree", "add", "-q", str(wt), "-b", "wt")
     r = run_gate(wt, env=env)
-    _check_cross_repo_refused(external, wt, r)
+    _check_cross_repo_refused(external, wt, r, close_bytes)
 
 
 def a_honest_review_dir(tmp):
@@ -1472,6 +1508,8 @@ CASES = [
     ("allow: S3 + over-budget PASS review", a_s3_overbudget_review),
     ("allow: OMAMA_CARD at non-default path", a_omama_card_custom),
     ("allow: OMAMA_CARD at the session repo's own card still VERIFIED", a_omama_card_same_repo),
+    ("allow: non-git card dir with a GIT session repo is not CROSS-REPO (degraded honest)",
+     a_nongit_card_dir_git_session),
     ("allow: honest close on undecodable card", a_honest_undecodable),
     ("block: planted-red, output tail + hatch text", b_planted_red),
     ("block: UNEXPECTED-CHANGE tracked mutation", b_unexpected_tracked),

@@ -20,8 +20,9 @@ the card repo. OMAMA_* is scrubbed from the environment the gate is given
 
 Assertions, in order:
   1  cross-repo CLOSE intent -> exit 2, BLOCK[CROSS-REPO] naming BOTH
-     toplevels, the card repo's CARD.close still there, its receipt
-     byte-identical, and no receipt written into the session repo.
+     toplevels and the remedy (unset OMAMA_CARD), the card repo's CARD.close
+     still there, its receipt byte-identical, and no receipt written into the
+     session repo.
   2  cross-repo honest `FAILED: <reason>` close -> the same. Every close
      intent writes a receipt into the card's repository, so the honest ones
      are refused too.
@@ -211,6 +212,10 @@ def refused(label, card_repo, session_dir, r, close_body=CLOSE_BYTES):
                        "toplevel (%s) -- the operator cannot see which two "
                        "repositories disagree\n%s" % (label, what, path,
                                                       tail(r)))
+    if "OMAMA_CARD" not in r.stderr:
+        raise Fail("%s: the remedy (unset OMAMA_CARD) is not named in the "
+                   "block message -- the session is told no and not told how "
+                   "to proceed\n%s" % (label, tail(r)))
     close_now = (card_repo / "CARD.close").read_bytes() \
         if (card_repo / "CARD.close").exists() else None
     if close_now != close_body:

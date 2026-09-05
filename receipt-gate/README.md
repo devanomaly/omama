@@ -46,7 +46,7 @@ the registered Stop command answers the gate's `BAD-INPUT` block on empty
 stdin, re-runnable from the adopting repo's CI). Fixture:
 
 ```
-python3 fixture/run_fixture.py        # exit 0 = gate correct (82 cases)
+python3 fixture/run_fixture.py        # exit 0 = gate correct (83 cases)
 ```
 
 | Gate exit | Means |
