@@ -739,12 +739,14 @@ def _cross_repo_pair(tmp, close_token):
     """A card repo carrying a DECLARED close and a standing receipt, plus an
     unrelated session repo. OMAMA_CARD points at the card repo's card. The
     close BYTES are returned: the lock is that they come through unchanged,
-    not merely that some CARD.close still exists."""
+    not merely that some CARD.close still exists. close_token None declares
+    no close at all (a WIP turn) -- then the lock is that none appears."""
     external = make_repo(tmp, name="external")
     write_card(external)
     (external / "CARD.receipt.json").write_bytes(CROSS_SENTINEL)
-    close_bytes = close_token.encode("utf-8")
-    (external / "CARD.close").write_bytes(close_bytes)
+    close_bytes = None if close_token is None else close_token.encode("utf-8")
+    if close_bytes is not None:
+        (external / "CARD.close").write_bytes(close_bytes)
     session = make_repo(tmp, name="session")
     env = gate_env({"OMAMA_CARD": str(external / "CARD.yaml")})
     return external, session, env, close_bytes
@@ -768,8 +770,8 @@ def _check_cross_repo_refused(external, session, r, close_bytes):
     close_now = _read_or_none(external / "CARD.close")
     check(close_now == close_bytes,
           f"the card repo's CARD.close is {close_now!r}, expected "
-          f"{close_bytes!r} -- a refused cross-repo close consumed or "
-          "rewrote another repository's close intent", r)
+          f"{close_bytes!r} -- a refused cross-repo attempt changed another "
+          "repository's close intent", r)
     receipt_now = _read_or_none(external / "CARD.receipt.json")
     check(receipt_now == CROSS_SENTINEL,
           f"the card repo's standing receipt is {receipt_now!r}, expected the "
@@ -802,6 +804,15 @@ def b_cross_repo_worktree(tmp):
     git(external, "worktree", "add", "-q", str(wt), "-b", "wt")
     r = run_gate(wt, env=env)
     _check_cross_repo_refused(external, wt, r, close_bytes)
+
+
+def b_cross_repo_wip_turn(tmp):
+    """The refusal is at card RESOLUTION, not at the close: a session carrying
+    a stray cross-repo OMAMA_CARD is refused on every Stop, a WIP turn (no
+    CARD.close declared anywhere) included."""
+    external, session, env, close_bytes = _cross_repo_pair(tmp, None)
+    r = run_gate(session, env=env)
+    _check_cross_repo_refused(external, session, r, close_bytes)
 
 
 def a_honest_review_dir(tmp):
@@ -1548,6 +1559,8 @@ CASES = [
     ("block: cross-repo CLOSE intent refused, card repo's evidence intact", b_cross_repo_close),
     ("block: cross-repo honest FAILED close refused the same way", b_cross_repo_honest_close),
     ("block: session in a worktree of the card's repo is cross-repo", b_cross_repo_worktree),
+    ("block: cross-repo OMAMA_CARD with no CARD.close (WIP turn) is refused at resolution",
+     b_cross_repo_wip_turn),
     ("KNOWN-LIMITATION: forged WIP-turn receipt persists", k_forged_wip_receipt_persists),
     ("wiring: clean planted settings (absolute interpreter + real script)", w_clean),
     ("wiring: double-quoted single-backslash path survives shlex posix", w_backslash_survival),

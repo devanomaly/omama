@@ -46,7 +46,7 @@ the registered Stop command answers the gate's `BAD-INPUT` block on empty
 stdin, re-runnable from the adopting repo's CI). Fixture:
 
 ```
-python3 fixture/run_fixture.py        # exit 0 = gate correct (83 cases)
+python3 fixture/run_fixture.py        # exit 0 = gate correct (84 cases)
 ```
 
 | Gate exit | Means |
@@ -57,7 +57,10 @@ python3 fixture/run_fixture.py        # exit 0 = gate correct (83 cases)
 `CROSS-REPO` is raised at card resolution — before the bookkeeping that
 unlinks a standing receipt — when the card's git toplevel and the session's
 git toplevel are both known and differ: the card repository's `CARD.close`
-and `CARD.receipt.json` are left exactly as they were. A card directory that
+and `CARD.receipt.json` are left exactly as they were. The check runs at card
+resolution, so it fires on every Stop of a session carrying a stray
+cross-repo `OMAMA_CARD` — a WIP turn included, not only a declared close —
+the same shape as `CARD-CONFIGURED-BUT-MISSING`. A card directory that
 is not in a git repository at all (no toplevel) is NOT refused; it keeps its
 degraded-honest behavior.
 
