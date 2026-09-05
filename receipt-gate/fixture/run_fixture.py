@@ -27,6 +27,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 GATE = HERE.parent / "receipt_gate.py"
 WIRING = HERE.parent / "adapt" / "check_wiring.py"
+CHECK_CROSS_REPO = HERE.parent / "adapt" / "check_cross_repo.py"
 ROOT = HERE.parent.parent
 VALIDATOR = ROOT / "work-order" / "validate_work_order.py"
 CHECKER = ROOT / "output-discipline" / "scripts" / "check_artifact.py"
@@ -407,6 +408,26 @@ def a_nongit_card_dir_git_session(tmp):
     rc = receipt(plaincard)
     check(rc and rc["verdict"] == "FAILED" and rc["rev"] is None,
           f"degraded receipt must have null hashes: {rc}", r)
+
+
+def a_git_card_dir_nongit_session(tmp):
+    """The third cell of the contract: a card that IS in a repo, reached from a
+    cwd that is not. session_top is None, so there is no second repository to
+    disagree with -- the close proceeds. Only the `session_top and` term keeps
+    it out of CROSS-REPO."""
+    card = make_repo(tmp, name="card")
+    write_card(card)
+    (card / "CARD.close").write_text("CLOSE", encoding="utf-8")
+    plain = Path(tmp) / "plain"
+    plain.mkdir()
+    env = gate_env({"OMAMA_CARD": str(card / "CARD.yaml")})
+    r = run_gate(plain, env=env)
+    check(r.returncode == 0,
+          f"git card dir with a non-git cwd must close, got {r.returncode}", r)
+    check("CROSS-REPO" not in r.stderr,
+          "CROSS-REPO fired although the session cwd is in no repo at all", r)
+    rc = receipt(card)
+    check(rc and rc["verdict"] == "VERIFIED", f"bad receipt {rc}", r)
 
 
 def a_honest_undecodable(tmp):
@@ -813,6 +834,47 @@ def b_cross_repo_wip_turn(tmp):
     external, session, env, close_bytes = _cross_repo_pair(tmp, None)
     r = run_gate(session, env=env)
     _check_cross_repo_refused(external, session, r, close_bytes)
+
+
+def w_check_cross_repo_git_env(tmp):
+    """The per-machine check builds its own scratch repos, so it must never
+    reach a repository outside them -- not even when the shell that runs it
+    exports git's repository-routing variables (a hook, a wrapper, an
+    interrupted rebase). `git -C <scratch>` does NOT neutralize GIT_DIR or
+    GIT_INDEX_FILE: they win, and the check's `git add` lands in whatever
+    repository they name."""
+    decoy = make_repo(tmp, name="decoy")
+    (decoy / "staged.txt").write_text("staged\n", encoding="utf-8")
+    git(decoy, "add", "staged.txt")
+    index = decoy / ".git" / "index"
+    config = decoy / ".git" / "config"
+    index_before, config_before = index.read_bytes(), config.read_bytes()
+    plain = Path(tmp) / "plain"
+    plain.mkdir()
+    for var, value in (("GIT_INDEX_FILE", str(index)),
+                       ("GIT_DIR", str(decoy / ".git"))):
+        r = subprocess.run([PY, str(CHECK_CROSS_REPO)], capture_output=True,
+                           text=True, encoding="utf-8", errors="replace",
+                           env=gate_env({var: value}), cwd=str(plain),
+                           timeout=600)
+        # The damage comes FIRST: a check that reached outside its scratch dir
+        # is the finding, and it also explains whatever exit code it produced.
+        check(index.read_bytes() == index_before,
+              f"an inherited {var} let the check rewrite the DECOY repo's "
+              "index -- it wrote outside its own scratch dir", r)
+        check(config.read_bytes() == config_before,
+              f"an inherited {var} let the check rewrite the DECOY repo's "
+              "config -- it wrote outside its own scratch dir", r)
+        check(r.returncode == 0,
+              f"check_cross_repo.py exited {r.returncode} with an inherited "
+              f"{var}", r)
+        check("OK same-repo close" in r.stdout,
+              f"check_cross_repo.py did not reach its last assertion with an "
+              f"inherited {var}", r)
+    rc = git(decoy, "diff", "--cached", "--quiet", check_rc=False).returncode
+    check(rc == 1,
+          f"the decoy's staged change is no longer readable: git diff "
+          f"--cached exited {rc}, expected 1 (staged change present)")
 
 
 def a_honest_review_dir(tmp):
@@ -1521,6 +1583,8 @@ CASES = [
     ("allow: OMAMA_CARD at the session repo's own card still VERIFIED", a_omama_card_same_repo),
     ("allow: non-git card dir with a GIT session repo is not CROSS-REPO (degraded honest)",
      a_nongit_card_dir_git_session),
+    ("allow: git card dir with a NON-git session cwd is not CROSS-REPO (by contract)",
+     a_git_card_dir_nongit_session),
     ("allow: honest close on undecodable card", a_honest_undecodable),
     ("block: planted-red, output tail + hatch text", b_planted_red),
     ("block: UNEXPECTED-CHANGE tracked mutation", b_unexpected_tracked),
@@ -1562,6 +1626,8 @@ CASES = [
     ("block: cross-repo OMAMA_CARD with no CARD.close (WIP turn) is refused at resolution",
      b_cross_repo_wip_turn),
     ("KNOWN-LIMITATION: forged WIP-turn receipt persists", k_forged_wip_receipt_persists),
+    ("adapt: check_cross_repo.py under inherited GIT_INDEX_FILE / GIT_DIR leaves a decoy repo byte-identical",
+     w_check_cross_repo_git_env),
     ("wiring: clean planted settings (absolute interpreter + real script)", w_clean),
     ("wiring: double-quoted single-backslash path survives shlex posix", w_backslash_survival),
     ("wiring: wrong interpreter path is 1 named VIOLATION", w_wrong_interpreter),

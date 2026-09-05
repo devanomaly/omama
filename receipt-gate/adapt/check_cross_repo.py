@@ -15,8 +15,11 @@ What it does: builds two throwaway git repos in a temp dir -- a CARD repo
 carrying a valid card, a declared close and a planted sentinel receipt, and an
 unrelated SESSION repo -- then runs this checkout's own receipt_gate.py with
 synthetic Stop-hook stdin, cwd in the session repo and OMAMA_CARD pointing at
-the card repo. OMAMA_* is scrubbed from the environment the gate is given
-(an adopting repo exports its own), and only OMAMA_CARD is set back.
+the card repo. OMAMA_* is scrubbed from the environment every subprocess here
+is given (an adopting repo exports its own), and only OMAMA_CARD is set back;
+git's repository-routing variables (GIT_DIR, GIT_INDEX_FILE, GIT_CONFIG_* and
+the rest) are scrubbed too, so this check can never touch a repository outside
+its scratch dir even when the shell that runs it carries them.
 
 Assertions, in order:
   1  cross-repo CLOSE intent -> exit 2, BLOCK[CROSS-REPO] naming BOTH
@@ -74,6 +77,33 @@ CLOSE_BYTES = b"CLOSE"
 
 TIMEOUT = 300
 
+# Git's repository-ROUTING variables. `git -C <scratch>` does not neutralize
+# them: GIT_DIR/GIT_INDEX_FILE win, so a shell carrying them (a hook, a
+# wrapper, an interrupted rebase) would send this check's own `git add` and
+# `git commit` into THAT repository instead of its scratch dir. Dropped, along
+# with the config-injection trio, so nothing outside the scratch dir is
+# reachable. Other GIT_* (GIT_EXEC_PATH, GIT_SSH, GIT_ASKPASS, ...) are KEPT:
+# git may need them to run at all.
+GIT_ROUTING = (
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_NAMESPACE",
+    "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+    "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT")
+GIT_CONFIG_PREFIXES = ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
+
+
+def _scrubbed_env():
+    """The one environment every subprocess of this check is given: this
+    process's, minus OMAMA_* (an adopting repo exports its own card) and minus
+    git's repository-routing variables."""
+    return {k: v for k, v in os.environ.items()
+            if not k.startswith("OMAMA_")
+            and k not in GIT_ROUTING
+            and not k.startswith(GIT_CONFIG_PREFIXES)}
+
+
+ENV = _scrubbed_env()
+
 
 class NotRun(Exception):
     pass
@@ -112,7 +142,7 @@ def rmtree(root):
 
 def git(root, *args):
     r = subprocess.run(["git", "-C", str(root)] + list(args),
-                       capture_output=True, text=True,
+                       capture_output=True, text=True, env=ENV,
                        encoding="utf-8", errors="replace")
     if r.returncode != 0:
         raise Fail("git %s exited %d in the scratch repo: %s"
@@ -137,7 +167,7 @@ def preconditions():
                      "same-repo assertion would block on SCHEMA" % VALIDATOR)
     r = subprocess.run([sys.executable, "-c", "import yaml"],
                        capture_output=True, text=True, encoding="utf-8",
-                       errors="replace", timeout=60)
+                       errors="replace", env=ENV, timeout=60)
     if r.returncode != 0:
         raise NotRun("this interpreter lacks PyYAML (%s -c 'import yaml' "
                      "exited %d); it is the interpreter that would run the "
@@ -172,7 +202,7 @@ def build_repo(root, name):
     card_path.write_text(card, encoding="utf-8")
     r = subprocess.run([sys.executable, str(VALIDATOR), str(card_path)],
                        capture_output=True, text=True, encoding="utf-8",
-                       errors="replace", timeout=60)
+                       errors="replace", env=ENV, timeout=60)
     if r.returncode != 0 or not (r.stdout or "").startswith("OK"):
         raise Fail("the in-tree validator rejected the scratch card (exit %d) "
                    "-- this check's own fixture is broken, not the gate:\n%s"
@@ -183,9 +213,8 @@ def build_repo(root, name):
 
 def run_gate(cwd, card_path):
     """The gate as a Stop hook would run it: synthetic stdin, cwd, and the
-    environment an adopting repo would give it MINUS every OMAMA_* it might
-    already carry, plus the one OMAMA_CARD this check is about."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("OMAMA_")}
+    scrubbed environment plus the one OMAMA_CARD this check is about."""
+    env = dict(ENV)
     env["OMAMA_CARD"] = str(card_path)
     payload = json.dumps({"cwd": str(cwd), "stop_hook_active": False,
                           "hook_event_name": "Stop"})
