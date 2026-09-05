@@ -153,6 +153,10 @@ is the reference (env vars, troubleshooting, rationale).
    stays a developer-machine check, never CI (exit 2 NOT-RUN, named, when
    `claude` is absent). See
    [Closing from an orchestrator](../README.md#closing-from-an-orchestrator-worktree-dispatch).
+   Run `python3 check_cross_repo.py` (no arguments) alongside it to prove this
+   checkout's gate refuses a close whose card lives in another repository
+   (`CROSS-REPO`, with that repository's `CARD.close` and receipt intact); it
+   runs no Claude session, so it is cheap to re-run.
 6. Set up the flow's reproduction requirement: cards live at
    `<repo>/CARD.yaml` (or `OMAMA_CARD` pointing at the active card); the
    close is declared in `CARD.close` (`CLOSE` | `FAILED: <reason>` |
@@ -183,7 +187,10 @@ is the reference (env vars, troubleshooting, rationale).
 ## Environment variables
 
 - `OMAMA_CARD` — path to the active card (empty = disabled; a nonexistent
-  path BLOCKS — a typo does not disable the gate).
+  path BLOCKS — a typo does not disable the gate). The card's repository must
+  be the session's repository (the same git toplevel; a worktree is a
+  different toplevel), otherwise the gate blocks `CROSS-REPO` rather than
+  close another repository's card.
 - `OMAMA_VALIDATOR` — path to validate_work_order.py (piece 02).
 - `OMAMA_CHECK_ARTIFACT` — path to check_artifact.py (piece 09, required for
   S3 cards); must be the CARD-03 version or newer (accepts
