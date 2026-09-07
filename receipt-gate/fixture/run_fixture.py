@@ -39,7 +39,8 @@ GIT_ROUTING = (
     "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
     "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_NAMESPACE",
     "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
-    "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT")
+    "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM")
 GIT_CONFIG_PREFIXES = ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
 
 
@@ -1707,7 +1708,121 @@ def a_nongit_mount_diagnostic(tmp):
     check(not (plain / "CARD.close").exists(), "honest token not consumed", r)
 
 
+def a_nongit_mount_outer_marker(tmp):
+    """Model a real nested mount on every OS; only device/discovery are injected.
+
+    The outer marker is real and valid. Git's printed boundary is the first
+    parent it did NOT inspect, so inspecting that parent would be a regression.
+    A separate real tmpfs run qualifies the model on Linux before merge.
+    """
+    outer = make_repo(tmp, "outer")
+    plain = outer / "mounted"
+    plain.mkdir()
+    outer_before = _binding_snapshot(outer / ".git")
+    wrapper = (
+        "import os, pathlib, runpy, subprocess, sys, types\n"
+        "boundary = pathlib.Path(sys.argv[2]).resolve()\n"
+        "start = pathlib.Path(sys.argv[3]).resolve()\n"
+        "original_run = subprocess.run\n"
+        "original_stat = pathlib.Path.stat\n"
+        "def stat(path, *a, **kw):\n"
+        "    result = original_stat(path, *a, **kw)\n"
+        "    if path == start:\n"
+        "        return types.SimpleNamespace(st_dev=-1, st_mode=result.st_mode)\n"
+        "    return result\n"
+        "def discovery(argv, *a, **kw):\n"
+        "    if argv[0] == 'git' and argv[-2:] == ['rev-parse', '--show-toplevel']:\n"
+        "        return subprocess.CompletedProcess(argv, 128, '', "
+        "'fatal: not a git repository (or any parent up to mount point ' + str(boundary) + ')\\n'"
+        "'Stopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).\\n')\n"
+        "    return original_run(argv, *a, **kw)\n"
+        "pathlib.Path.stat = stat\n"
+        "subprocess.run = discovery\n"
+        "runpy.run_path(sys.argv[1], run_name='__main__')\n")
+    # argv_prefix ends before GATE, so bind the two model paths in the script.
+    wrapper = wrapper.replace("sys.argv[2]", repr(str(outer))).replace(
+        "sys.argv[3]", repr(str(plain)))
+    for intent in ("no-card", "wip", "honest"):
+        if intent != "no-card":
+            write_card(plain)
+        if intent == "honest":
+            (plain / "CARD.close").write_bytes(b"FAILED: genuinely non-Git")
+        r = run_gate(plain, argv_prefix=[PY, "-c", wrapper])
+        marker = {"no-card": "NO-CARD:", "wip": "WIP:", "honest": "CLOSE: FAILED"}[intent]
+        check(r.returncode == 0 and marker in r.stdout,
+              "outer marker across filesystem boundary blocked " + intent, r)
+        check(_binding_snapshot(outer / ".git") == outer_before,
+              "mounted close changed the outer Git database", r)
+    check(receipt(plain)["verdict"] == "FAILED" and not (plain / "CARD.close").exists(),
+          "mounted honest close did not complete", r)
+
+
+def b_config_file_refusal(tmp, variable):
+    session = make_repo(tmp, "session")
+    decoy = make_repo(tmp, "decoy")
+    excludes = Path(tmp) / "poison.excludes"
+    excludes.write_text("sneaky.py\n", encoding="utf-8")
+    config = Path(tmp) / "poison.gitconfig"
+    config.write_text('[core]\n\texcludesFile = "' + excludes.as_posix() + '"\n',
+                      encoding="utf-8")
+    command = f'"{PY}" -c "open(\'sneaky.py\', \'w\').write(\'created\')"'
+    write_card(session, verify=command)
+    (session / "CARD.close").write_bytes(b"CLOSE")
+    (session / "CARD.receipt.json").write_bytes(b"standing evidence")
+    write_card(decoy)
+    (decoy / "CARD.receipt.json").write_bytes(b"decoy evidence")
+    env = gate_env({variable: str(config)})
+    probe = subprocess.run(["git", "-C", str(session), "config", "--get", "core.excludesFile"],
+                           env=env, capture_output=True, text=True)
+    check(probe.returncode == 0 and probe.stdout.strip() == excludes.as_posix(),
+          "config selector was not established for " + variable, probe)
+    before = (_binding_snapshot(session), _binding_snapshot(decoy))
+    r = run_gate(session, env=env)
+    check(r.returncode == 2 and "BLOCK[GIT-ROUTING]" in r.stderr,
+          variable + " must refuse the real config-file injection before verify", r)
+    check(variable in r.stderr and "unset" in r.stderr.lower() and str(config) not in r.stderr,
+          "config refusal omitted name/remedy or disclosed value", r)
+    check(not (session / "sneaky.py").exists() and
+          (_binding_snapshot(session), _binding_snapshot(decoy)) == before,
+          "config injection ran verify or changed evidence", r)
+
+
+def b_config_global_refusal(tmp):
+    b_config_file_refusal(tmp, "GIT_CONFIG_GLOBAL")
+
+
+def b_config_system_refusal(tmp):
+    b_config_file_refusal(tmp, "GIT_CONFIG_SYSTEM")
+
+
+def w_routing_response(tmp):
+    repo = make_repo(tmp)
+    plant_settings(repo, '"{0}" "{1}"'.format(Path(PY).as_posix(), GATE.as_posix()))
+    before = _binding_snapshot(repo)
+    for variable in ("GIT_DIR", "GIT_CONFIG_COUNT", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"):
+        env = scrubbed_env()
+        env[variable] = "private-routing-value"
+        # Deliberately bypass run_wiring's scratch sanitization: this is the
+        # operator's real inherited environment, not a fixture setup command.
+        r = subprocess.run([PY, str(WIRING), str(repo)], env=env, cwd=str(repo),
+                           capture_output=True, text=True, encoding="utf-8", timeout=120)
+        check(r.returncode == 1 and "GIT-ROUTING" in r.stderr and
+              "gate responded" in r.stderr and "unset" in r.stderr.lower(),
+              "routing response was misdiagnosed as an absent gate", r)
+        check(variable in r.stderr and "private-routing-value" not in r.stderr and
+              "WIRING-OK" not in r.stdout and "gate did not answer" not in r.stderr,
+              "routing diagnostic disclosed a value or certified unusable wiring", r)
+        check(_binding_snapshot(repo) == before, "wiring probe changed target bytes", r)
+    r = run_wiring(repo)
+    check(r.returncode == 0 and "WIRING-OK" in r.stdout,
+          "removing inherited routing did not restore wiring", r)
+
+
 CASES = [
+    ("binding: mounted non-Git directory ignores outer marker", a_nongit_mount_outer_marker),
+    ("binding: config-file GLOBAL refused", b_config_global_refusal),
+    ("binding: config-file SYSTEM refused", b_config_system_refusal),
+    ("wiring: routing response names environment failure", w_routing_response),
     ("binding: routing overrides refused before writes", b_routing_refusal),
     ("binding: failed discovery preserves foreign evidence", b_discovery_refusal),
     ("binding: gitless external card preserves evidence", b_external_gitless_refusal),
@@ -1808,7 +1923,15 @@ CASES = [
 ]
 
 
-for _variable, _empty in ([(name, True) for name in GIT_ROUTING] +
+# Independent admission oracle: reducing the setup helper's tuple must not
+# reduce case collection. check_git_isolation independently pins all copies.
+ROUTING_CASE_NAMES = (
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_NAMESPACE",
+    "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+    "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM")
+for _variable, _empty in ([(name, True) for name in ROUTING_CASE_NAMES] +
                           [(name, False) for name in
                            ("GIT_INDEX_FILE", "GIT_CONFIG_COUNT",
                             "GIT_CONFIG_KEY_7", "GIT_CONFIG_VALUE_7")]):

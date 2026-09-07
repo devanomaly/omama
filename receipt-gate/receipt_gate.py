@@ -84,7 +84,8 @@ GIT_ROUTING = (
     "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
     "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_NAMESPACE",
     "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
-    "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT")
+    "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM")
 GIT_CONFIG_PREFIXES = ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
 
 
@@ -163,7 +164,12 @@ def main(state):
                 # Git cannot use it. lstat includes dangling worktree links.
                 try:
                     start = Path(path).resolve()
+                    start_dev = start.stat().st_dev
                     for ancestor in (start,) + tuple(start.parents):
+                        # Git did not inspect a parent on another filesystem.
+                        # Its .git marker cannot make this directory a repo.
+                        if ancestor.stat().st_dev != start_dev:
+                            return None
                         try:
                             (ancestor / ".git").lstat()
                         except FileNotFoundError:

@@ -50,6 +50,11 @@ stdin, re-runnable from the adopting repo's CI). Fixture:
 python3 fixture/run_fixture.py        # exit 0 = all collected cases pass
 ```
 
+A `GIT-ROUTING` dry-run response is a named wiring VIOLATION (exit 1):
+the gate responded, but inherited routing prevents normal operation. The
+check reports variable names and the unset remedy; it does not scrub the
+probe into a green that the actual hook environment could not reproduce.
+
 | Gate exit | Means |
 |---|---|
 | 0 | stop allowed: NO-CARD, WIP turn, honest close, or VERIFIED |
@@ -73,7 +78,10 @@ and the unset-and-retry remedy, never their values. See the complete set in
 Discovery failures (unsupported repository format, damaged `.git`, refused
 access) are `GIT-ERROR` before receipt deletion, verify or token consumption.
 Git reporting no repository is accepted as genuinely non-Git only when no
-`.git` marker exists in the directory ancestry. With Git unavailable, the
+`.git` marker exists within Git's discovery boundary. The marker walk stops
+before inspecting a parent on another filesystem: a non-Git mounted child
+of a checkout retains NO-CARD, WIP and degraded honest closes, while damaged
+markers on its own filesystem still refuse. With Git unavailable, the
 existing degraded honest close remains available for a card directly in the
 session directory; an external card is refused because its identity cannot
 be established. These admission checks apply to WIP and honest closes too.
@@ -165,6 +173,10 @@ costs no session.
   executables, and repository/global configuration remain outside this guard;
   use trusted Git/configuration and isolated worktrees. `GIT-ROUTING` covers
   the enumerated inherited routing variables, not every possible Git option.
+  The enumerated boundary includes the `GIT_CONFIG_GLOBAL` and
+  `GIT_CONFIG_SYSTEM` file selectors; underlying trusted configuration and
+  `GIT_CONFIG_NOSYSTEM` remain outside it. Ignored files remain outside the
+  untracked-name tripwire; this is not an audit of every Git ignore source.
 - **Verify that's technically real but irrelevant to the goal** — form, not
   relevance; that's human review of the card.
 - **Orphaned stragglers on timeout** (Windows: reparenting gap in `taskkill
@@ -223,9 +235,11 @@ costs no session.
 | Promised | Mechanically covered | Not covered / known bypass | Classification |
 |---|---|---|---|
 | VERIFIED without backing impossible via close | named red blocks, stale blocks, planted receipts deleted (start, block-exit, guard route) | forgery on a WIP turn persists | fixed KNOWN-LIMITATION |
-| Honest close reachable after routing/identity admission | broken/unreadable/non-Git/local git-less card fixtures exit 0 with a conservative receipt | unsafe routing and failed discovery refuse before writes | covered |
+| Honest close reachable after routing/identity admission | broken/unreadable/non-Git/local git-less fixtures; mounted child with valid outer marker allows no-card/WIP/honest turns | unsafe routing and failed discovery refuse before writes; portable mount case models device/discovery results | covered |
 | Inherited Git routing cannot redirect a close | two distinct HEADs; each routing variable (including empty) and config prefix refuses with GIT-ROUTING; verify marker absent and both repositories byte-identical | trusted executable/configuration and stable metadata required | covered with named residual |
 | Failed discovery preserves evidence | unsupported format on card/session, damaged metadata, git-less external card: GIT-ERROR before writes, including honest/WIP attempts | genuinely non-Git directories keep documented behavior | covered |
-| Scratch helpers ignore caller routing | deterministic decoy Git/index/card snapshot through fixture and orchestrator helpers | does not certify real Claude session wiring | covered by fixture/check_git_isolation.py |
+| Config-file selectors cannot blind admission | GLOBAL/SYSTEM select a real excludesFile config; populated and empty selectors refuse before verify/evidence writes | trusted configuration remains outside this boundary | covered |
+| Scratch helpers ignore caller routing | all approved names poisoned; independent expected set checks every copy/prefix; decoy Git/index/card snapshots; admission case collection independent of setup tuple | does not certify real Claude session wiring or all possible Git options | covered by fixture/check_git_isolation.py |
+| Wiring diagnoses a routing refusal honestly | unsanitized probe for DIR/COUNT/GLOBAL/SYSTEM: named failure, no value disclosure, unchanged target, clean retry green | static-only does not execute or establish runtime environment health | covered |
 | Binding catches verify mutation | tracked, untracked-dir (-uall), CARD family, stash, assume-unchanged | non-git cp-restore; inside .git | accepted limitation |
 | Fail-closed | pyyaml absent, git absent, empty stdin, unborn HEAD, unreadable card ⇒ named exit 2 | broken wiring (shell exit≠2) — resolved by: adapt/check_wiring.py (+ self-test; reads settings.json AND settings.local.json, requires the interpreter's absolute path and a `receipt_gate.py` argument (a bare launcher, an interpreter alone or another script is a named VIOLATION in both modes), quote-aware sh CLAUDE_PROJECT_DIR expansion, rejects shell operators, rejects async / exec-form / non-bash-shell hooks, `disableAllHooks` and any leftover `$` expansion by name, warns on broken sibling hooks; `--static-only` non-execution sentinel-proven; Windows: NOT-RUN unless Git Bash is established); an interpreter that vanishes after install stays undetected until the check is re-run (detection, not prevention); `--static-only` mode does NOT prove the gate answers (script checked by name and existence only); user/managed/CLI settings are not inspected; the Git Bash probe is a proxy for Claude Code's detection (false NOT-RUN possible, false pass not) | accepted limitation |

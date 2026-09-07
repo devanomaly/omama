@@ -106,7 +106,9 @@ Resolution steps per handler (hooks.Stop[*].hooks[*], type "command"):
      it by name and existence only; the name is not proof.
   7. Only if 1-6 are clean AND --static-only was not given: the exact
      parsed command is dry-run with empty stdin (time-boxed), and must
-     answer the BAD-INPUT block on exit 2.
+     answer the BAD-INPUT block on exit 2. A GIT-ROUTING response is a
+     named environment VIOLATION: the gate is present but cannot operate
+     under this inherited routing. The probe does not silently scrub it.
 
 Hook shell on Windows: Claude Code runs shell-form hooks through Git Bash
 and falls back to PowerShell when Git Bash is not installed -- where NOTHING
@@ -443,6 +445,15 @@ def _check_command(command, root, static_only=False):
         return ["dry run could not launch ({0}): {1!r}"
                 .format(type(e).__name__, command)]
     out = (r.stdout or "") + (r.stderr or "")
+    if r.returncode == 2 and "RECEIPT-GATE BLOCK[GIT-ROUTING]" in out:
+        import re
+        # Show only names actually present in our environment, never values
+        # or arbitrary subprocess output. Presence is not usable wiring.
+        names = sorted(set(re.findall(r"\bGIT_[A-Za-z0-9_]+\b", out)).intersection(os.environ))
+        detail = ", ".join(names) if names else "the reported routing variables"
+        return ["gate responded with GIT-ROUTING: inherited routing prevents "
+                "normal operation ({0}); unset these variables in the hook "
+                "environment and rerun this check".format(detail)]
     if r.returncode != 2 or BAD_INPUT_MARKER not in out:
         return ["gate did not answer: dry run on empty stdin exited {0} "
                 "without the {1} block (an exit code alone is not the gate "

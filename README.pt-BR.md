@@ -119,6 +119,11 @@ repositório, estados honestos (WIP, FAILED) são exit 0 com rastro —
 baratos. Uma alegação VERIFIED desonesta é cara — exige derrotar hash binding e tripwires, e as
 rotas conhecidas de forja residual estão documentadas e fixadas em fixture, não escondidas.
 
+A barreira de roteamento herdado inclui `GIT_CONFIG_GLOBAL` e
+`GIT_CONFIG_SYSTEM`; a checagem de wiring identifica a recusa como falha do
+ambiente, sem dizer que o gate está ausente. Diretórios sem Git montados dentro
+de um checkout mantêm NO-CARD, WIP e closes honestos nesse limite de filesystem.
+
 ## Como adotar
 
 Cada peça é opt-in por repositório; nada aqui se instala sozinho. Adote o LOOP, não peças

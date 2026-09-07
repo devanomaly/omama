@@ -117,6 +117,11 @@ trail — cheap. A dishonest VERIFIED claim is expensive — it has to beat hash
 tripwires, and the known residual forging routes are documented and pinned in fixtures, not
 hidden.
 
+The inherited routing boundary includes `GIT_CONFIG_GLOBAL` and
+`GIT_CONFIG_SYSTEM`; a wiring probe reports their refusal as an environment
+failure, not a missing gate. Non-Git directories mounted inside a checkout
+retain NO-CARD, WIP and honest closes across that filesystem boundary.
+
 ## How to adopt
 
 Each piece is opt-in, per repository — nothing here installs itself. Adopt the LOOP, not loose

@@ -24,7 +24,8 @@ GIT_ROUTING = (
     "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
     "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_NAMESPACE",
     "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
-    "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT")
+    "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM")
 GIT_CONFIG_PREFIXES = ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
 
 
@@ -78,10 +79,22 @@ def main():
 
     fixture = load_module("omama_fixture_isolation_runner", RUN_FIXTURE)
     selftest = load_module("omama_fixture_isolation_selftest", SELFTEST)
+    gate = load_module("omama_fixture_isolation_gate", HERE.parent / "receipt_gate.py")
+    cross = load_module("omama_fixture_isolation_cross",
+                        HERE.parent / "adapt" / "check_cross_repo.py")
     root = Path(tempfile.mkdtemp(prefix="omama-git-isolation-")).resolve()
     prior = dict(os.environ)
     failures = []
     try:
+        # This literal oracle is independent of the production/helper tuples.
+        # Equality alone cannot catch every copy losing the same name; the
+        # gate fixture also has independent literal admission cases.
+        for label, module in (("fixture", fixture), ("selftest", selftest),
+                              ("gate", gate), ("cross-repo", cross)):
+            if set(module.GIT_ROUTING) != set(GIT_ROUTING):
+                failures.append("%s routing boundary differs from approved names" % label)
+            if tuple(module.GIT_CONFIG_PREFIXES) != GIT_CONFIG_PREFIXES:
+                failures.append("%s config prefixes differ from approved prefixes" % label)
         # Build the victim with the fixture's actual repository helper before
         # poisoning the environment.  Its Git database and durable CARD files
         # are the byte-level evidence boundary for the rest of this check.
@@ -100,8 +113,17 @@ def main():
             "GIT_DIR": str(decoy / ".git"),
             "GIT_WORK_TREE": str(decoy),
             "GIT_INDEX_FILE": str(decoy / ".git" / "index"),
+            "GIT_OBJECT_DIRECTORY": str(decoy / ".git" / "objects"),
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(decoy / ".git" / "objects"),
+            "GIT_COMMON_DIR": str(decoy / ".git"),
+            "GIT_NAMESPACE": "isolation-poison",
+            "GIT_CEILING_DIRECTORIES": str(root),
+            "GIT_DISCOVERY_ACROSS_FILESYSTEM": "1",
             "GIT_CONFIG": str(decoy / ".git" / "config"),
+            "GIT_CONFIG_PARAMETERS": "'core.worktree=%s'" % decoy.as_posix(),
             "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_GLOBAL": str(decoy / ".git" / "config"),
+            "GIT_CONFIG_SYSTEM": str(decoy / ".git" / "config"),
             "GIT_CONFIG_KEY_0": "core.worktree",
             "GIT_CONFIG_VALUE_0": str(decoy),
             "OMAMA_CARD": str(decoy / "CARD.yaml"),
@@ -109,6 +131,8 @@ def main():
             # is bounded to routing/config injection, not all Git behavior.
             "GIT_ISOLATION_UNRELATED": "must-survive",
         }
+        if not set(GIT_ROUTING).issubset(poison):
+            failures.append("poison omits an approved routing name")
         os.environ.update(poison)
 
         cleaned = selftest.scrubbed_env()

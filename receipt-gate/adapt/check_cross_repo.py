@@ -81,14 +81,15 @@ TIMEOUT = 300
 # them: GIT_DIR/GIT_INDEX_FILE win, so a shell carrying them (a hook, a
 # wrapper, an interrupted rebase) would send this check's own `git add` and
 # `git commit` into THAT repository instead of its scratch dir. Dropped, along
-# with the config-injection trio, so nothing outside the scratch dir is
+# with the config-injection variables, so nothing outside the scratch dir is
 # reachable. Other GIT_* (GIT_EXEC_PATH, GIT_SSH, GIT_ASKPASS, ...) are KEPT:
 # git may need them to run at all.
 GIT_ROUTING = (
     "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
     "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_NAMESPACE",
     "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
-    "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT")
+    "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM")
 GIT_CONFIG_PREFIXES = ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
 
 
