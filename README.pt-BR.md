@@ -52,7 +52,7 @@ Uma tarefa entra, roda e fecha assim:
 2. **[receipt-gate](receipt-gate/README.md)** — um Stop hook que, no close DECLARADO, re-roda o
    `verify` do card contra a árvore corrente, hasheia antes/depois e escreve o recibo — **só o
    gate emite o VERIFIED de conclusão de tarefa**. Fechar honestamente como FAILED/UNVERIFIED é
-   sempre possível e sempre deixa recibo. Cards S3 exigem review-artefato aprovado antes do
+   possível e deixa recibo após as checagens de roteamento e identidade do repositório. Cards S3 exigem review-artefato aprovado antes do
    VERIFIED.
 3. **[output-discipline](output-discipline/README.md)** — planos/reviews com estrutura
    obrigatória (verdict primeiro, tier, done-when/verify, non-findings) e **orçamentos de linha
@@ -114,7 +114,8 @@ próprio residual — cada README carrega "o que NÃO pega", com a rota nomeada 
 
 ### Honestidade, por design
 
-O gate trava a alegação, não a sessão. Estados honestos (WIP, FAILED) são exit 0 com rastro —
+O gate trava a alegação, não a sessão. Após as checagens de roteamento e identidade do
+repositório, estados honestos (WIP, FAILED) são exit 0 com rastro —
 baratos. Uma alegação VERIFIED desonesta é cara — exige derrotar hash binding e tripwires, e as
 rotas conhecidas de forja residual estão documentadas e fixadas em fixture, não escondidas.
 

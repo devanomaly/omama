@@ -15,6 +15,7 @@ Exit 1  -> at least one case misbehaved (gate broken or weakened), OR a
 Usage:  python3 run_fixture.py [case-name-substring]
 """
 import json
+from functools import partial
 import os
 import shutil
 import stat
@@ -32,6 +33,20 @@ ROOT = HERE.parent.parent
 VALIDATOR = ROOT / "work-order" / "validate_work_order.py"
 CHECKER = ROOT / "output-discipline" / "scripts" / "check_artifact.py"
 PY = sys.executable
+
+# Scratch setup must not inherit routing into the caller's repository.
+GIT_ROUTING = (
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_NAMESPACE",
+    "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+    "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT")
+GIT_CONFIG_PREFIXES = ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
+
+
+def scrubbed_env():
+    return {k: v for k, v in os.environ.items()
+            if k not in GIT_ROUTING and not k.startswith(GIT_CONFIG_PREFIXES)
+            and not k.startswith("OMAMA_")}
 
 GREEN = f'"{PY}" -c "import sys; sys.exit(0)"'
 RED = f'"{PY}" -c "import sys; print(\'BOOM_MARKER\'); sys.exit(3)"'
@@ -66,7 +81,7 @@ def _rmtree(path):
 def git(repo, *args, check_rc=True):
     r = subprocess.run(["git", "-C", str(repo)] + list(args),
                        capture_output=True, text=True, encoding="utf-8",
-                       errors="replace")
+                       errors="replace", env=scrubbed_env())
     if check_rc and r.returncode != 0:
         raise CaseFail(f"fixture setup git {args} failed: {r.stderr.strip()}")
     return r
@@ -113,7 +128,7 @@ def write_card(repo, verify=GREEN, tier="S1", **kw):
 
 
 def gate_env(extra=None, strip_path=False):
-    env = dict(os.environ)
+    env = scrubbed_env()
     env.pop("OMAMA_CARD", None)
     env["OMAMA_VALIDATOR"] = str(VALIDATOR)
     env["OMAMA_CHECK_ARTIFACT"] = str(CHECKER)
@@ -607,7 +622,8 @@ def b_timeout(tmp):
 
 
 def b_pyyaml_less(tmp):
-    probe = subprocess.run([PY, "-S", "-c", "import yaml"], capture_output=True)
+    probe = subprocess.run([PY, "-S", "-c", "import yaml"], capture_output=True,
+                           env=scrubbed_env())
     check(probe.returncode != 0,
           "FIXTURE ENV NOT ESTABLISHED: py -S can still import yaml -- "
           "this fail-closed fixture must fail loudly, not fake a pass")
@@ -989,7 +1005,8 @@ def run_wiring(repo, timeout=120, extra=()):
     return subprocess.run([PY, str(WIRING), str(repo)] + list(extra),
                           input="",
                           capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", cwd=str(repo), timeout=timeout)
+                          errors="replace", cwd=str(repo), timeout=timeout,
+                          env=scrubbed_env())
 
 
 def viol_lines(r):
@@ -1487,7 +1504,7 @@ def w_no_git_bash(tmp):
     (clean wiring still certifies)."""
     repo = make_repo(tmp)
     plant_settings(repo, '"{0}" "{1}"'.format(PY, GATE))
-    env = dict(os.environ)
+    env = scrubbed_env()
     env["CLAUDE_CODE_GIT_BASH_PATH"] = str(Path(tmp) / "ghost" / "bash.exe")
     r = subprocess.run([PY, str(WIRING), str(repo)], input="",
                        capture_output=True, text=True, encoding="utf-8",
@@ -1561,7 +1578,142 @@ def k_forged_wip_receipt_persists(tmp):
     check("VERIFIED" in r.stdout, "forged receipt not surfaced by WIP echo", r)
 
 
+def _binding_snapshot(repo):
+    return {p.relative_to(repo).as_posix(): p.read_bytes()
+            for p in repo.rglob("*") if p.is_file()}
+
+
+def b_routing_refusal(tmp, variable="GIT_DIR", empty=False):
+    """Two distinct HEADs: routing must fail before verify or evidence writes."""
+    session = make_repo(tmp, "session")
+    decoy = make_repo(tmp, "decoy")
+    (decoy / "tracked.txt").write_text("different revision\n", encoding="utf-8")
+    git(decoy, "commit", "-qam", "different")
+    check(git(session, "rev-parse", "HEAD").stdout !=
+          git(decoy, "rev-parse", "HEAD").stdout, "repro HEADs are identical")
+    command = f'"{PY}" -c "open(\'verify-ran\', \'w\').write(\'ran\')"'
+    (session / ".gitignore").write_text("verify-ran\n", encoding="utf-8")
+    write_card(session, verify=command)
+    (session / "CARD.close").write_text("CLOSE", encoding="utf-8")
+    (session / "CARD.receipt.json").write_bytes(b"standing receipt")
+    write_card(decoy)
+    (decoy / "CARD.close").write_bytes(b"CLOSE")
+    (decoy / "CARD.receipt.json").write_bytes(b"decoy receipt")
+    before = (_binding_snapshot(session), _binding_snapshot(decoy))
+    values = {"GIT_DIR": str(decoy / ".git"),
+              "GIT_INDEX_FILE": str(decoy / ".git" / "index"),
+              "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_7": "core.worktree",
+              "GIT_CONFIG_VALUE_7": "private-routing-value"}
+    injections = [(variable, "" if empty else values[variable])]
+    for name, value in injections:
+        r = run_gate(session, env=gate_env({name: value}))
+        check(r.returncode == 2 and "BLOCK[GIT-ROUTING]" in r.stderr,
+              f"{name}: expected named early GIT-ROUTING refusal", r)
+        check(name in r.stderr and "unset" in r.stderr.lower(),
+              f"{name}: missing variable name/remedy", r)
+        if value and len(value) > 1:
+            check(value not in r.stderr, f"{name}: leaked routing value", r)
+        check((_binding_snapshot(session), _binding_snapshot(decoy)) == before,
+              f"{name}: changed repository/evidence or ran verify", r)
+    # Presence guard also precedes input/card discovery (including NO-CARD).
+    r = run_gate(session, env=gate_env({"GIT_DIR": ""}), stdin="invalid")
+    check(r.returncode == 2 and "BLOCK[GIT-ROUTING]" in r.stderr,
+          "routing guard did not precede input processing", r)
+
+
+def b_discovery_refusal(tmp):
+    """Git refusing inspection must not be mistaken for a non-Git directory."""
+    external, session, env, _ = _cross_repo_pair(tmp, "CLOSE")
+    git(external, "config", "core.repositoryformatversion", "999")
+    before = (_binding_snapshot(external), _binding_snapshot(session))
+    for token in (b"CLOSE", b"FAILED: inspection failed", None):
+        if token is None:
+            (external / "CARD.close").unlink()
+        else:
+            (external / "CARD.close").write_bytes(token)
+        before = (_binding_snapshot(external), _binding_snapshot(session))
+        r = run_gate(session, env=env)
+        check(r.returncode == 2 and "BLOCK[GIT-ERROR]" in r.stderr,
+              "inspection failure must be named GIT-ERROR", r)
+        check((_binding_snapshot(external), _binding_snapshot(session)) == before,
+              "inspection failure changed foreign evidence or Git state", r)
+    # The inverse also matters: failure to inspect the SESSION is not absence.
+    git(external, "config", "--file", str(external / ".git" / "config"),
+        "core.repositoryformatversion", "0")
+    git(session, "config", "core.repositoryformatversion", "999")
+    (external / "CARD.close").write_bytes(b"CLOSE")
+    before = (_binding_snapshot(external), _binding_snapshot(session))
+    r = run_gate(session, env=env)
+    check(r.returncode == 2 and "BLOCK[GIT-ERROR]" in r.stderr,
+          "uninspectable session was treated as non-Git", r)
+    check((_binding_snapshot(external), _binding_snapshot(session)) == before,
+          "session inspection failure changed evidence", r)
+
+
+def b_external_gitless_refusal(tmp):
+    external, session, env, _ = _cross_repo_pair(tmp, "FAILED: git missing")
+    env["PATH"] = os.path.dirname(PY)
+    before = (_binding_snapshot(external), _binding_snapshot(session))
+    r = run_gate(session, env=env)
+    check(r.returncode == 2 and "BLOCK[GIT-ERROR]" in r.stderr,
+          "gitless external card must refuse before evidence writes", r)
+    check((_binding_snapshot(external), _binding_snapshot(session)) == before,
+          "gitless external card changed evidence", r)
+
+
+def b_damaged_git_marker(tmp):
+    external, session, env, _ = _cross_repo_pair(tmp, "FAILED: damaged metadata")
+    (external / ".git" / "HEAD").write_bytes(b"invalid HEAD")
+    before = (_binding_snapshot(external), _binding_snapshot(session))
+    r = run_gate(session, env=env)
+    check(r.returncode == 2 and "BLOCK[GIT-ERROR]" in r.stderr,
+          "damaged .git marker was misclassified as genuinely non-Git", r)
+    check((_binding_snapshot(external), _binding_snapshot(session)) == before,
+          "damaged Git metadata permitted evidence writes", r)
+
+
+def w_scratch_git_isolation(tmp):
+    r = subprocess.run([PY, str(HERE / "check_git_isolation.py")],
+                       cwd=str(tmp), env=scrubbed_env(), capture_output=True,
+                       text=True, encoding="utf-8", errors="replace", timeout=120)
+    check(r.returncode == 0 and "GIT ISOLATION RESULT: VERIFIED" in r.stdout,
+          "scratch helper isolation failed", r)
+
+
+def a_nongit_mount_diagnostic(tmp):
+    """Pin the real Git diagnostic observed on Linux /dev/shm, on every OS.
+
+    Only discovery's result is injected; the shipped gate, honest verify and
+    receipt write execute normally. Real Linux reproduction is recorded in review.
+    """
+    plain = Path(tmp) / "plain"
+    plain.mkdir()
+    write_card(plain)
+    (plain / "CARD.close").write_bytes(b"FAILED: genuinely non-Git")
+    wrapper = (
+        "import runpy, subprocess, sys\n"
+        "original = subprocess.run\n"
+        "def discovery(argv, *a, **kw):\n"
+        "    if argv[0] == 'git' and argv[-2:] == ['rev-parse', '--show-toplevel']:\n"
+        "        return subprocess.CompletedProcess(argv, 128, '', "
+        "'fatal: not a git repository (or any parent up to mount point /dev)\\n'"
+        "'Stopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).\\n')\n"
+        "    return original(argv, *a, **kw)\n"
+        "subprocess.run = discovery\n"
+        "runpy.run_path(sys.argv[1], run_name='__main__')\n")
+    r = run_gate(plain, argv_prefix=[PY, "-c", wrapper])
+    check(r.returncode == 0 and receipt(plain)["verdict"] == "FAILED",
+          "filesystem-boundary diagnostic blocked a genuine non-Git honest close", r)
+    check(not (plain / "CARD.close").exists(), "honest token not consumed", r)
+
+
 CASES = [
+    ("binding: routing overrides refused before writes", b_routing_refusal),
+    ("binding: failed discovery preserves foreign evidence", b_discovery_refusal),
+    ("binding: gitless external card preserves evidence", b_external_gitless_refusal),
+    ("binding: damaged Git marker preserves evidence", b_damaged_git_marker),
+    ("binding: scratch helpers preserve decoy Git and evidence", w_scratch_git_isolation),
+    ("binding: non-Git mount diagnostic permits honest close", a_nongit_mount_diagnostic),
     ("allow: green VERIFIED close, receipt v2 key-exact", a_verified_green),
     ("allow: honest FAILED w/ red verify", a_honest_failed_red),
     ("allow: honest FAILED w/ GREEN verify records verdict FAILED", a_honest_failed_green),
@@ -1654,6 +1806,15 @@ CASES = [
     ("wiring: settings without a Stop hook is 'gate absent'", w_no_stop_hook),
     ("wiring: exit 2 without the BAD-INPUT block is NOT a present gate", w_gate_does_not_answer),
 ]
+
+
+for _variable, _empty in ([(name, True) for name in GIT_ROUTING] +
+                          [(name, False) for name in
+                           ("GIT_INDEX_FILE", "GIT_CONFIG_COUNT",
+                            "GIT_CONFIG_KEY_7", "GIT_CONFIG_VALUE_7")]):
+    _case = partial(b_routing_refusal, variable=_variable, empty=_empty)
+    _case.__name__ = "routing_" + _variable + ("_empty" if _empty else "_value")
+    CASES.append(("binding: " + _case.__name__, _case))
 
 
 def main(argv):

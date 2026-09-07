@@ -2,7 +2,7 @@
 
 > Docs for this piece: **README** (promise, command, states, coverage) ·
 > [adapt/README.md](adapt/README.md) (how to install — per-repo, with a
-> mandatory self-test). The evidence is the re-runnable fixture (78 cases) +
+> mandatory self-test). The evidence is the re-runnable fixture +
 > the empirical spike ([fixture/spike/SPIKE.md](fixture/spike/SPIKE.md)).
 
 ## The decision this piece changes
@@ -12,8 +12,9 @@ says "done" and the human rereads the whole diff or trusts it. After: **only
 the gate emits VERIFIED**, and only after re-running the active card's
 `verify` against the current tree, at close time, with the tree hashed before
 and after. A VERIFIED without backing **cannot be produced through a close**;
-closing honestly as FAILED/UNVERIFIED is always possible (it is the loop's
-boundary) and always leaves a durable, conservative receipt.
+after repository resolution is admitted, closing honestly as FAILED/UNVERIFIED
+leaves a durable, conservative receipt. Unsafe routing or failed identity
+resolution blocks before any close, including an honest one.
 
 ## Close model (the gate locks the CLAIM, not the session)
 
@@ -27,7 +28,7 @@ close model is safe under any frequency. That's why the close is
 |---|---|---|
 | absent | work in progress | 1-line warning (echoes existing receipt + "tree has moved" via rev+diff_sha), exit 0, nothing verified |
 | `CLOSE` | close intends VERIFIED | schema (02) + verify re-run + H1/H2 freshness + (S3) review — all green ⇒ VERIFIED receipt; any failure ⇒ BLOCK exit 2 |
-| `FAILED: <reason>` / `UNVERIFIED: <reason>` | honest close | always allowed; receipt with verdict + reason; degrades (hashes null, named) where git fails |
+| `FAILED: <reason>` / `UNVERIFIED: <reason>` | honest close | allowed after routing/identity admission; receipt with verdict + reason; subsequent Git hashing failures degrade to named null hashes |
 
 The gate CONSUMES `CARD.close` on every allowed close; the durable record is
 `CARD.receipt.json`:
@@ -46,13 +47,13 @@ the registered Stop command answers the gate's `BAD-INPUT` block on empty
 stdin, re-runnable from the adopting repo's CI). Fixture:
 
 ```
-python3 fixture/run_fixture.py        # exit 0 = gate correct (86 cases)
+python3 fixture/run_fixture.py        # exit 0 = all collected cases pass
 ```
 
 | Gate exit | Means |
 |---|---|
 | 0 | stop allowed: NO-CARD, WIP turn, honest close, or VERIFIED |
-| 2 | named BLOCK on stderr (fed back to the model): `BAD-INPUT` · `CARD-CONFIGURED-BUT-MISSING` · `CROSS-REPO` · `CLOSE-TOKEN` · `SCHEMA` · `GIT-ERROR` · `INDEX-FLAGS` · `UNEXPECTED-CHANGE` · `VERIFY-RED` · `TIMEOUT` · `S3-REVIEW` · `GATE-ERROR` |
+| 2 | named BLOCK on stderr (fed back to the model): `GIT-ROUTING` · `BAD-INPUT` · `CARD-CONFIGURED-BUT-MISSING` · `CROSS-REPO` · `CLOSE-TOKEN` · `SCHEMA` · `GIT-ERROR` · `INDEX-FLAGS` · `UNEXPECTED-CHANGE` · `VERIFY-RED` · `TIMEOUT` · `S3-REVIEW` · `GATE-ERROR` |
 
 `CROSS-REPO` is raised at card resolution — before the bookkeeping that
 unlinks a standing receipt — when the card's git toplevel and the session's
@@ -63,6 +64,19 @@ cross-repo `OMAMA_CARD` — a WIP turn included, not only a declared close —
 the same shape as `CARD-CONFIGURED-BUT-MISSING`. A card directory that
 is not in a git repository at all (no toplevel) is NOT refused; it keeps its
 degraded-honest behavior.
+
+Before input or card discovery, `GIT-ROUTING` refuses inherited Git repository
+routing/config-injection variables, even empty ones. It names the variables
+and the unset-and-retry remedy, never their values. See the complete set in
+[adapt/README.md](adapt/README.md#environment-variables).
+
+Discovery failures (unsupported repository format, damaged `.git`, refused
+access) are `GIT-ERROR` before receipt deletion, verify or token consumption.
+Git reporting no repository is accepted as genuinely non-Git only when no
+`.git` marker exists in the directory ancestry. With Git unavailable, the
+existing degraded honest close remains available for a card directly in the
+session directory; an external card is refused because its identity cannot
+be established. These admission checks apply to WIP and honest closes too.
 
 Structural fail-closed: the entire body sits in a guard from line 1 (`import
 yaml` inside the guard); an unhandled exception ⇒ named exit 2, never 1 (1
@@ -129,8 +143,8 @@ receipt survive, and the remedy is the same — run the close from the card's
 repository, or clear `OMAMA_CARD` for the child. A worktree's toplevel
 differs from its main checkout's, so `OMAMA_CARD` pinned at a main checkout
 with the close run inside a worktree of that same repository is refused by
-name too. `adapt/selftest_orchestrator_close.py` scrubs `OMAMA_*` from the
-sessions it spawns for exactly that reason, and proves both halves — run it
+name too. `adapt/selftest_orchestrator_close.py` scrubs `OMAMA_*` and Git
+routing from scratch setup and sessions, and proves both halves — run it
 once per machine; `adapt/check_cross_repo.py` proves the refusal itself and
 costs no session.
 
@@ -146,6 +160,11 @@ costs no session.
   checkout, assume-unchanged) are caught by the tripwires.
 - **Reflog scrubbing / evasions inside `.git`** (clean filters via
   `.git/info/attributes`, fsmonitor) — the material does not hash `.git`.
+- **Repository metadata changes during discovery:** admission is not a lock
+  on `.git` or the filesystem. Concurrent metadata replacement, malicious Git
+  executables, and repository/global configuration remain outside this guard;
+  use trusted Git/configuration and isolated worktrees. `GIT-ROUTING` covers
+  the enumerated inherited routing variables, not every possible Git option.
 - **Verify that's technically real but irrelevant to the goal** — form, not
   relevance; that's human review of the card.
 - **Orphaned stragglers on timeout** (Windows: reparenting gap in `taskkill
@@ -203,7 +222,10 @@ costs no session.
 
 | Promised | Mechanically covered | Not covered / known bypass | Classification |
 |---|---|---|---|
-| VERIFIED without backing impossible via close | 78 cases: red blocks, stale blocks, planted receipts deleted (start, block-exit, guard route) | forgery on a WIP turn persists | fixed KNOWN-LIMITATION |
-| Honest close always reachable | fixtures: broken/unreadable/non-git/no-git card — all exit 0 with a conservative receipt | — | covered |
+| VERIFIED without backing impossible via close | named red blocks, stale blocks, planted receipts deleted (start, block-exit, guard route) | forgery on a WIP turn persists | fixed KNOWN-LIMITATION |
+| Honest close reachable after routing/identity admission | broken/unreadable/non-Git/local git-less card fixtures exit 0 with a conservative receipt | unsafe routing and failed discovery refuse before writes | covered |
+| Inherited Git routing cannot redirect a close | two distinct HEADs; each routing variable (including empty) and config prefix refuses with GIT-ROUTING; verify marker absent and both repositories byte-identical | trusted executable/configuration and stable metadata required | covered with named residual |
+| Failed discovery preserves evidence | unsupported format on card/session, damaged metadata, git-less external card: GIT-ERROR before writes, including honest/WIP attempts | genuinely non-Git directories keep documented behavior | covered |
+| Scratch helpers ignore caller routing | deterministic decoy Git/index/card snapshot through fixture and orchestrator helpers | does not certify real Claude session wiring | covered by fixture/check_git_isolation.py |
 | Binding catches verify mutation | tracked, untracked-dir (-uall), CARD family, stash, assume-unchanged | non-git cp-restore; inside .git | accepted limitation |
 | Fail-closed | pyyaml absent, git absent, empty stdin, unborn HEAD, unreadable card ⇒ named exit 2 | broken wiring (shell exit≠2) — resolved by: adapt/check_wiring.py (+ self-test; reads settings.json AND settings.local.json, requires the interpreter's absolute path and a `receipt_gate.py` argument (a bare launcher, an interpreter alone or another script is a named VIOLATION in both modes), quote-aware sh CLAUDE_PROJECT_DIR expansion, rejects shell operators, rejects async / exec-form / non-bash-shell hooks, `disableAllHooks` and any leftover `$` expansion by name, warns on broken sibling hooks; `--static-only` non-execution sentinel-proven; Windows: NOT-RUN unless Git Bash is established); an interpreter that vanishes after install stays undetected until the check is re-run (detection, not prevention); `--static-only` mode does NOT prove the gate answers (script checked by name and existence only); user/managed/CLI settings are not inspected; the Git Bash probe is a proxy for Claude Code's detection (false NOT-RUN possible, false pass not) | accepted limitation |

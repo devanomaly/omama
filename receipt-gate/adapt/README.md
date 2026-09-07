@@ -186,6 +186,26 @@ is the reference (env vars, troubleshooting, rationale).
 
 ## Environment variables
 
+The gate refuses these inherited variables with `GIT-ROUTING` (exit 2),
+before reading input or touching evidence: `GIT_DIR`, `GIT_WORK_TREE`,
+`GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`,
+`GIT_COMMON_DIR`, `GIT_NAMESPACE`, `GIT_CEILING_DIRECTORIES`,
+`GIT_DISCOVERY_ACROSS_FILESYSTEM`, `GIT_CONFIG`, `GIT_CONFIG_PARAMETERS`,
+`GIT_CONFIG_COUNT`, and names beginning `GIT_CONFIG_KEY_` or
+`GIT_CONFIG_VALUE_`. Empty values count as present. Unset them in the child
+hook environment and retry; do not merely set them to empty strings. Other
+variables (for example `GIT_EXEC_PATH`) are retained.
+
+`GIT-ERROR` during repository discovery leaves the card, close token and
+standing receipt unchanged. Repair Git access/configuration before retrying.
+Genuinely non-Git card directories retain degraded honest closes. With Git
+missing from PATH, only a card directly in the session directory retains
+that fallback; externally selected cards require successful discovery.
+
+The fixture runner and orchestrator self-test scrub routing from their
+scratch subprocesses. `python3 receipt-gate/fixture/check_git_isolation.py`
+tests that isolation with a decoy, without spending a Claude session.
+
 - `OMAMA_CARD` — path to the active card (empty = disabled; a nonexistent
   path BLOCKS — a typo does not disable the gate). The card's repository must
   be the session's repository (the same git toplevel; a worktree is a
