@@ -15,7 +15,7 @@ Exit contract (empirically pinned on Claude Code 2.1.236 -- fixture/spike/):
 Close protocol (CARD.close, sibling of the card):
   CLOSE                 -> close intends VERIFIED: schema + verify + freshness
                            (+ S3 review) must all hold.
-  FAILED: <reason>      -> honest close; ALWAYS allowed (degrades, never
+  FAILED: <reason>      -> honest close; allowed after routing/identity checks (degrades, never
                            crashes: unreadable/weird card files become named
                            sentinels, git failures null the hash fields).
   UNVERIFIED: <reason>  -> honest close; same.
@@ -39,7 +39,7 @@ UNEXPECTED-CHANGE instead of splitting decisions across two versions. The
 review is re-read and compared once more after the S3 checks (the checker
 subprocess reads the file itself).
 
-Named block reasons: BAD-INPUT, CARD-CONFIGURED-BUT-MISSING, CROSS-REPO,
+Named block reasons: GIT-ROUTING, BAD-INPUT, CARD-CONFIGURED-BUT-MISSING, CROSS-REPO,
 CLOSE-TOKEN, SCHEMA, GIT-ERROR, INDEX-FLAGS, UNEXPECTED-CHANGE, VERIFY-RED,
 TIMEOUT, S3-REVIEW, GATE-ERROR.
 
@@ -74,6 +74,21 @@ class GitError(Exception):
     pass
 
 
+class GitUnavailable(GitError):
+    pass
+
+
+# Keep aligned with adapt/check_cross_repo.py's scratch-environment boundary.
+# Do not reject unrelated GIT_* (e.g. GIT_EXEC_PATH needed to launch Git).
+GIT_ROUTING = (
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_NAMESPACE",
+    "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+    "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM")
+GIT_CONFIG_PREFIXES = ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
+
+
 class VerifyTimeout(Exception):
     def __init__(self, output):
         super().__init__("verify timed out")
@@ -88,6 +103,14 @@ def main(state):
     import subprocess
     from datetime import datetime, timezone
     from pathlib import Path
+
+    # Presence, including an empty value, is ambiguous routing. Refuse before
+    # even reading a card, and never print configuration values (possibly secret).
+    routing = sorted(k for k in os.environ
+                     if k in GIT_ROUTING or k.startswith(GIT_CONFIG_PREFIXES))
+    if routing:
+        raise Block("GIT-ROUTING", "inherited Git routing: " + ", ".join(routing)
+                    + "; unset these variables in the hook environment and retry.")
 
     # ---------------------------------------------------------------- input
     raw = sys.stdin.read()
@@ -109,18 +132,55 @@ def main(state):
                 capture_output=True, text=not binary, input=input_bytes,
                 **({} if binary else {"encoding": "utf-8", "errors": "replace"}))
         except FileNotFoundError:
-            raise GitError("git is not available on PATH")
+            raise GitUnavailable("git is not available on PATH")
         if r.returncode not in ok_codes:
             err = r.stderr if not binary else r.stderr.decode("utf-8", "replace")
             raise GitError(f"git {args[0]} exited {r.returncode}: {err.strip()[:300]}")
         return r.returncode, (r.stdout if not binary else r.stdout)
 
+    discovery_errors = []
+
     def toplevel(path):
+        # Pin only discovery diagnostics: Git has no distinct exit status for
+        # 'not a repository' versus an unreadable/unsupported repository.
+        env = dict(os.environ, LC_ALL="C", LANGUAGE="C")
         try:
-            _, out = run_git(path, ["rev-parse", "--show-toplevel"])
-            return Path(out.strip())
-        except (GitError, OSError):
-            return None
+            r = subprocess.run(["git", "-C", str(path), "rev-parse",
+                                "--show-toplevel"], capture_output=True,
+                               text=True, encoding="utf-8", errors="replace",
+                               env=env)
+        except FileNotFoundError:
+            discovery_errors.append("unavailable")
+        except OSError:
+            discovery_errors.append("inspection failed")
+        else:
+            if r.returncode == 0 and r.stdout.strip():
+                return Path(r.stdout.strip()).resolve()
+            nonrepo = ("fatal: not a git repository (or any of the parent directories): .git",
+                       "fatal: not a git repository (or any parent up to mount point ")
+            if r.returncode == 128 and r.stderr.strip().startswith(nonrepo):
+                # Git also prints 'not a repository' for damaged metadata.
+                # A .git directory/file/symlink is positive intent, even if
+                # Git cannot use it. lstat includes dangling worktree links.
+                try:
+                    start = Path(path).resolve()
+                    start_dev = start.stat().st_dev
+                    for ancestor in (start,) + tuple(start.parents):
+                        # Git did not inspect a parent on another filesystem.
+                        # Its .git marker cannot make this directory a repo.
+                        if ancestor.stat().st_dev != start_dev:
+                            return None
+                        try:
+                            (ancestor / ".git").lstat()
+                        except FileNotFoundError:
+                            continue
+                        break
+                    else:
+                        return None
+                except OSError:
+                    pass
+            discovery_errors.append("inspection failed")
+        return None
 
     # ------------------------------------------------------ card resolution
     env_card = os.environ.get("OMAMA_CARD", "").strip()
@@ -134,6 +194,9 @@ def main(state):
         top = toplevel(cwd) or Path(cwd)
         card = top / "CARD.yaml"
         if not card.exists():
+            if discovery_errors and "inspection failed" in discovery_errors:
+                raise Block("GIT-ERROR", "repository discovery failed; repair Git "
+                            "access/configuration and retry. No evidence was touched.")
             orphan = top / "CARD.close"
             extra = (f" NOTE: an orphaned CARD.close exists at {orphan} -- it "
                      "will fire a close attempt against any future card here; "
@@ -149,6 +212,16 @@ def main(state):
     card_repo = toplevel(card_dir)  # None => non-git card dir (degraded honest)
 
     session_top = toplevel(cwd)
+    if discovery_errors:
+        # Retain the documented git-less honest hatch only when the card is
+        # directly in the session directory. Without Git, an externally selected
+        # card's identity is unknown; it cannot authorize evidence destruction.
+        local_gitless = (all(e == "unavailable" for e in discovery_errors)
+                         and card_dir.resolve() == Path(cwd).resolve())
+        if not local_gitless:
+            raise Block("GIT-ERROR", "repository discovery failed; cannot establish "
+                        "the card/session binding. Repair Git access/configuration "
+                        "or unset OMAMA_CARD and retry. No evidence was touched.")
     if card_repo and session_top and card_repo != session_top:
         # Raised HERE, before the close-attempt bookkeeping below unlinks the
         # standing receipt: a stray OMAMA_CARD must not consume another

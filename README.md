@@ -49,7 +49,7 @@ A task enters, runs, and closes like this:
 2. **[receipt-gate](receipt-gate/README.md)** — a Stop hook that, on a DECLARED close, re-runs
    the card's own `verify` against the current tree, hashes before/after, and writes the
    receipt — **only the gate emits task-completion VERIFIED**. Closing honestly as
-   FAILED/UNVERIFIED is always possible and always leaves a receipt. S3 cards require an
+   FAILED/UNVERIFIED leaves a receipt after routing and repository identity checks pass. S3 cards require an
    approved review artifact before VERIFIED.
 3. **[output-discipline](output-discipline/README.md)** — plans/reviews with mandatory structure
    (verdict first, tier, done-when/verify, explicit non-findings) and **advisory-only line
@@ -111,10 +111,16 @@ named route that would close the gap.
 
 ### Honesty, by design
 
-The gate locks the *claim*, not the session. Honest states (WIP, FAILED) are exit 0 with a
+The gate locks the *claim*, not the session. After routing and repository identity checks,
+honest states (WIP, FAILED) are exit 0 with a
 trail — cheap. A dishonest VERIFIED claim is expensive — it has to beat hash binding and
 tripwires, and the known residual forging routes are documented and pinned in fixtures, not
 hidden.
+
+The inherited routing boundary includes `GIT_CONFIG_GLOBAL` and
+`GIT_CONFIG_SYSTEM`; a wiring probe reports their refusal as an environment
+failure, not a missing gate. Non-Git directories mounted inside a checkout
+retain NO-CARD, WIP and honest closes across that filesystem boundary.
 
 ## How to adopt
 

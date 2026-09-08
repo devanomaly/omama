@@ -52,6 +52,9 @@ so an inherited value would point the scratch session's Stop hook at ANOTHER
 repository's card and consume its CARD.close and receipt. A decoy repo holding
 a declared close and a sentinel receipt is built, OMAMA_CARD is pointed at it
 for the duration, and both halves assert it came through byte-identical.
+Git repository-routing variables and config injection are scrubbed from every
+subprocess too: `git -C` does not override GIT_DIR or GIT_INDEX_FILE, and setup
+must never write through an inherited route into a repository outside scratch.
 
 Costs two Claude Code sessions and depends on a working login, which is why
 this is a developer-machine self-test and NOT wired into verify_all.py or CI.
@@ -103,6 +106,18 @@ SENTINEL = {"sentinel": "orchestrator-selftest"}
 DECOY_CLOSE_BYTES = b"CLOSE\n"
 DECOY_RECEIPT_BYTES = json.dumps(
     {"sentinel": "orchestrator-selftest-decoy"}).encode("utf-8")
+
+# Git's repository-routing variables. `git -C <scratch>` does not neutralize
+# them: GIT_DIR/GIT_INDEX_FILE win, so a shell carrying them can send setup
+# writes into another repository. Config injection can route the worktree too.
+# Other GIT_* variables are preserved because Git may need them to run.
+GIT_ROUTING = (
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_NAMESPACE",
+    "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+    "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM")
+GIT_CONFIG_PREFIXES = ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
 
 # The timeout lock's subject: a process that leaves a grandchild holding its
 # output handles and then hangs itself. Under the old collection strategy the
@@ -188,13 +203,13 @@ def kill_tree(proc):
         taskkill = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
                                 "System32", "taskkill.exe")
         subprocess.run([taskkill, "/F", "/T", "/PID", str(proc.pid)],
-                       capture_output=True)
+                       capture_output=True, env=scrubbed_env())
     else:
         proc.kill()
 
 
 def scrubbed_env():
-    """The child must not inherit OMAMA_*.
+    """Children must not inherit OMAMA_* or Git routing/config injection.
 
     The gate resolves OMAMA_CARD BEFORE cwd, and an adopting repo exports one
     from its own settings -- so an inherited OMAMA_CARD would point a scratch
@@ -203,7 +218,10 @@ def scrubbed_env():
     resolving the card from cwd and the validator from its own relative
     default: the path the docs describe and this self-test certifies.
     """
-    return {k: v for k, v in os.environ.items() if not k.startswith("OMAMA_")}
+    return {k: v for k, v in os.environ.items()
+            if not k.startswith("OMAMA_")
+            and k not in GIT_ROUTING
+            and not k.startswith(GIT_CONFIG_PREFIXES)}
 
 
 def run_bounded(argv, cwd, timeout, env=None):
@@ -218,6 +236,8 @@ def run_bounded(argv, cwd, timeout, env=None):
 
     Returns (timed_out, Result).
     """
+    if env is None:
+        env = scrubbed_env()
     out_fd, out_path = tempfile.mkstemp(prefix="omama-selftest-out-")
     err_fd, err_path = tempfile.mkstemp(prefix="omama-selftest-err-")
     timed_out = False
@@ -271,7 +291,8 @@ def timeout_lock():
 def git(root, *args):
     r = subprocess.run(["git", "-C", str(root)] + list(args),
                        capture_output=True, text=True,
-                       encoding="utf-8", errors="replace")
+                       encoding="utf-8", errors="replace",
+                       env=scrubbed_env())
     if r.returncode != 0:
         raise Fail("git %s exited %d in the scratch repo: %s"
                    % (args[0], r.returncode, (r.stderr or "").strip()[:300]))
@@ -287,7 +308,7 @@ def preconditions():
     try:
         r = subprocess.run([claude, "--version"], capture_output=True,
                            text=True, encoding="utf-8", errors="replace",
-                           timeout=60)
+                           timeout=60, env=scrubbed_env())
     except (OSError, subprocess.SubprocessError) as e:
         raise NotRun("`claude --version` could not be spawned from %s (%s) -- "
                      "on Windows the launcher is often a .cmd shim; if it "
@@ -312,7 +333,7 @@ def preconditions():
     # the fact this self-test exists to certify.
     r = subprocess.run([sys.executable, "-c", "import yaml"],
                        capture_output=True, text=True, encoding="utf-8",
-                       errors="replace", timeout=60)
+                       errors="replace", timeout=60, env=scrubbed_env())
     if r.returncode != 0:
         raise NotRun("this interpreter lacks PyYAML (%s -c 'import yaml' "
                      "exited %d); it is the interpreter the scratch repo would "
@@ -352,7 +373,7 @@ def build_repo(root):
 
     r = subprocess.run([sys.executable, str(VALIDATOR), str(card_path)],
                        capture_output=True, text=True, encoding="utf-8",
-                       errors="replace", timeout=60)
+                       errors="replace", timeout=60, env=scrubbed_env())
     if r.returncode != 0 or not (r.stdout or "").startswith("OK"):
         raise Fail("the in-tree validator rejected the scratch card (exit %d) "
                    "-- this self-test's own fixture is broken, not the gate:\n"

@@ -97,6 +97,12 @@ is the reference (env vars, troubleshooting, rationale).
    repo's CI is the natural place; the check DETECTS dead wiring, nothing
    prevents it from going dead later.
 
+   A gate answering `GIT-ROUTING` is present but cannot operate in that
+   inherited environment. The check keeps exit 1 and names the variables
+   plus the unset remedy, instead of claiming the gate did not answer.
+   It does not silently sanitize the dry run or report WIRING-OK for this
+   refusal. `--static-only` still proves paths/form only, not runtime health.
+
    **Windows: Git Bash is established first.** Claude Code runs shell-form
    hooks through Git Bash and falls back to PowerShell when it is not
    installed — where nothing this check certifies is what runs. So on
@@ -185,6 +191,35 @@ is the reference (env vars, troubleshooting, rationale).
    that produced it.
 
 ## Environment variables
+
+The gate refuses these inherited variables with `GIT-ROUTING` (exit 2),
+before reading input or touching evidence: `GIT_DIR`, `GIT_WORK_TREE`,
+`GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`,
+`GIT_COMMON_DIR`, `GIT_NAMESPACE`, `GIT_CEILING_DIRECTORIES`,
+`GIT_DISCOVERY_ACROSS_FILESYSTEM`, `GIT_CONFIG`, `GIT_CONFIG_PARAMETERS`,
+`GIT_CONFIG_COUNT`, `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`, and names beginning `GIT_CONFIG_KEY_` or
+`GIT_CONFIG_VALUE_`. Empty values count as present. Unset them in the child
+hook environment and retry; do not merely set them to empty strings. Other
+variables (for example `GIT_EXEC_PATH`) are retained.
+
+`GIT-ERROR` during repository discovery leaves the card, close token and
+standing receipt unchanged. Repair Git access/configuration before retrying.
+Genuinely non-Git card directories retain degraded honest closes. With Git
+missing from PATH, only a card directly in the session directory retains
+that fallback; externally selected cards require successful discovery.
+The `.git` marker check follows Git's filesystem boundary: an outer checkout
+does not invalidate a genuinely non-Git mounted child. NO-CARD and WIP turns
+there remain allowed; a damaged marker inside the discovery boundary refuses.
+The GLOBAL/SYSTEM file selectors are refused, but underlying trusted Git
+configuration, its `HOME` / `XDG_CONFIG_HOME` lookup roots, and
+`GIT_CONFIG_NOSYSTEM` remain outside the enumerated boundary.
+
+The fixture runner and orchestrator self-test scrub routing from their
+scratch subprocesses. `python3 receipt-gate/fixture/check_git_isolation.py`
+tests that isolation with a decoy, without spending a Claude session.
+Every approved routing name is poisoned, and independent expected names pin
+the helper/gate copies and the gate's admission cases. A smaller helper tuple
+cannot silently collect fewer binding cases.
 
 - `OMAMA_CARD` — path to the active card (empty = disabled; a nonexistent
   path BLOCKS — a typo does not disable the gate). The card's repository must
