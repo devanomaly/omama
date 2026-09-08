@@ -174,8 +174,9 @@ costs no session.
   use trusted Git/configuration and isolated worktrees. `GIT-ROUTING` covers
   the enumerated inherited routing variables, not every possible Git option.
   The enumerated boundary includes the `GIT_CONFIG_GLOBAL` and
-  `GIT_CONFIG_SYSTEM` file selectors; underlying trusted configuration and
-  `GIT_CONFIG_NOSYSTEM` remain outside it. Ignored files remain outside the
+  `GIT_CONFIG_SYSTEM` file selectors; underlying trusted configuration,
+  its `HOME` / `XDG_CONFIG_HOME` lookup roots, and `GIT_CONFIG_NOSYSTEM`
+  remain outside it. Ignored files remain outside the
   untracked-name tripwire; this is not an audit of every Git ignore source.
 - **Verify that's technically real but irrelevant to the goal** — form, not
   relevance; that's human review of the card.
@@ -238,7 +239,7 @@ costs no session.
 | Honest close reachable after routing/identity admission | broken/unreadable/non-Git/local git-less fixtures; mounted child with valid outer marker allows no-card/WIP/honest turns | unsafe routing and failed discovery refuse before writes; portable mount case models device/discovery results | covered |
 | Inherited Git routing cannot redirect a close | two distinct HEADs; each routing variable (including empty) and config prefix refuses with GIT-ROUTING; verify marker absent and both repositories byte-identical | trusted executable/configuration and stable metadata required | covered with named residual |
 | Failed discovery preserves evidence | unsupported format on card/session, damaged metadata, git-less external card: GIT-ERROR before writes, including honest/WIP attempts | genuinely non-Git directories keep documented behavior | covered |
-| Config-file selectors cannot blind admission | GLOBAL/SYSTEM select a real excludesFile config; populated and empty selectors refuse before verify/evidence writes | trusted configuration remains outside this boundary | covered |
+| Config-file selectors cannot blind admission | GLOBAL/SYSTEM select a real excludesFile config; populated and empty selectors refuse before verify/evidence writes; probe preconditions survive HOME/XDG overrides and NOSYSTEM while the gate receives the inherited environment | trusted configuration, including HOME/XDG lookup roots, remains outside this boundary | covered |
 | Scratch helpers ignore caller routing | all approved names poisoned; independent expected set checks every copy/prefix; decoy Git/index/card snapshots; admission case collection independent of setup tuple | does not certify real Claude session wiring or all possible Git options | covered by fixture/check_git_isolation.py |
 | Wiring diagnoses a routing refusal honestly | unsanitized probe for DIR/COUNT/GLOBAL/SYSTEM: named failure, no value disclosure, unchanged target, clean retry green | static-only does not execute or establish runtime environment health | covered |
 | Binding catches verify mutation | tracked, untracked-dir (-uall), CARD family, stash, assume-unchanged | non-git cp-restore; inside .git | accepted limitation |

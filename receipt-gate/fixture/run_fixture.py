@@ -1772,8 +1772,14 @@ def b_config_file_refusal(tmp, variable):
     write_card(decoy)
     (decoy / "CARD.receipt.json").write_bytes(b"decoy evidence")
     env = gate_env({variable: str(config)})
+    # Establish the selector without higher-precedence user config or a
+    # disabled system layer masking it. The gate still receives env unchanged.
+    probe_env = dict(env)
+    probe_env.pop("GIT_CONFIG_NOSYSTEM", None)
+    if variable == "GIT_CONFIG_SYSTEM":
+        probe_env["GIT_CONFIG_GLOBAL"] = str(Path(tmp) / "absent.gitconfig")
     probe = subprocess.run(["git", "-C", str(session), "config", "--get", "core.excludesFile"],
-                           env=env, capture_output=True, text=True)
+                           env=probe_env, capture_output=True, text=True)
     check(probe.returncode == 0 and probe.stdout.strip() == excludes.as_posix(),
           "config selector was not established for " + variable, probe)
     before = (_binding_snapshot(session), _binding_snapshot(decoy))
@@ -1793,6 +1799,39 @@ def b_config_global_refusal(tmp):
 
 def b_config_system_refusal(tmp):
     b_config_file_refusal(tmp, "GIT_CONFIG_SYSTEM")
+
+
+def b_config_ambient_refusal(tmp, source):
+    from unittest.mock import patch
+
+    home = Path(tmp) / "home"
+    xdg = Path(tmp) / "xdg"
+    home.mkdir()
+    (xdg / "git").mkdir(parents=True)
+    ambient = {"HOME": str(home), "XDG_CONFIG_HOME": str(xdg),
+               "GIT_CONFIG_NOSYSTEM": "1" if source == "nosystem" else "0"}
+    if source != "nosystem":
+        config = home / ".gitconfig" if source == "home" else xdg / "git" / "config"
+        excludes = Path(tmp) / "ambient.excludes"
+        excludes.write_text("ambient-only\n", encoding="utf-8")
+        config.write_text('[core]\n\texcludesFile = "' + excludes.as_posix() + '"\n',
+                          encoding="utf-8")
+    # Only disposable lookup roots are changed, and only for this case.
+    # Exercise the original selector cases, including their real gate calls.
+    with patch.dict(os.environ, ambient):
+        for variable in ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"):
+            case = Path(tmp) / variable
+            case.mkdir()
+            expected_env = gate_env({variable: str(case / "poison.gitconfig")})
+            real_run_gate = run_gate
+
+            def checked_gate(cwd, **kwargs):
+                check(kwargs.get("env") == expected_env,
+                      "config fixture changed the actual gate environment")
+                return real_run_gate(cwd, **kwargs)
+
+            with patch(__name__ + ".run_gate", checked_gate):
+                b_config_file_refusal(case, variable)
 
 
 def w_routing_response(tmp):
@@ -1921,6 +1960,12 @@ CASES = [
     ("wiring: settings without a Stop hook is 'gate absent'", w_no_stop_hook),
     ("wiring: exit 2 without the BAD-INPUT block is NOT a present gate", w_gate_does_not_answer),
 ]
+
+
+for _source in ("home", "xdg", "nosystem"):
+    _case = partial(b_config_ambient_refusal, source=_source)
+    _case.__name__ = "config_ambient_" + _source
+    CASES.append(("binding: config-file ambient " + _source, _case))
 
 
 # Independent admission oracle: reducing the setup helper's tuple must not

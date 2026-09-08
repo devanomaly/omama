@@ -211,7 +211,8 @@ The `.git` marker check follows Git's filesystem boundary: an outer checkout
 does not invalidate a genuinely non-Git mounted child. NO-CARD and WIP turns
 there remain allowed; a damaged marker inside the discovery boundary refuses.
 The GLOBAL/SYSTEM file selectors are refused, but underlying trusted Git
-configuration and `GIT_CONFIG_NOSYSTEM` remain outside the enumerated boundary.
+configuration, its `HOME` / `XDG_CONFIG_HOME` lookup roots, and
+`GIT_CONFIG_NOSYSTEM` remain outside the enumerated boundary.
 
 The fixture runner and orchestrator self-test scrub routing from their
 scratch subprocesses. `python3 receipt-gate/fixture/check_git_isolation.py`
