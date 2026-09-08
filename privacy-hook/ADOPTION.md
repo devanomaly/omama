@@ -137,9 +137,15 @@ Plain git repo (no `pre-commit` framework):
 6. If any `tokens_file` literal is sensitive (e.g. a real client name),
    **don't commit the `tokens_file`** — add it to `.gitignore` and
    distribute it outside git (Slack, secret manager, etc). Without the
-   file, the hook fails closed (blocks everything) until it exists —
-   set `tokens_file` to `null`/omit it if the team doesn't want this
-   layer.
+   configured file, the hook fails closed (blocks everything), names the
+   expected path, and tells you to create the gitignored file; that file
+   may begin as comment-only while the real literal list is distributed
+   out of band. An existing empty or comment-only file is a supported,
+   nonblocking bootstrap, but every scanner run prints exactly one stderr
+   notice naming the file, saying the literal layer is inactive, and
+   telling you to fill the file or explicitly set `tokens_file` to
+   `null`. Set `tokens_file` to `null` or omit the key if the team
+   deliberately does not want this layer; both forms stay silent.
 7. Test: `git add` a file with `AKIA` + 16 uppercase/digit chars and
    try to commit — it should block. (Don't use AWS's own documentation
    example key id: it's in the allowlist on purpose.) Equivalent
