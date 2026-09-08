@@ -1,0 +1,17 @@
+include LICENSE
+include MANIFEST.in
+include pyproject.toml
+include _build_identity.json
+recursive-include build_backend *.py
+recursive-include cli *.py *.md *.sh
+include receipt-gate/receipt_gate.py
+include receipt-gate/adapt/check_wiring.py
+include work-order/validate_work_order.py
+include work-order/work-order.template.yaml
+include output-discipline/scripts/check_artifact.py
+include output-discipline/templates/PLAN.md
+include output-discipline/templates/REVIEW.md
+include privacy-hook/scan_staged.py
+include privacy-hook/pre-commit
+include privacy-hook/privacy-deny.json
+include starter-claude-md/CLAUDE.starter.md
