@@ -8,6 +8,7 @@ the argv/PID/timing of fixture children and Git Trace2 events started here.
 """
 
 import hashlib
+import importlib.util
 import json
 import os
 import platform
@@ -15,6 +16,7 @@ import subprocess
 import sys
 import threading
 import time
+import types
 from pathlib import Path
 
 
@@ -119,6 +121,7 @@ def _run(
         timed_out = True
         process.kill()
         stdout, stderr = process.communicate()
+    child_completed = time.time_ns()
     if immediate_scope is not None:
         # This must be the first operation after child completion. In
         # particular, do not write process/output diagnostics before sampling
@@ -135,6 +138,7 @@ def _run(
         "pid": process.pid,
         "returncode": process.returncode,
         "started_ns": started,
+        "child_completed_ns": child_completed,
         "ended_ns": ended,
         "timed_out": timed_out,
         "trace2": trace.relative_to(ROOT).as_posix() if trace.exists() else None,
@@ -186,6 +190,55 @@ def _delta(before, after):
 def _capture(label, root):
     value = _snapshot(root)
     _json_write(SNAPSHOTS / (label + ".json"), value)
+    return value
+
+
+def _start_scope_watcher(label, scope, baseline):
+    stop = threading.Event()
+    observations = {}
+    read_errors = []
+
+    def watch():
+        while not stop.is_set():
+            try:
+                current = _snapshot(scope)
+            except OSError as exc:
+                read_errors.append({"type": type(exc).__name__, "time_ns": time.time_ns()})
+                continue
+            if current == baseline:
+                continue
+            delta = _delta(baseline, current)
+            changed_names = sorted(set(delta["added"] + delta["removed"] + delta["changed"]))
+            states = {
+                name: {"baseline": baseline.get(name), "observed": current.get(name)}
+                for name in changed_names
+            }
+            key = json.dumps(states, sort_keys=True)
+            now = time.time_ns()
+            row = observations.setdefault(key, {
+                "delta": delta,
+                "states": states,
+                "first_seen_ns": now,
+                "last_seen_ns": now,
+                "observations": 0,
+            })
+            row["last_seen_ns"] = now
+            row["observations"] += 1
+
+    thread = threading.Thread(target=watch, name=label + "-scope-watcher")
+    thread.start()
+    return stop, thread, observations, read_errors
+
+
+def _finish_scope_watcher(label, watcher):
+    stop, thread, observations, read_errors = watcher
+    stop.set()
+    thread.join()
+    value = {
+        "transient_states": sorted(observations.values(), key=lambda row: row["first_seen_ns"]),
+        "read_errors": read_errors,
+    }
+    _json_write(ROOT / (label + "-scope-watcher.json"), value)
     return value
 
 
@@ -306,26 +359,30 @@ def _routing_case():
     _make_repo(repo, "routing")
     _plant_settings(repo)
     baseline = _capture("routing-post-setup", repo)
+    watcher = _start_scope_watcher("routing", repo, baseline)
     results = []
     variables = ("GIT_DIR", "GIT_CONFIG_COUNT", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM")
-    for variable in variables:
-        env = _clean_env({variable: "private-routing-value"})
-        results.append(_phase(
-            "routing-control-" + variable.lower(), repo, baseline,
-            [PYTHON, "-B", "-c", "pass"], repo, env, 0, "",
-        ))
-    wrapper = _logged_popen_prefix() + (
-        "import runpy, sys\n"
-        "target = sys.argv.pop(1)\n"
-        "runpy.run_path(target, run_name='__main__')\n"
-    )
-    for variable in variables:
-        env = _clean_env({variable: "private-routing-value"})
-        results.append(_phase(
-            "routing-invoke-" + variable.lower(), repo, baseline,
-            [PYTHON, "-B", "-c", wrapper, WIRING, repo], repo, env, 1,
-            "gate responded with GIT-ROUTING",
-        ))
+    try:
+        for variable in variables:
+            env = _clean_env({variable: "private-routing-value"})
+            results.append(_phase(
+                "routing-control-" + variable.lower(), repo, baseline,
+                [PYTHON, "-B", "-c", "pass"], repo, env, 0, "",
+            ))
+        wrapper = _logged_popen_prefix() + (
+            "import runpy, sys\n"
+            "target = sys.argv.pop(1)\n"
+            "runpy.run_path(target, run_name='__main__')\n"
+        )
+        for variable in variables:
+            env = _clean_env({variable: "private-routing-value"})
+            results.append(_phase(
+                "routing-invoke-" + variable.lower(), repo, baseline,
+                [PYTHON, "-B", "-c", wrapper, WIRING, repo], repo, env, 1,
+                "gate responded with GIT-ROUTING",
+            ))
+    finally:
+        _finish_scope_watcher("routing", watcher)
     return results
 
 
@@ -343,6 +400,134 @@ def _setup_trace_control():
         "trace-control-no-gate", repo, baseline,
         [PYTHON, "-B", "-c", "pass"], repo, _clean_env(), 0, "",
     )]
+
+
+def _load_original_fixture():
+    path = HERE / "run_fixture.py"
+    spec = importlib.util.spec_from_file_location("omama_original_receipt_fixture", str(path))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _run_original_case(module, label, function, expected_snapshot_calls):
+    case_root = ROOT / "original-cases" / label
+    case_root.mkdir(parents=True)
+    captures = []
+    original_snapshot = module._binding_snapshot
+
+    def capture_after_original_returns(scope):
+        value = original_snapshot(scope)
+        # Do not hash, sort, or write here. The original byte collection has
+        # already completed; retain only its returned map and one timestamp in
+        # RAM so the next original instruction runs with minimal disturbance.
+        captures.append((Path(scope), time.time_ns(), dict(value)))
+        return value
+
+    module._binding_snapshot = capture_after_original_returns
+    failure = None
+    try:
+        function(case_root)
+    except Exception as exc:
+        failure = {"type": type(exc).__name__, "message": str(exc)}
+    finally:
+        module._binding_snapshot = original_snapshot
+
+    maps = []
+    baseline = captures[0][2] if captures else None
+    aggregate_delta = {"added": set(), "removed": set(), "changed": set()}
+    for index, (scope, captured_ns, raw) in enumerate(captures, 1):
+        hashes = {
+            name: {"sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
+            for name, data in raw.items()
+        }
+        name = "original-{0}-snapshot-{1:02d}.json".format(label, index)
+        _json_write(SNAPSHOTS / name, hashes)
+        delta = _delta(
+            {key: {"sha256": hashlib.sha256(data).hexdigest(), "size": len(data)} for key, data in baseline.items()},
+            hashes,
+        ) if baseline is not None else None
+        if delta is not None:
+            for kind in aggregate_delta:
+                aggregate_delta[kind].update(delta[kind])
+        maps.append({
+            "scope": _relative(scope),
+            "captured_ns": captured_ns,
+            "snapshot": "snapshots/" + name,
+            "delta_from_first": delta,
+        })
+    aggregate_delta = {kind: sorted(names) for kind, names in aggregate_delta.items()}
+    collection_complete = len(captures) == expected_snapshot_calls
+    has_delta = any(aggregate_delta.values())
+    byte_equality = False if has_delta else (True if collection_complete else None)
+    record = {
+        "label": "original-" + label,
+        "returncode": 0 if failure is None else 1,
+        "expected_returncode": 0,
+        "required_text": "original case assertions",
+        "required_text_present": failure is None,
+        "interval_equal": byte_equality,
+        "interval_delta": aggregate_delta,
+        "equal_to_post_setup_baseline": byte_equality,
+        "from_post_setup_delta": aggregate_delta,
+        "failure": failure,
+        "snapshot_collection_complete": collection_complete,
+        "expected_snapshot_calls": expected_snapshot_calls,
+        "original_snapshot_calls": maps,
+    }
+    _json_write(ROOT / ("original-" + label + "-result.json"), record)
+    return record
+
+
+def _original_cases():
+    module = _load_original_fixture()
+    return [
+        _run_original_case(module, "mount", module.a_nongit_mount_outer_marker, 4),
+        _run_original_case(module, "routing", module.w_routing_response, 5),
+    ]
+
+
+def _collector_selftest():
+    def raw_snapshot(scope):
+        return {
+            path.relative_to(scope).as_posix(): path.read_bytes()
+            for path in Path(scope).rglob("*") if path.is_file()
+        }
+
+    module = types.SimpleNamespace(_binding_snapshot=raw_snapshot)
+
+    def unchanged(case_root):
+        (case_root / "owned.txt").write_bytes(b"same\n")
+        module._binding_snapshot(case_root)
+        module._binding_snapshot(case_root)
+
+    def mutation(case_root):
+        path = case_root / "owned.txt"
+        path.write_bytes(b"before\n")
+        module._binding_snapshot(case_root)
+        path.write_bytes(b"after\n")
+        module._binding_snapshot(case_root)
+
+    def semantic_failure(case_root):
+        (case_root / "owned.txt").write_bytes(b"same\n")
+        module._binding_snapshot(case_root)
+        module._binding_snapshot(case_root)
+        raise RuntimeError("controlled semantic failure")
+
+    green = _run_original_case(module, "collector-green", unchanged, 2)
+    red = _run_original_case(module, "collector-mutation", mutation, 2)
+    semantic = _run_original_case(module, "collector-semantic", semantic_failure, 2)
+    if not (
+        green["returncode"] == 0 and green["interval_equal"] is True
+        and red["returncode"] == 0 and red["interval_equal"] is False
+        and red["interval_delta"] == {"added": [], "removed": [], "changed": ["owned.txt"]}
+        and semantic["returncode"] == 1 and semantic["interval_equal"] is True
+        and semantic["failure"]["message"] == "controlled semantic failure"
+    ):
+        raise RuntimeError("original snapshot collector self-test failed")
+    result = {"green": green, "owned_mutation": red, "semantic_only_failure": semantic, "result": "VERIFIED"}
+    _json_write(ROOT / "collector-selftest.json", result)
+    return result
 
 
 def _mount_wrapper(outer, plain):
@@ -374,29 +559,33 @@ def _mount_case():
     plain.mkdir()
     git_database = outer / ".git"
     baseline = _capture("mount-post-setup", git_database)
+    watcher = _start_scope_watcher("mount", git_database, baseline)
     results = []
     wrapper = _mount_wrapper(outer, plain)
     payload = json.dumps({"cwd": str(plain), "stop_hook_active": False, "hook_event_name": "Stop"})
     verify = '"{0}" -c "import sys; sys.exit(0)"'.format(PYTHON)
-    for intent in ("no-card", "wip", "honest"):
-        if intent != "no-card":
-            (plain / "CARD.yaml").write_text(_card_text(verify), encoding="utf-8")
-        if intent == "honest":
-            (plain / "CARD.close").write_bytes(b"FAILED: genuinely non-Git")
-        env = _clean_env({
-            "OMAMA_VALIDATOR": str(HERE.parent.parent / "work-order" / "validate_work_order.py"),
-            "OMAMA_CHECK_ARTIFACT": str(HERE.parent.parent / "output-discipline" / "scripts" / "check_artifact.py"),
-        })
-        results.append(_phase(
-            "mount-control-" + intent, git_database, baseline,
-            [PYTHON, "-B", "-c", "pass"], plain, env, 0, "",
-        ))
-        marker = {"no-card": "NO-CARD:", "wip": "WIP:", "honest": "CLOSE: FAILED"}[intent]
-        results.append(_phase(
-            "mount-invoke-" + intent, git_database, baseline,
-            [PYTHON, "-B", "-c", wrapper, GATE], plain, env, 0, marker,
-            input_text=payload,
-        ))
+    try:
+        for intent in ("no-card", "wip", "honest"):
+            if intent != "no-card":
+                (plain / "CARD.yaml").write_text(_card_text(verify), encoding="utf-8")
+            if intent == "honest":
+                (plain / "CARD.close").write_bytes(b"FAILED: genuinely non-Git")
+            env = _clean_env({
+                "OMAMA_VALIDATOR": str(HERE.parent.parent / "work-order" / "validate_work_order.py"),
+                "OMAMA_CHECK_ARTIFACT": str(HERE.parent.parent / "output-discipline" / "scripts" / "check_artifact.py"),
+            })
+            results.append(_phase(
+                "mount-control-" + intent, git_database, baseline,
+                [PYTHON, "-B", "-c", "pass"], plain, env, 0, "",
+            ))
+            marker = {"no-card": "NO-CARD:", "wip": "WIP:", "honest": "CLOSE: FAILED"}[intent]
+            results.append(_phase(
+                "mount-invoke-" + intent, git_database, baseline,
+                [PYTHON, "-B", "-c", wrapper, GATE], plain, env, 0, marker,
+                input_text=payload,
+            ))
+    finally:
+        _finish_scope_watcher("mount", watcher)
     receipt = json.loads((plain / "CARD.receipt.json").read_text(encoding="utf-8"))
     if receipt.get("verdict") != "FAILED" or (plain / "CARD.close").exists():
         raise RuntimeError("mounted honest-close semantics did not complete")
@@ -412,7 +601,10 @@ def main():
     git_version = _run("git-version", ["git", "--version"], ROOT)
     # Preserve the historical fixture order: the mounted case is first and
     # routing-response follows later. Only the two challenged cases run here.
-    results = _setup_trace_control() + _mount_case() + _routing_case()
+    # Load-bearing replays call the original two fixture functions. The
+    # instrumented reconstructions below are controls only.
+    collector = _collector_selftest()
+    results = _original_cases() + _setup_trace_control() + _mount_case() + _routing_case()
     failures = [
         item for item in results
         if item["returncode"] != item["expected_returncode"]
@@ -428,9 +620,14 @@ def main():
         "cases": results,
         "strict_failures": [item["label"] for item in failures],
         "result": "VERIFIED" if not failures else "FAILED",
+        "collector_selftest": collector["result"],
         "setup_commit_transitions": {
             prefix: json.loads((ROOT / (prefix + "-commit-transition.json")).read_text(encoding="utf-8"))
             for prefix in ("trace-control", "mount", "routing")
+        },
+        "scope_watchers": {
+            label: json.loads((ROOT / (label + "-scope-watcher.json")).read_text(encoding="utf-8"))
+            for label in ("mount", "routing")
         },
         "historical_scope": [
             "run 34313675810 / 275c1f5 routing-response target bytes",
