@@ -37,6 +37,27 @@ def _surface_digest(interpreter):
 
 
 class RuntimeContractTests(unittest.TestCase):
+    def test_explicit_symlink_keeps_lexical_runtime_and_canonical_base_identity(self):
+        from omama_cli import runtime
+
+        supplied = Path(install_fixture._test_root()) / "synthetic-explicit-link" / "python"
+        canonical = Path(sys.executable)
+        probe = {
+            "executable": str(canonical),
+            "prefix": str(canonical.parent),
+            "base_prefix": str(canonical.parent),
+            "version": [sys.version_info[0], sys.version_info[1], sys.version_info[2]],
+            "pyyaml": "6.0.3",
+        }
+        path_type = type(supplied)
+        with mock.patch.object(path_type, "resolve", return_value=canonical), \
+                mock.patch.object(path_type, "is_symlink", return_value=True), \
+                mock.patch("omama_cli.runtime._probe", return_value=probe) as execute_probe:
+            result = runtime.qualify_explicit(str(supplied))
+        execute_probe.assert_called_once_with(supplied, require_yaml=True)
+        self.assertEqual(supplied.absolute().as_posix(), result["receipt_interpreter"])
+        self.assertEqual(canonical.as_posix(), result["base_interpreter"])
+
     def test_explicit_python_is_absolute_qualified_read_only_and_never_installed_into(self):
         from omama_cli.install import InstallError, preflight_bundle, run_asset_transaction
         from omama_cli.runtime import prepare_receipt_runtime, qualify_explicit
@@ -50,9 +71,11 @@ class RuntimeContractTests(unittest.TestCase):
             self.skipTest("OMAMA_EXPLICIT_PYTHON must name the host-qualified explicit interpreter")
         before = _surface_digest(explicit)
         with mock.patch("omama_cli.runtime._run_uv", side_effect=AssertionError("explicit route called uv")):
-            result = qualify_explicit(str(Path(explicit).resolve()))
+            result = qualify_explicit(explicit)
         after = _surface_digest(explicit)
         self.assertEqual("explicit", result["runtime_mode"])
+        self.assertEqual(Path(explicit).absolute().as_posix(), result["receipt_interpreter"])
+        self.assertEqual(Path(explicit).resolve().as_posix(), result["base_interpreter"])
         self.assertGreaterEqual(tuple(int(x) for x in result["python_version"].split("."))[:2], (3, 8))
         self.assertEqual(before, after)
         helper = _helper()

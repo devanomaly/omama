@@ -78,20 +78,32 @@ def _is_within(path, parent):
         return False
 
 
+def _is_lexically_within(path, parent):
+    try:
+        Path(path).absolute().relative_to(Path(parent).absolute())
+        return True
+    except ValueError:
+        return False
+
+
 def qualify_explicit(path, target=None):
     supplied = Path(path)
     if not supplied.is_absolute():
         raise InstallError("explicit-python-not-absolute", "--python requires an absolute interpreter path")
     validate_command_path(supplied)
     resolved = supplied.resolve()
-    if not resolved.is_file() or supplied.is_symlink():
+    if not resolved.is_file():
         raise InstallError("interpreter-unrunnable", "explicit interpreter is not an existing regular file")
-    if target is not None and _is_within(resolved, target.root):
+    if target is not None and (
+            _is_lexically_within(supplied, target.root) or _is_within(resolved, target.root)):
         raise InstallError("interpreter-not-durable", "explicit interpreter is inside the target repository")
-    value = _probe(resolved, require_yaml=True)
+    value = _probe(supplied, require_yaml=True)
     return {
         "runtime_mode": "explicit",
-        "receipt_interpreter": Path(value["executable"]).resolve().as_posix(),
+        # The lexical executable selects the supplied environment on POSIX,
+        # where venv and hosted-tool Python entrypoints are normally symlinks.
+        # Keep the canonical executable as an independent durability identity.
+        "receipt_interpreter": supplied.absolute().as_posix(),
         "base_interpreter": Path(value["executable"]).resolve().as_posix(),
         "python_base_prefix": Path(value["base_prefix"]).resolve().as_posix(),
         "python_version": ".".join(str(x) for x in value["version"]),
@@ -176,12 +188,12 @@ def _reusable_managed(plan):
         return None
     interpreter = Path(str(state.get("receipt_interpreter", "")))
     expected = plan.target.root / ".omama" / "runtime"
-    if not _is_within(interpreter, expected):
+    if interpreter.absolute() != _runtime_python(expected).absolute():
         raise InstallError("incompatible-runtime", "recorded managed interpreter is outside .omama/runtime")
     value = _probe(interpreter, require_yaml=True)
     return {
         "runtime_mode": "managed",
-        "receipt_interpreter": Path(value["executable"]).resolve().as_posix(),
+        "receipt_interpreter": interpreter.absolute().as_posix(),
         "base_interpreter": str(state.get("base_interpreter")),
         "python_base_prefix": str(state.get("python_base_prefix", value["base_prefix"])),
         "python_version": ".".join(str(x) for x in value["version"]),
@@ -237,7 +249,7 @@ def prepare_receipt_runtime(transaction, explicit_python=None, uv_executable=Non
             else:
                 shutil.rmtree(str(staging))
         raise
-    installed = _runtime_python(runtime).resolve()
+    installed = _runtime_python(runtime).absolute()
     return {
         "runtime_mode": "managed",
         "receipt_interpreter": installed.as_posix(),

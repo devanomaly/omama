@@ -381,9 +381,8 @@ def _interpreter(target, state, report, static_only=False):
     path = Path(raw)
     if state.get("runtime_mode") == "managed":
         expected = target.root / ".omama" / "runtime"
-        try:
-            path.resolve().relative_to(expected.resolve())
-        except ValueError:
+        expected_interpreter = expected / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        if path.absolute() != expected_interpreter.absolute():
             report.add("VIOLATION", "interpreter", "managed receipt interpreter is outside .omama/runtime")
             return None
     base = Path(str(state.get("base_interpreter", "")))
@@ -392,7 +391,7 @@ def _interpreter(target, state, report, static_only=False):
     else:
         report.add("OK", "base-interpreter", "recorded effective base exists ({0} mode)".format(state.get("runtime_mode")))
     if static_only:
-        if not path.is_file() or path.is_symlink():
+        if not path.is_file():
             report.add("VIOLATION", "interpreter-static", "recorded receipt interpreter is not an existing regular file")
             return None
         report.add("OK", "interpreter-static", "recorded receipt interpreter exists; execution was not attempted")
