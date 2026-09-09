@@ -19,7 +19,9 @@ it performs no installer writes.
 Publication uses one target-owned lock with no stale-lock theft, records each finite
 before-image before the first asset write, uses individual same-directory replacements,
 and conditionally restores only bytes still written by that attempt. An intervening edit
-is preserved and leaves a named recovery-required journal. Re-init refuses another
+is preserved and leaves a named recovery-required journal. Follow the linked, preservation-first
+[manual recovery procedure](RECOVERY.md) before retrying; never delete `.omama`, its runtime,
+lock, or journal wholesale. Re-init refuses another
 recorded bundle, repairs missing same-bundle immutable material, and preserves adopted
 editable bootstrap files (including deliberate deletion). Active closes, tracked local
 state, immutable/generated drift, read-only paths, path escapes and symlink/junction
@@ -63,6 +65,8 @@ includes and enumerates the complete currently effective hook directory. A custo
 any active default hook (including pre-push/post-checkout) is a preflight conflict. Main
 checkout activation is local and last; linked worktrees may reuse an already-effective
 `.githooks` value but never rewrite shared config or enable worktree-config extensions.
+When activation would write a separate Git directory outside the worktree, init refuses
+before publication; phase 1 does not activate that unsupported layout.
 `--no-git-config` leaves prepared state, returns 2, and prints the exact local command.
 If `.githooks` is already the effective value, the same flag performs normal admission and
 may return 0. A first init and same-bundle prepared/complete reruns all use the live private

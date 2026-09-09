@@ -283,6 +283,14 @@ def _activation_plan(target):
         main = target.common_dir.parent
         remedy = 'git -C "{0}" config --local core.hooksPath .githooks'.format(main.as_posix())
         raise InstallError("linked-worktree-config", "linked worktree cannot enable shared core.hooksPath; run from the main checkout first: {0}".format(remedy))
+    config_path = (target.common_dir / "config").resolve()
+    try:
+        config_path.relative_to(target.root.resolve())
+    except ValueError:
+        raise InstallError(
+            "unsupported-git-config",
+            "core.hooksPath activation would write outside the worktree; phase 1 does not activate separate Git directories",
+        )
     displaced = _active_hooks(_effective_hooks_directory(target))
     if displaced:
         raise InstallError("hooks-displacement", "activation would displace active hook(s): {0}; integrate them manually before init".format(", ".join(displaced)))

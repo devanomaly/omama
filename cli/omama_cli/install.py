@@ -346,6 +346,14 @@ class InstallationTransaction:
 
     def begin(self):
         self.acquire()
+        # Preflight can become stale while another owner holds the lock. Once
+        # this transaction acquires it, an existing journal belongs to the
+        # earlier unfinished attempt and must never be replaced.
+        if self.journal_path.exists():
+            raise InstallError(
+                "unfinished-install",
+                "unfinished journal exists at {0}; recover it before retrying".format(JOURNAL_REL),
+            )
         # Capture every finite before-image before the first payload write.
         for operation in self.plan.operations:
             path = safe_destination(self.plan.target.root, operation.relative)

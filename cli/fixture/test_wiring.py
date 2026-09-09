@@ -1,3 +1,4 @@
+import hashlib
 import os
 import json
 import subprocess
@@ -385,6 +386,90 @@ class WiringContractTests(unittest.TestCase):
         self.assertEqual(main_card, (main / "CARD.yaml").read_bytes())
         self.assertEqual(main_index, (main / ".git" / "index").read_bytes())
         self.assertEqual(main_settings, main_local.read_bytes())
+
+    @unittest.skipUnless(
+        os.environ.get("OMAMA_INSTALLED_TOOL_PYTHON") and os.environ.get("OMAMA_EXPLICIT_PYTHON"),
+        "installed public separate-Git proof requires the installed tool and explicit interpreter",
+    )
+    def test_public_separate_git_dir_refuses_before_external_config_or_target_writes(self):
+        tool_python = Path(os.environ["OMAMA_INSTALLED_TOOL_PYTHON"])
+        cli = tool_python.parent / ("omama.exe" if os.name == "nt" else "omama")
+        explicit = os.environ["OMAMA_EXPLICIT_PYTHON"]
+        clean = os.environ.copy()
+        for key in list(clean):
+            if key in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "PYTHONPATH", "VIRTUAL_ENV") \
+                    or key.startswith("GIT_CONFIG_") or key.startswith("OMAMA_"):
+                clean.pop(key, None)
+        clean["PYTHONDONTWRITEBYTECODE"] = "1"
+
+        def snapshot_worktree(root):
+            marker = root / ".git"
+            values = {}
+            for path in root.rglob("*"):
+                if not path.is_file():
+                    continue
+                relative = path.relative_to(root)
+                if marker.is_dir() and relative.parts[0] == ".git":
+                    continue
+                values[relative.as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+            return values
+
+        rows = []
+        for separate in (False, True):
+            with self.subTest(separate=separate):
+                root = Path(tempfile.mkdtemp(
+                    prefix="separate-git-worktree-" if separate else "internal-git-worktree-",
+                    dir=install_fixture._test_root(),
+                ))
+                database = Path(tempfile.mkdtemp(prefix="separate-git-database-", dir=install_fixture._test_root())) if separate else root / ".git"
+                if separate:
+                    database.rmdir()
+                    initialized = subprocess.run(
+                        ["git", "init", "-q", "--separate-git-dir", str(database), str(root)],
+                        env=clean, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False,
+                    )
+                else:
+                    initialized = subprocess.run(
+                        ["git", "init", "-q", str(root)], env=clean,
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False,
+                    )
+                self.assertEqual(0, initialized.returncode, initialized.stderr)
+                subprocess.run(["git", "-C", str(root), "config", "user.email", "fixture@example.invalid"], env=clean, check=True)
+                subprocess.run(["git", "-C", str(root), "config", "user.name", "Fixture"], env=clean, check=True)
+                (root / "tracked.txt").write_bytes(b"protected tracked bytes\n")
+                subprocess.run(["git", "-C", str(root), "add", "tracked.txt"], env=clean, check=True)
+                subprocess.run(
+                    ["git", "-C", str(root), "-c", "core.hooksPath=.no-hooks", "commit", "-qm", "base"],
+                    env=clean, check=True,
+                )
+                (root / "CARD.yaml").write_bytes(b"synthetic protected card\n")
+                (root / "CARD.review.md").write_bytes(b"synthetic protected review evidence\n")
+                (root / "fixture.receipt.json").write_bytes(b'{"synthetic":"preserve"}\n')
+                (root / "privacy-deny.json").write_text(
+                    json.dumps({"deny_regexes": [{"id": "broken", "pattern": "("}], "tokens_file": None}),
+                    encoding="utf-8",
+                )
+                worktree_before = snapshot_worktree(root)
+                config_before = (database / "config").read_bytes()
+                index_before = (database / "index").read_bytes()
+                result = subprocess.run(
+                    [str(cli), "init", str(root), "--python", explicit], cwd=str(root), env=clean,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                    encoding="utf-8", errors="replace", check=False,
+                )
+                rows.append((separate, result.returncode, result.stdout + result.stderr))
+                self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+                self.assertEqual(worktree_before, snapshot_worktree(root))
+                self.assertEqual(config_before, (database / "config").read_bytes())
+                self.assertEqual(index_before, (database / "index").read_bytes())
+                if separate:
+                    self.assertIn("unsupported-git-config", result.stderr)
+                    self.assertFalse((root / ".omama").exists())
+                else:
+                    self.assertIn("privacy-config", result.stderr)
+                    self.assertNotIn("path-escape", result.stderr)
+                    self.assertFalse((root / ".omama").exists())
+        self.assertEqual([False, True], [row[0] for row in rows])
 
 
 if __name__ == "__main__":

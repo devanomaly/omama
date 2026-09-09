@@ -265,6 +265,46 @@ class InstallerContractTests(unittest.TestCase):
         self.assertEqual(lock_before, winner.lock_path.read_bytes())
         self.assertEqual(journal_before, winner.journal_path.read_bytes())
 
+    def test_stale_preflight_refuses_prior_recovery_journal_after_lock(self):
+        from omama_cli.install import InstallError, preflight_bundle, run_asset_transaction
+        from omama_cli.target import resolve_target
+
+        root = self.make_repo()
+        target = resolve_target(str(root), environ={})
+        bundle = self.bundle()
+        first_plan = preflight_bundle(target, bundle)
+        stale_plan = preflight_bundle(target, bundle)
+
+        def prepare(transaction):
+            staging = transaction.reserve_owned_tree(".omama/runtime")
+            staging.mkdir()
+            (staging / "owned.txt").write_bytes(b"owned synthetic runtime\n")
+            transaction.publish_owned_tree(staging, ".omama/runtime")
+
+        external = root / ".omama" / "runtime" / "external.txt"
+
+        def edit_then_fail(_transaction):
+            external.write_bytes(b"ordinary external edit after publication\n")
+            raise RuntimeError("injected stale-preflight recovery")
+
+        with self.assertRaises(InstallError) as first_error:
+            run_asset_transaction(first_plan, prepare=prepare, after_publication=edit_then_fail)
+        self.assertEqual("recovery-required", first_error.exception.reason)
+        journal = root / ".omama" / "install-journal.json"
+        prior_journal = journal.read_bytes()
+        prior_runtime = _tree_bytes(root / ".omama" / "runtime")
+        prior_card = (root / "CARD.yaml").read_bytes()
+        self.assertFalse((root / ".omama" / "install.lock").exists())
+
+        with self.assertRaises(InstallError) as stale_error:
+            run_asset_transaction(stale_plan, prepare=prepare)
+        self.assertEqual("unfinished-install", stale_error.exception.reason)
+        self.assertEqual(prior_journal, journal.read_bytes())
+        self.assertEqual(prior_runtime, _tree_bytes(root / ".omama" / "runtime"))
+        self.assertEqual(b"ordinary external edit after publication\n", external.read_bytes())
+        self.assertEqual(prior_card, (root / "CARD.yaml").read_bytes())
+        self.assertFalse((root / ".omama" / "install.lock").exists())
+
     def test_failure_after_publication_conditionally_rolls_back(self):
         from omama_cli.install import InstallError, preflight_bundle, run_asset_transaction
         from omama_cli.target import resolve_target
@@ -317,6 +357,117 @@ class InstallerContractTests(unittest.TestCase):
         journal = json.loads((root / ".omama" / "install-journal.json").read_text(encoding="utf-8"))
         self.assertEqual("recovery-required", journal["status"])
         self.assertFalse((root / ".omama" / "install.lock").exists())
+
+    @unittest.skipUnless(
+        os.environ.get("OMAMA_INSTALLED_TOOL_PYTHON") and os.environ.get("OMAMA_EXPLICIT_PYTHON"),
+        "installed public recovery proof requires the installed tool and explicit interpreter",
+    )
+    def test_documented_manual_recovery_preserves_external_edit_and_allows_public_retry(self):
+        import base64
+
+        from omama_cli.bundle import load_bundle
+        from omama_cli.install import InstallError, preflight_bundle, run_asset_transaction
+        from omama_cli.target import resolve_target, safe_destination
+
+        source = Path(__file__).resolve().parents[2]
+        recovery_en = source / "cli" / "RECOVERY.md"
+        recovery_pt = source / "cli" / "RECOVERY.pt-BR.md"
+        self.assertTrue(recovery_en.is_file(), "paired English manual-recovery procedure is absent")
+        self.assertTrue(recovery_pt.is_file(), "paired PT-BR manual-recovery procedure is absent")
+        self.assertIn("RECOVERY.md", (source / "cli" / "README.md").read_text(encoding="utf-8"))
+        self.assertIn("cli/RECOVERY.md", (source / "QUICKSTART.md").read_text(encoding="utf-8"))
+        self.assertIn("cli/RECOVERY.pt-BR.md", (source / "QUICKSTART.pt-BR.md").read_text(encoding="utf-8"))
+
+        root = self.make_repo()
+        review = root / "CARD.review.md"
+        review.write_bytes(b"synthetic protected review evidence\n")
+        card_before = (root / "CARD.yaml").read_bytes()
+        review_before = review.read_bytes()
+        index_before = (root / ".git" / "index").read_bytes()
+        external = root / "privacy-deny.json"
+        external_bytes = b'{"deny_regexes":[],"deny_filenames":[],"tokens_file":null,"team":"preserved"}\n'
+
+        def edit_then_fail(_transaction):
+            external.write_bytes(external_bytes)
+            raise RuntimeError("injected documented-recovery case")
+
+        bundle = load_bundle()
+        with self.assertRaises(InstallError) as failed:
+            run_asset_transaction(
+                preflight_bundle(resolve_target(str(root), environ={}), bundle),
+                after_publication=edit_then_fail,
+            )
+        self.assertEqual("recovery-required", failed.exception.reason)
+        lock = root / ".omama" / "install.lock"
+        journal_path = root / ".omama" / "install-journal.json"
+        self.assertFalse(lock.exists())
+        journal_bytes = journal_path.read_bytes()
+        journal = json.loads(journal_bytes.decode("utf-8"))
+        self.assertEqual(1, journal["schema"])
+        self.assertEqual("recovery-required", journal["status"])
+        self.assertTrue(journal["owner"])
+
+        evidence = Path(tempfile.mkdtemp(prefix="manual-recovery-evidence-", dir=_test_root()))
+        (evidence / "install-journal.json").write_bytes(journal_bytes)
+        (evidence / "external-privacy-deny.json").write_bytes(external.read_bytes())
+        divergent = []
+        for record in reversed(journal["operations"]):
+            if not record.get("applied"):
+                continue
+            path = safe_destination(root, record["relative"])
+            current = path.read_bytes() if path.is_file() else None
+            current_sha = hashlib.sha256(current).hexdigest() if current is not None else None
+            before = record["before"]
+            already_restored = (
+                (before["kind"] == "missing" and current is None)
+                or (
+                    before["kind"] == "file"
+                    and current_sha == before.get("sha256")
+                    and len(current) == before.get("size")
+                )
+            )
+            if already_restored:
+                continue
+            if current_sha != record["after_sha256"]:
+                divergent.append(record["relative"])
+                continue
+            if before["kind"] == "missing":
+                path.unlink()
+            elif before["kind"] == "file":
+                path.write_bytes(base64.b64decode(before["bytes_b64"]))
+                path.chmod(before["mode"])
+            else:
+                self.fail("representative recovery encountered an unsupported before-image")
+        self.assertEqual(["privacy-deny.json"], divergent)
+        ownership = {
+            entry["destination"]: entry["ownership"] for entry in bundle.manifest["files"]
+        }
+        self.assertEqual("editable-bootstrap", ownership["privacy-deny.json"])
+        self.assertEqual(external_bytes, external.read_bytes())
+        self.assertEqual(journal_bytes, (evidence / "install-journal.json").read_bytes())
+        journal_path.unlink()
+
+        tool_python = Path(os.environ["OMAMA_INSTALLED_TOOL_PYTHON"])
+        cli = tool_python.parent / ("omama.exe" if os.name == "nt" else "omama")
+        explicit = os.environ["OMAMA_EXPLICIT_PYTHON"]
+        env = os.environ.copy()
+        for key in list(env):
+            if key in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "PYTHONPATH", "VIRTUAL_ENV") \
+                    or key.startswith("GIT_CONFIG_") or key.startswith("OMAMA_"):
+                env.pop(key, None)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        retry = _run(str(cli), "init", str(root), "--python", explicit, cwd=root, env=env)
+        self.assertEqual(0, retry.returncode, retry.stdout + retry.stderr)
+        self.assertIn("INSTALLED", retry.stdout)
+        self.assertEqual(external_bytes, external.read_bytes())
+        self.assertEqual(card_before, (root / "CARD.yaml").read_bytes())
+        self.assertEqual(review_before, review.read_bytes())
+        self.assertEqual(index_before, (root / ".git" / "index").read_bytes())
+        self.assertEqual(journal_bytes, (evidence / "install-journal.json").read_bytes())
+        self.assertFalse(journal_path.exists())
+        self.assertFalse(lock.exists())
+        state = json.loads((root / ".omama" / "state.json").read_text(encoding="utf-8"))
+        self.assertEqual("complete", state["status"])
 
     def test_failure_at_selftest_boundary_rolls_back_state_and_assets(self):
         from omama_cli.install import InstallError, preflight_bundle, run_asset_transaction

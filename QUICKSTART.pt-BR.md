@@ -103,7 +103,9 @@ omama init "<LINKED_WORKTREE>"
 ```
 
 O Omama nunca habilita a extensão worktree-config do Git nem altera silenciosamente config
-compartilhada. Se um hooksPath customizado estiver efetivo, ou existir qualquer hook ativo no
+compartilhada. Se `git init --separate-git-dir` colocou a configuração de ativação deste worktree fora do
+worktree, o init recusa antes da publicação; a fase 1 não ativa esse layout.
+Se um hooksPath customizado estiver efetivo, ou existir qualquer hook ativo no
 diretório que seria deslocado — mesmo apenas `pre-push` — o init recusa. Integre os hooks
 manualmente; deslocamento do diretório inteiro não se torna seguro só porque os novos arquivos coexistem.
 
@@ -129,6 +131,12 @@ o Omama preserva a edição externa e deixa estado nomeado de recovery necessár
 restaurar bytes obsoletos. Isso é recovery limitado ao conjunto documentado de arquivos sob
 um alvo quiescente, não atomicidade de todos os arquivos, roubo de lock antigo ou serviço geral
 de transações.
+
+Se o init deixar `recovery-required` ou informar `unfinished-install`, não apague
+indiscriminadamente `.omama`, seu runtime, lock ou journal. Siga o
+[procedimento finito de recovery manual](cli/RECOVERY.pt-BR.md), que prioriza a preservação,
+retenha as before-images e edições externas e repita somente depois de contabilizar cada
+entrada própria registrada.
 
 ## 5. O que doctor realmente verifica
 

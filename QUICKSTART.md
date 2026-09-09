@@ -102,6 +102,8 @@ omama init "<LINKED_WORKTREE>"
 ```
 
 Omama never enables Git's worktree-config extension or silently changes shared config.
+If `git init --separate-git-dir` placed this worktree's activation config outside the
+worktree, init refuses before publication; phase 1 does not activate that layout.
 If a custom hooksPath is effective, or any active hook anywhere in the directory that
 would be displaced exists—even only `pre-push`—init refuses. Integrate those hooks manually;
 whole-directory displacement is not treated as safe because the new files would coexist.
@@ -127,6 +129,11 @@ conditional rollback. If another writer changes a path after Omama wrote it, Oma
 that external edit and leaves a named recovery-required state instead of restoring stale
 bytes. This is bounded recovery for the documented file set under a quiescent target, not
 all-files atomicity, stale-lock theft, or a general transaction service.
+
+If init leaves `recovery-required` or reports `unfinished-install`, do not delete `.omama`,
+its runtime, lock, or journal wholesale. Follow the preservation-first
+[finite manual recovery procedure](cli/RECOVERY.md), retain its before-images and external
+edits, and retry only after every recorded owned entry is accounted for.
 
 ## 5. What doctor actually checks
 

@@ -449,8 +449,18 @@ class _Harness:
         for relative in destinations:
             target_bytes = safe_destination(self.target.root, relative).read_bytes()
             blob = _run_bytes(["git", "-C", str(repo), "show", "HEAD:" + relative], repo)
-            _require(blob.returncode == 0 and blob.stdout == target_bytes,
-                     "committed payload bytes differ from installed target at {0}".format(relative))
+            if blob.returncode != 0:
+                detail = (blob.stderr or b"").decode("utf-8", "replace").strip().splitlines()
+                _require(
+                    False,
+                    "git show failed for committed payload at {0}: exit={1}; stderr_tail={2}"
+                    .format(relative, blob.returncode, detail[-1][:300] if detail else "none"),
+                )
+            _require(
+                blob.stdout == target_bytes,
+                "committed payload bytes differ from installed target at {0}: installed_sha256={1}; blob_sha256={2}; installed_size={3}; blob_size={4}"
+                .format(relative, _sha(target_bytes), _sha(blob.stdout), len(target_bytes), len(blob.stdout)),
+            )
         absent = "; absent editable material preserved: " + ", ".join(self.absent_editable) if self.absent_editable else ""
         return "all {0} currently installed manifest files committed through the shipped wrapper and final config; {1}{2}".format(len(destinations), token_note, absent)
 

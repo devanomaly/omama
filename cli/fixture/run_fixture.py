@@ -69,8 +69,9 @@ def test_root():
         parent = Path(allocated).resolve()
         if not parent.is_dir():
             raise NotRun("OMAMA_CLI_TEST_ROOT is not an existing allocated directory: " + str(parent))
-        return Path(tempfile.mkdtemp(prefix="full-{0}-py{1}{2}-".format(
-            sys.platform.replace("win32", "windows"), sys.version_info[0], sys.version_info[1]), dir=str(parent)))
+        prefix = "f-" if os.name == "nt" else "full-{0}-py{1}{2}-".format(
+            sys.platform, sys.version_info[0], sys.version_info[1])
+        return Path(tempfile.mkdtemp(prefix=prefix, dir=str(parent)))
     return Path(tempfile.mkdtemp(prefix="omama-cli-full-{0}-py{1}{2}-".format(
         sys.platform.replace("win32", "windows"), sys.version_info[0], sys.version_info[1])))
 
