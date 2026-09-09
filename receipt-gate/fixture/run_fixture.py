@@ -97,7 +97,11 @@ def make_repo(base, name="repo", commit=True):
     if commit:
         (repo / "tracked.txt").write_text("base\n", encoding="utf-8")
         git(repo, "add", "tracked.txt")
-        git(repo, "commit", "-qm", "base")
+        # Git 2.55 can leave its detached auto-maintenance lock alive after
+        # commit returns. Preservation cases snapshot the complete synthetic
+        # Git database, so keep that setup-owned writer out of their measured
+        # interval without excluding any path from strict equality.
+        git(repo, "-c", "maintenance.auto=false", "commit", "-qm", "base")
     return repo
 
 
