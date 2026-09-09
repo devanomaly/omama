@@ -20,6 +20,14 @@ class InstalledAdmissionContractTests(unittest.TestCase):
             self.skipTest("installed T9 proof requires OMAMA_T9_CLI_PYTHON and OMAMA_EXPLICIT_PYTHON")
         self.tool = Path(tool)
         self.explicit = Path(explicit)
+        located = subprocess.run(
+            [str(self.tool), "-B", "-c", "import omama_cli;print(omama_cli.__file__)"],
+            env={key: value for key, value in os.environ.items() if key != "PYTHONPATH"},
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            encoding="utf-8", errors="replace", check=False,
+        )
+        self.assertEqual(0, located.returncode, located.stderr)
+        self.payload = Path(located.stdout.strip()).resolve().parent / "_payload"
 
     def make_repo(self):
         return install_fixture.InstallerContractTests(
@@ -89,6 +97,7 @@ class InstalledAdmissionContractTests(unittest.TestCase):
         interpreter = Path(state["receipt_interpreter"])
         self.assertTrue(interpreter.is_file())
         expected = root / ".omama" / "runtime" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        self.assertEqual(expected.absolute().as_posix(), state["receipt_interpreter"])
         self.assertEqual(expected.resolve(), interpreter.resolve())
         doctor = self.run_cli(root, "doctor", str(root))
         self.assertEqual(0, doctor.returncode, doctor.stdout + doctor.stderr)
@@ -185,8 +194,7 @@ class InstalledAdmissionContractTests(unittest.TestCase):
 
         stdout = io.StringIO()
         stderr = io.StringIO()
-        payload = self.tool.parent.parent / "Lib" / "site-packages" / "omama_cli" / "_payload"
-        bundle = validate_bundle_directory(payload)
+        bundle = validate_bundle_directory(self.payload)
         with patch("omama_cli.command.load_bundle", return_value=bundle), \
                 patch("omama_cli.command.admission", not_run), \
                 redirect_stdout(stdout), redirect_stderr(stderr):

@@ -1,8 +1,8 @@
 # Omama CLI packaging surface
 
 The package exposes `omama init [PATH] [--python ABSOLUTE_PATH] [--no-git-config]`
-and `omama doctor [PATH] [--static-only]`, plus help and version. The T5 installer
-foundation resolves only non-bare Git worktrees, rejects inherited Git routing and
+and `omama doctor [PATH] [--static-only]`, plus help and version. The installer
+resolves only non-bare Git worktrees, rejects inherited Git routing and
 unsafe destinations before publication, and provides finite lock/journal/conditional
 rollback mechanics. A normally activated init returns 0 only after private-owner doctor
 and mandatory exact-installed-command admission both pass; it otherwise reports a named
@@ -28,8 +28,7 @@ target: an uncooperative writer can still win the final check-to-replace race, s
 not an all-files atomicity claim or a generic transaction service.
 
 Python 3.8+ and `PyYAML>=6.0.2,<7` are the runtime contract. The build-only backend is
-constrained to `setuptools>=68,<76`. Local Python 3.11 execution remains a CI requirement;
-this development host has no Python 3.11 interpreter.
+constrained to `setuptools>=68,<76`.
 
 The default receipt runtime is `.omama/runtime`, created from an existing independently
 probed system Python. Installation-time `uv` discovery and provisioning explicitly disable
@@ -116,6 +115,27 @@ Successful init prints inert starter-template adoption guidance and the output-d
 per-operator block. It never creates `CLAUDE.md` or writes user/global Claude configuration.
 These deterministic shell tests prove the installed commands and Git entrypoints, not that a
 real Claude host loaded project settings; paid/login-dependent host sessions remain separate.
+
+The counted `cli/fixture/run_fixture.py` builds both wheel and sdist in an explicitly owned
+disposable root, rebuilds a wheel from the extracted sdist, and installs the console entrypoint
+into a test-owned tool environment outside the delivery checkout. It admits real public
+`init`/`doctor` from those installed resources, retains complete child logs, and treats a
+missing prerequisite as NOT-RUN rather than success. The fixture also runs the preservation,
+conflict, rollback, recovery, linked-worktree, doctor, and installed-admission contract suites
+against built package resources. A required unittest skip is a fixture failure.
+
+Its lifetime case installs the built CLI into a separately marked tool environment, performs
+a full default managed init, validates that the recorded executable is the repository venv
+entrypoint (not merely its canonical base target), removes only that marked tool environment,
+and then runs installed S1 and S3 closes plus a privacy commit with package/network access
+disabled. The repository runtime and its independently recorded base Python remain. Removing
+or relocating that base is deliberately not simulated by deleting a real interpreter: it is
+an explicit doctor-detectable prerequisite and relocation limitation.
+
+The full command is `python verify_all.py` without `--fast`; the development-host approved
+form uses `C:/Program Files/Python310/python.exe`. CI runs the same counted entry on Windows,
+Linux, and macOS with Python 3.11 plus Linux with Python 3.8. Platform-specific inability is
+reported as NOT-RUN and fails the job; it is never replaced by a static portability claim.
 
 `--static-only` executes no installed interpreter, gate, validator, checker, scanner, or
 wrapper. It keeps existence/hash/config inspection, names every skipped dynamic row, and

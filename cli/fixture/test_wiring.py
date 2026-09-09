@@ -16,10 +16,10 @@ class WiringContractTests(unittest.TestCase):
         ).make_repo()
 
     def test_malformed_project_settings_refuses_before_publication(self):
-        wheel = os.environ.get("OMAMA_T7_RED_WHEEL")
+        wheel = os.environ.get("OMAMA_BUILT_WHEEL")
         explicit = os.environ.get("OMAMA_EXPLICIT_PYTHON")
         if not wheel or not explicit:
-            self.skipTest("initial CLI red requires OMAMA_T7_RED_WHEEL and OMAMA_EXPLICIT_PYTHON")
+            self.skipTest("built CLI proof requires OMAMA_BUILT_WHEEL and OMAMA_EXPLICIT_PYTHON")
         root = self.make_repo()
         settings = root / ".claude" / "settings.json"
         settings.parent.mkdir()
@@ -39,9 +39,9 @@ class WiringContractTests(unittest.TestCase):
         self.assertEqual(before, install_fixture._tree_bytes(root))
         self.assertFalse((root / ".omama").exists())
 
-    @unittest.skipUnless(os.environ.get("OMAMA_T7_RED_WHEEL") and os.environ.get("OMAMA_EXPLICIT_PYTHON"), "installed public CLI proof requires wheel and host interpreter")
-    def test_public_installed_init_is_prepared_not_success_and_no_git_config_is_exact(self):
-        wheel = os.environ["OMAMA_T7_RED_WHEEL"]
+    @unittest.skipUnless(os.environ.get("OMAMA_BUILT_WHEEL") and os.environ.get("OMAMA_EXPLICIT_PYTHON"), "installed public CLI proof requires wheel and host interpreter")
+    def test_public_installed_init_completes_and_no_git_config_is_exact(self):
+        wheel = os.environ["OMAMA_BUILT_WHEEL"]
         explicit = os.environ["OMAMA_EXPLICIT_PYTHON"]
         for no_config in (False, True):
             with self.subTest(no_git_config=no_config):
@@ -58,14 +58,15 @@ class WiringContractTests(unittest.TestCase):
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                     encoding="utf-8", errors="replace", check=False,
                 )
-                self.assertEqual(2, result.returncode, result.stdout + result.stderr)
-                self.assertIn("NOT-RUN", result.stderr)
+                self.assertEqual(2 if no_config else 0, result.returncode, result.stdout + result.stderr)
                 self.assertEqual(before_card, (root / "CARD.yaml").read_bytes())
                 self.assertEqual(before_index, (root / ".git" / "index").read_bytes())
                 self.assertFalse((root / ".omama" / "install.lock").exists())
                 self.assertFalse((root / ".omama" / "install-journal.json").exists())
                 state = json.loads((root / ".omama" / "state.json").read_text(encoding="utf-8"))
                 if no_config:
+                    self.assertIn("PREPARED", result.stdout)
+                    self.assertIn("mandatory admission was not attempted", result.stderr)
                     exact = 'git -C "{0}" config --local core.hooksPath .githooks'.format(root.as_posix())
                     self.assertIn(exact, result.stdout)
                     self.assertEqual("manual-required", state["activation_status"])
@@ -75,7 +76,10 @@ class WiringContractTests(unittest.TestCase):
                     )
                     self.assertEqual(1, absent.returncode)
                 else:
+                    self.assertIn("ADMISSION-OK", result.stdout)
+                    self.assertIn("INSTALLED", result.stdout)
                     self.assertEqual("active", state["activation_status"])
+                    self.assertEqual("complete", state["status"])
                     checker = root / "tools" / "omama" / "receipt-gate" / "adapt" / "check_wiring.py"
                     checked = subprocess.run(
                         [explicit, "-B", str(checker), str(root)], cwd=str(root),

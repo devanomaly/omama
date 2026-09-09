@@ -51,6 +51,11 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: false
+
       - name: PRs must branch off master
         if: github.event_name == 'pull_request'
         # Untrusted PR data must never be template-expanded straight into
@@ -102,7 +107,12 @@ jobs:
 
       - name: Run every fixture
         shell: bash
+        env:
+          # The CLI fixture confines builds, installs, caches, synthetic repos,
+          # and destructive lifetime checks to this disposable runner path.
+          OMAMA_CLI_TEST_ROOT: ${{ runner.temp }}/omama-cli-fixture
         run: |
+          mkdir -p "$OMAMA_CLI_TEST_ROOT"
           set +e
           python verify_all.py
           rc=$?

@@ -381,7 +381,7 @@ class DoctorContractTests(unittest.TestCase):
         state_path = root / ".omama" / "state.json"
         state = json.loads(state_path.read_text(encoding="utf-8"))
         state.update({
-            "runtime_mode": "managed", "receipt_interpreter": interpreter.resolve().as_posix(),
+            "runtime_mode": "managed", "receipt_interpreter": interpreter.absolute().as_posix(),
             "base_interpreter": base.resolve().as_posix(), "pyyaml_version": "6.0.3",
         })
         state_path.write_text(json.dumps(state), encoding="utf-8")
