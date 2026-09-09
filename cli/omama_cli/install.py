@@ -283,6 +283,8 @@ class InstallationTransaction:
         self.created_dirs = []
         self._locked = False
         self._owns_journal = False
+        self.current_state = None
+        self._state_after_sha256 = None
 
     def _mkdirs(self, parent):
         missing = []
@@ -430,13 +432,16 @@ class InstallationTransaction:
         if not record["applied"]:
             raise InstallError("git-config-activation", "git config reported success without recording core.hooksPath")
 
-    def write_state(self, status, extra=None):
-        state = dict(self.plan.state)
+    def _state_value(self, status, extra=None, base=None):
+        state = dict(self.plan.state if base is None else base)
         state["status"] = status
         if extra:
             state.update(extra)
+        return state
+
+    def _write_state_value(self, state, before):
         data = (json.dumps(state, indent=2, sort_keys=True) + "\n").encode("utf-8")
-        operation = FileOperation(STATE_REL, data, 0o600, self.plan.state_before)
+        operation = FileOperation(STATE_REL, data, 0o600, before)
         path = safe_destination(self.plan.target.root, operation.relative)
         if not _same_snapshot(path, operation.before):
             raise InstallError("concurrent-edit", "installation state changed after preflight: {0}".format(STATE_REL))
@@ -450,7 +455,21 @@ class InstallationTransaction:
         self._journal("writing-state")
         self._atomic_write(path, data, operation.mode)
         record["applied"] = True
+        self.current_state = state
+        self._state_after_sha256 = record["after_sha256"]
         self._journal("state-written")
+
+    def write_state(self, status, extra=None):
+        self._write_state_value(self._state_value(status, extra), self.plan.state_before)
+
+    def promote_state(self, status):
+        if self.current_state is None or self._state_after_sha256 is None:
+            raise InstallError("admission-state", "cannot promote installation state before the private admission state exists")
+        path = safe_destination(self.plan.target.root, STATE_REL)
+        before = _snapshot_file(path, include_bytes=True)
+        if before.get("kind") != "file" or before.get("sha256") != self._state_after_sha256:
+            raise InstallError("concurrent-edit", "installation state changed during mandatory admission: {0}".format(STATE_REL))
+        self._write_state_value(self._state_value(status, base=self.current_state), before)
 
     def _protected_unchanged(self):
         return self.plan.protected == _protected_snapshot(self.plan.target)
@@ -551,6 +570,8 @@ class InstallationTransaction:
 
 
 def run_asset_transaction(plan, status="prepared", prepare=None, after_publication=None, before_finish=None, state_extra=None):
+    if status == "complete" and before_finish is None:
+        raise InstallError("admission-missing", "complete state requires the mandatory private admission callback")
     transaction = InstallationTransaction(plan)
     try:
         transaction.begin()
@@ -561,9 +582,14 @@ def run_asset_transaction(plan, status="prepared", prepare=None, after_publicati
         combined_extra = dict(state_extra or {})
         if prepared_extra:
             combined_extra.update(prepared_extra)
-        transaction.write_state(status, combined_extra)
-        if before_finish:
+        if status == "complete":
+            transaction.write_state("installing", combined_extra)
             before_finish(transaction)
+            transaction.promote_state("complete")
+        else:
+            transaction.write_state(status, combined_extra)
+            if before_finish:
+                before_finish(transaction)
         transaction.finish()
     except Exception as exc:
         try:

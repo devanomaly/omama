@@ -161,8 +161,9 @@ def qualify_managed_base(path, target):
 
 
 def _runtime_python(runtime):
-    windows = runtime / "Scripts" / "python.exe"
-    return windows if windows.is_file() else runtime / "bin" / "python"
+    # This function also plans the settings command before the runtime exists;
+    # select by platform rather than by premature file existence.
+    return runtime / "Scripts" / "python.exe" if os.name == "nt" else runtime / "bin" / "python"
 
 
 def managed_runtime_interpreter(target):

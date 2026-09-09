@@ -4,9 +4,10 @@ The package exposes `omama init [PATH] [--python ABSOLUTE_PATH] [--no-git-config
 and `omama doctor [PATH] [--static-only]`, plus help and version. The T5 installer
 foundation resolves only non-bare Git worktrees, rejects inherited Git routing and
 unsafe destinations before publication, and provides finite lock/journal/conditional
-rollback mechanics. The public init command still reports `NOT-RUN`/2 after a clean
-preflight until runtime, wiring, doctor, and mandatory admission are integrated; it
-does not claim that a repository was installed.
+rollback mechanics. A normally activated init returns 0 only after private-owner doctor
+and mandatory exact-installed-command admission both pass; it otherwise reports a named
+failure and conditionally rolls back. Deliberate `--no-git-config` preparation remains
+the distinct incomplete/2 route while activation is still required.
 
 Builds generate the packaged payload from the authoritative repository files listed in
 `build_backend/inventory.py`. `omama_cli.bundle.load_bundle()` reads only installed
@@ -64,8 +65,9 @@ any active default hook (including pre-push/post-checkout) is a preflight confli
 checkout activation is local and last; linked worktrees may reuse an already-effective
 `.githooks` value but never rewrite shared config or enable worktree-config extensions.
 `--no-git-config` leaves prepared state, returns 2, and prints the exact local command.
-Until T9 supplies mandatory admission, even a normally activated init remains prepared and
-returns 2 rather than claiming installed/verified.
+If `.githooks` is already the effective value, the same flag performs normal admission and
+may return 0. A first init and same-bundle prepared/complete reruns all use the live private
+transaction owner; only an all-green run promotes local state from `installing` to `complete`.
 
 `omama doctor` inventories both project settings files, the exact managed command and
 visible project/process environment sources; it explicitly warns that user, managed-policy,
@@ -81,6 +83,39 @@ temporary synthetic files. Gate-like and ordinary sibling registrations are insp
 never executed. It also checks effective hooksPath, both chainers, wrapper/scanner identity,
 LF/executable behavior, privacy config/token state, and the wrapper-selected Python route.
 No token values are printed.
+
+Mandatory admission first requires the full dynamic doctor report under the current private
+transaction owner. Doctor's temporary validator/checker/privacy probes are placed beneath the
+owner's target-local `.omama/.admission-*` scratch for this internal call; standalone doctor
+continues to use external temporary probes and treats every lock/journal as unhealthy.
+
+The admission harness then copies the validated, currently installed manifest topology and
+local settings into private target-owned scratch Git repositories. It executes the recorded
+settings command unchanged, with only `CLAUDE_PROJECT_DIR` pointing at each synthetic
+worktree and with zero `OMAMA_*` overrides. A valid S1 card proves real VERIFY-RED/2 then
+VERIFIED/0, close consumption, and recomputable HEAD/diff binding. S3 proves a present PASS
+review genuinely missing Non-findings reaches the installed checker, a valid review closes,
+and an over-budget-only review warns under `--budgets-advisory`. The malformed review contains
+neither a Non-findings heading nor that phrase in prose; the earlier false-red construction
+that mentioned Non-findings outside a section remains a warning, not red evidence.
+
+Independent omission challenges remove the scratch-installed gate, validator, checker,
+scanner, or wrapper while healthy package/source copies remain elsewhere; no omitted file is
+reconstructed. Privacy challenges exercise the unchanged wrapper through both shipped
+chainers, including real Git commit and merge behavior. Missing, comment-only, populated,
+null, and omitted token states use synthetic token input only; adopter token values are never
+read or copied. Finally every installed manifest file is committed together through the
+shipped wrapper and the target's current privacy configuration. Failure or unavailable shell
+coverage is named and prevents complete state; NOT-RUN is translated to init exit 1.
+On a same-bundle rerun, deliberately absent inert editable templates stay absent: admission
+reports them and commits every file that is actually installed, without reconstructing package
+copies. Fresh installation still proves the complete 15-file payload in one commit; executable
+gate/validator/checker/privacy dependencies are never waived by this editable-material rule.
+
+Successful init prints inert starter-template adoption guidance and the output-discipline
+per-operator block. It never creates `CLAUDE.md` or writes user/global Claude configuration.
+These deterministic shell tests prove the installed commands and Git entrypoints, not that a
+real Claude host loaded project settings; paid/login-dependent host sessions remain separate.
 
 `--static-only` executes no installed interpreter, gate, validator, checker, scanner, or
 wrapper. It keeps existence/hash/config inspection, names every skipped dynamic row, and

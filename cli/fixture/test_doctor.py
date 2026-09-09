@@ -69,11 +69,11 @@ class DoctorContractTests(unittest.TestCase):
         if not managed:
             args.extend(["--python", self.explicit])
         result = self.run_cli(root, *args)
-        self.assertEqual(2, result.returncode, result.stdout + result.stderr)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         state_path = root / ".omama" / "state.json"
         state = json.loads(state_path.read_text(encoding="utf-8"))
-        if complete:
-            state["status"] = "complete"
+        if not complete:
+            state["status"] = "prepared"
             state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         return root
 
@@ -353,11 +353,7 @@ class DoctorContractTests(unittest.TestCase):
         subprocess.run(["git", "-C", str(main), "config", "--local", "core.hooksPath", ".githooks"], check=True)
         main_before = _files(main)
         result = self.run_cli(linked, "init", str(linked), "--python", self.explicit)
-        self.assertEqual(2, result.returncode, result.stdout + result.stderr)
-        state_path = linked / ".omama" / "state.json"
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-        state["status"] = "complete"
-        state_path.write_text(json.dumps(state), encoding="utf-8")
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         result = self.run_cli(linked, "doctor", str(linked))
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         self.assertIn("DOCTOR-OK", result.stdout)

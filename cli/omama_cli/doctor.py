@@ -25,6 +25,7 @@ from .wiring import (
 class InternalDoctorContext:
     owner: str
     state: dict
+    scratch_root: object = None
 
 
 @dataclass(frozen=True)
@@ -216,13 +217,17 @@ def _partial_state(target, context, report):
 
 
 def _state(target, context, report):
-    try:
-        state = read_state(target)
-    except InstallError as exc:
-        report.add("VIOLATION", "installation-state", exc.message)
-        return None
-    if state is None and context is not None:
+    if context is not None:
         state = context.state
+        if not isinstance(state, dict):
+            report.add("VIOLATION", "installation-state", "private admission state is not an object")
+            return None
+    else:
+        try:
+            state = read_state(target)
+        except InstallError as exc:
+            report.add("VIOLATION", "installation-state", exc.message)
+            return None
     if state is None:
         report.add("VIOLATION", "installation-state", "state is missing; run `omama init {0}`".format(target.root.as_posix()))
         return None
@@ -238,6 +243,23 @@ def _state(target, context, report):
     else:
         report.add("VIOLATION", "admission-state", "installation state is {0!r}".format(status))
     return state
+
+
+def _scratch_directory(target, context, report):
+    if context is None or context.scratch_root is None:
+        return None, True
+    root = Path(context.scratch_root)
+    try:
+        resolved = root.resolve()
+        resolved.relative_to((target.root / ".omama").resolve())
+    except (OSError, ValueError):
+        report.add("VIOLATION", "admission-scratch", "private doctor scratch must stay below the target's .omama directory")
+        return None, False
+    if not root.is_dir() or root.is_symlink():
+        report.add("VIOLATION", "admission-scratch", "private doctor scratch is missing or unsafe")
+        return None, False
+    report.add("OK", "admission-scratch", "private doctor probes are confined to target-owned transaction scratch")
+    return resolved, True
 
 
 def _settings(target, state, report):
@@ -574,6 +596,7 @@ def doctor(target, package_bundle, static_only=False, context=None):
     report = DoctorReport()
     partial_ok = _partial_state(target, context, report)
     state = _state(target, context, report)
+    scratch_directory, scratch_ok = _scratch_directory(target, context, report)
     manifest, by_destination, vendor_trusted = _load_installed_identity(target, package_bundle, state, report)
     docs, project_env, expected_command, managed_gate_identified = _settings(target, state, report)
     defaults = {
@@ -631,23 +654,26 @@ def doctor(target, package_bundle, static_only=False, context=None):
         report.add("NOT-RUN", "validator-probe", "static-only skipped valid/invalid validator execution")
         report.add("NOT-RUN", "checker-probe", "static-only skipped valid/malformed checker execution")
         scratch_parent = None
-    elif not (partial_ok and state and vendor_trusted and interpreter and wiring_checker and gate and resolution_trusted and expected_command and managed_gate_identified):
+    elif not (partial_ok and scratch_ok and state and vendor_trusted and interpreter and wiring_checker and gate and resolution_trusted and expected_command and managed_gate_identified):
         report.add("NOT-RUN", "settings-execution", "dynamic gate check skipped because trusted prerequisites failed")
         report.add("NOT-RUN", "validator-probe", "validator execution skipped because trusted prerequisites failed")
         report.add("NOT-RUN", "checker-probe", "checker execution skipped because trusted prerequisites failed")
         scratch_parent = None
     else:
         _probe_managed_gate(wiring_checker, expected_command, target, report)
-        scratch_parent = tempfile.TemporaryDirectory(prefix="omama-doctor-")
+        scratch_parent = tempfile.TemporaryDirectory(
+            prefix="omama-doctor-", dir=str(scratch_directory) if scratch_directory else None)
         scratch = Path(scratch_parent.name)
         _probe_validator(interpreter, validator, scratch, report)
         _probe_checker(interpreter, checker, scratch, report)
 
     if scratch_parent is not None:
         scratch_parent.cleanup()
-    if static_only:
+    if static_only or not scratch_ok:
         _privacy(target, by_destination, interpreter, True, target.root, report, vendor_trusted)
     else:
-        with tempfile.TemporaryDirectory(prefix="omama-doctor-privacy-") as privacy_temp:
+        with tempfile.TemporaryDirectory(
+                prefix="omama-doctor-privacy-",
+                dir=str(scratch_directory) if scratch_directory else None) as privacy_temp:
             _privacy(target, by_destination, interpreter, False, Path(privacy_temp), report, vendor_trusted)
     return report
