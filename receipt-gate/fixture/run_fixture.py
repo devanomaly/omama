@@ -1762,8 +1762,10 @@ def a_nongit_mount_outer_marker(tmp):
         marker = {"no-card": "NO-CARD:", "wip": "WIP:", "honest": "CLOSE: FAILED"}[intent]
         check(r.returncode == 0 and marker in r.stdout,
               "outer marker across filesystem boundary blocked " + intent, r)
-        check(_binding_snapshot(outer / ".git") == outer_before,
-              "mounted close changed the outer Git database", r)
+        outer_after = _binding_snapshot(outer / ".git")
+        check(outer_after == outer_before,
+              "mounted close changed the outer Git database: "
+              + _binding_delta(outer_before, outer_after), r)
     check(receipt(plain)["verdict"] == "FAILED" and not (plain / "CARD.close").exists(),
           "mounted honest close did not complete", r)
 
