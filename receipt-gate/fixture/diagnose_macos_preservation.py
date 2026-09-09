@@ -180,7 +180,7 @@ def _make_repo(path, prefix):
     _git(prefix + "-git-name", path, "config", "user.name", "macOS diagnostic")
     (path / "tracked.txt").write_text("base\n", encoding="utf-8")
     _git(prefix + "-git-add", path, "add", "tracked.txt")
-    _git(prefix + "-git-commit", path, "-c", "core.hooksPath=.no-hooks", "commit", "-qm", "base")
+    _git(prefix + "-git-commit", path, "commit", "-qm", "base")
 
 
 def _card_text(verify):
@@ -330,7 +330,9 @@ def main():
         "runner_temp": str(Path(os.environ["RUNNER_TEMP"]).resolve()),
     })
     git_version = _run("git-version", ["git", "--version"], ROOT)
-    results = _routing_case() + _mount_case()
+    # Preserve the historical fixture order: the mounted case is first and
+    # routing-response follows later. Only the two challenged cases run here.
+    results = _mount_case() + _routing_case()
     failures = [
         item for item in results
         if item["returncode"] != item["expected_returncode"]

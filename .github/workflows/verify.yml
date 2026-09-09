@@ -126,14 +126,19 @@ jobs:
 
       - name: Diagnose the two retained macOS preservation observations
         if: always() && runner.os == 'macOS'
-        env:
-          OMAMA_MACOS_DIAGNOSTIC_ROOT: ${{ runner.temp }}/omama-macos-preservation
-        run: python -B receipt-gate/fixture/diagnose_macos_preservation.py
+        shell: bash
+        run: |
+          failed=0
+          for trial in $(seq -w 1 32); do
+            export OMAMA_MACOS_DIAGNOSTIC_ROOT="${{ runner.temp }}/omama-macos-preservation/trial-$trial"
+            python -B receipt-gate/fixture/diagnose_macos_preservation.py || failed=1
+          done
+          exit "$failed"
 
       - name: Retain scoped macOS preservation evidence
         if: always() && runner.os == 'macOS'
         uses: actions/upload-artifact@v4
         with:
           name: macos-preservation-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/omama-macos-preservation/owned-macos-preservation-v1
+          path: ${{ runner.temp }}/omama-macos-preservation
           if-no-files-found: error
