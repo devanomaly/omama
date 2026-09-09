@@ -1,5 +1,8 @@
 # 03 — Validator · ADOPTION
 
+When copying this piece manually, follow [VENDORING.md](../VENDORING.md) to record the
+upstream commit and keep vendored bytes outside formatter/linter rewrites.
+
 Instantiation, CI, and human decisions. The mechanics and limits are in the
 [README](README.md).
 

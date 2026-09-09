@@ -1,7 +1,9 @@
 # 01 — privacy-hook · ADOPTION
 
 Installation and human decisions. The mechanics and limits are in the
-[README](README.md); the receipts are in [EVIDENCE.md](EVIDENCE.md).
+[README](README.md); the receipts are in [EVIDENCE.md](EVIDENCE.md). If these
+files are copied rather than installed by the CLI, also follow the repository-wide
+[vendoring guide](../VENDORING.md) for provenance and formatter/linter exclusions.
 
 ## How to adopt (step by step)
 
@@ -198,6 +200,35 @@ The combined hook is also what goes under `pre-merge-commit` (step 3):
 a bare copy of the wrapper there would skip the repo's own checks on
 every merge and, with the scanner relocated, refuse every merge with
 `missing-scanner`.
+
+## Built-in rules versus team policy
+
+Do not repeat the scanner's built-in credential shapes in `deny_regexes`. The built-in
+rules are part of `scan_staged.py`; `privacy-deny.json` is separate, adopter-owned policy.
+The eight built-in rule ids and byte-regex patterns are:
+
+| Rule id | Pattern |
+|---|---|
+| `aws-access-key` | `(?:AKIA\|ASIA\|ABIA\|ACCA\|A3T[A-Z0-9])[0-9A-Z]{16}` |
+| `github-token` | `gh[pousr]_[A-Za-z0-9]{36}` |
+| `github-pat` | `github_pat_[A-Za-z0-9_]{40,}` |
+| `anthropic-key` | `sk-ant-[A-Za-z0-9_\-]{10,}` |
+| `slack-token` | `xox[baprs]-[A-Za-z0-9\-]{10,}` |
+| `private-key-block` | `-----BEGIN [A-Z ]*PRIVATE KEY-----` |
+| `putty-private-key` | `PuTTY-User-Key-File-\d` |
+| `url-credentials` | `(?i)[a-z][a-z0-9+.\-]*://([^/\s:@]+):([^@\s]+)@` |
+
+The built-in allowlist is deliberately narrow. Literal allowlist entries suppress only
+an exact built-in match; the URL allowlist suppresses only an exact, case-insensitive
+`user:password` pair. An allowlisted occurrence cannot hide another non-allowlisted match
+in the same file. Neither allowlist applies to `deny_filenames`, adopter `deny_regexes`,
+or `tokens_file` literals: what the team declares always blocks.
+
+Concrete trap: adding a custom `AKIA[0-9A-Z]{16}` rule re-flags
+`scan_staged.py` itself because that source contains AWS's published example key. The
+example is exempt from the built-in `aws-access-key` rule only; it is not exempt from the
+custom rule, so the hook correctly blocks the commit that vendors the scanner. Test the
+built-in rule with a different synthetic value assembled at runtime, as step 7 describes.
 
 ## What only a human decides
 

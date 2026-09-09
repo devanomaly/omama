@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"C:\\absolute\\path\\to\\python.exe\" \"<REPO_ROOT>\\.claude\\hooks\\receipt_gate.py\""
+            "command": "\"C:/absolute/path/to/python.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/receipt_gate.py\""
           }
         ]
       }
