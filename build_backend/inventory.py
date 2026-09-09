@@ -41,5 +41,10 @@ IDENTITY_INPUTS = (
     "cli/omama_cli/command.py",
     "cli/omama_cli/bundle.py",
     "cli/omama_cli/identity.py",
+    "cli/omama_cli/target.py",
+    "cli/omama_cli/install.py",
+    "cli/omama_cli/runtime.py",
+    "cli/omama_cli/wiring.py",
+    "cli/omama_cli/doctor.py",
     "cli/README.md",
 ) + tuple(sorted({row[0] for row in SOURCE_INVENTORY}))

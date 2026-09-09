@@ -1,5 +1,6 @@
 import copy
 import hashlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -160,11 +161,31 @@ class PackagingContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not from the validated bundle"):
             classify_existing(self.bundle, fake, b"", None)
 
+    def test_all_cli_source_modules_are_identity_inputs(self):
+        source_root = Path(__file__).resolve().parents[2]
+        spec = importlib.util.spec_from_file_location(
+            "omama_build_inventory", str(source_root / "build_backend" / "inventory.py")
+        )
+        inventory = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(inventory)
+        package_sources = {
+            path.relative_to(source_root).as_posix()
+            for path in (source_root / "cli" / "omama_cli").glob("*.py")
+        }
+        self.assertTrue(package_sources)
+        self.assertEqual(set(), package_sources - set(inventory.IDENTITY_INPUTS))
+
 
 class CommandContractTests(unittest.TestCase):
     def run_cli(self, *args):
+        from omama_cli.target import routing_names
+
+        env = os.environ.copy()
+        for key in routing_names(env):
+            env.pop(key, None)
         return subprocess.run(
             [sys.executable, "-m", "omama_cli", *args],
+            env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -176,18 +197,18 @@ class CommandContractTests(unittest.TestCase):
         self.assertEqual(0, self.run_cli("--version").returncode)
         self.assertEqual(0, self.run_cli("init", "--help").returncode)
         self.assertEqual(0, self.run_cli("doctor", "--help").returncode)
-        self.assertEqual(2, self.run_cli("init").returncode)
-        self.assertIn("NOT-RUN", self.run_cli("init").stderr)
-        self.assertEqual(2, self.run_cli("doctor").returncode)
-        self.assertIn("NOT-RUN", self.run_cli("doctor").stderr)
 
-    def test_unimplemented_commands_do_not_write_target(self):
+    def test_commands_reject_explicit_non_git_target_without_writes(self):
         target = Path(tempfile.mkdtemp(prefix="command-", dir=_test_root()))
         sentinel = target / "sentinel.txt"
         sentinel.write_bytes(b"preserve me\n")
         before = {p.relative_to(target).as_posix(): p.read_bytes() for p in target.rglob("*") if p.is_file()}
-        self.assertEqual(2, self.run_cli("init", str(target)).returncode)
-        self.assertEqual(2, self.run_cli("doctor", str(target)).returncode)
+        init = self.run_cli("init", str(target))
+        doctor = self.run_cli("doctor", str(target))
+        self.assertEqual(1, init.returncode)
+        self.assertIn("unsupported-git-target", init.stderr)
+        self.assertEqual(1, doctor.returncode)
+        self.assertIn("unsupported-git-target", doctor.stderr)
         after = {p.relative_to(target).as_posix(): p.read_bytes() for p in target.rglob("*") if p.is_file()}
         self.assertEqual(before, after)
 
