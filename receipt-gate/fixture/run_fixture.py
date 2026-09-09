@@ -1584,6 +1584,17 @@ def _binding_snapshot(repo):
             for p in repo.rglob("*") if p.is_file()}
 
 
+def _binding_delta(before, after):
+    """Name changed synthetic paths without printing their contents."""
+    before_names = set(before)
+    after_names = set(after)
+    added = sorted(after_names - before_names)
+    removed = sorted(before_names - after_names)
+    changed = sorted(name for name in before_names & after_names
+                     if before[name] != after[name])
+    return "added={0}; removed={1}; changed={2}".format(added, removed, changed)
+
+
 def b_routing_refusal(tmp, variable="GIT_DIR", empty=False):
     """Two distinct HEADs: routing must fail before verify or evidence writes."""
     session = make_repo(tmp, "session")
@@ -1851,7 +1862,9 @@ def w_routing_response(tmp):
         check(variable in r.stderr and "private-routing-value" not in r.stderr and
               "WIRING-OK" not in r.stdout and "gate did not answer" not in r.stderr,
               "routing diagnostic disclosed a value or certified unusable wiring", r)
-        check(_binding_snapshot(repo) == before, "wiring probe changed target bytes", r)
+        after = _binding_snapshot(repo)
+        check(after == before,
+              "wiring probe changed target bytes: " + _binding_delta(before, after), r)
     r = run_wiring(repo)
     check(r.returncode == 0 and "WIRING-OK" in r.stdout,
           "removing inherited routing did not restore wiring", r)

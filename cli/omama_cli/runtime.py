@@ -157,16 +157,19 @@ def discover_base(target, uv_executable=None):
 
 
 def qualify_managed_base(path, target):
-    candidate = Path(path).resolve()
+    supplied = Path(path)
+    candidate = supplied.resolve()
     if not candidate.is_file():
         raise InstallError("base-python-unavailable", "managed base interpreter is missing")
-    if _is_within(candidate, target.root):
+    if _is_lexically_within(supplied, target.root) or _is_within(candidate, target.root):
         raise InstallError("interpreter-not-durable", "managed base interpreter is inside the target repository")
     tool_prefix = Path(sys.prefix).resolve()
     base_prefix = Path(getattr(sys, "base_prefix", sys.prefix)).resolve()
     if tool_prefix != base_prefix and _is_within(candidate, tool_prefix):
         raise InstallError("interpreter-not-durable", "managed base resolves inside the disposable CLI/tool environment")
-    value = _probe(candidate, require_yaml=False)
+    # Probe the selected entrypoint before canonicalizing its durable identity:
+    # a POSIX venv's bin/python normally resolves to its system base.
+    value = _probe(supplied, require_yaml=False)
     if Path(value["prefix"]).resolve() != Path(value["base_prefix"]).resolve():
         raise InstallError("interpreter-not-durable", "managed base is itself a virtual environment, not an independent system Python")
     return candidate, value
@@ -215,7 +218,7 @@ def prepare_receipt_runtime(transaction, explicit_python=None, uv_executable=Non
     uv_executable = uv_executable or shutil.which("uv")
     if not uv_executable:
         raise InstallError("uv-unavailable", "uv is required at install time; install uv or supply --python ABSOLUTE_PATH")
-    candidate = Path(base_python).resolve() if base_python else discover_base(target, uv_executable)
+    candidate = Path(base_python) if base_python else discover_base(target, uv_executable)
     candidate, base_value = qualify_managed_base(candidate, target)
     staging = transaction.reserve_owned_tree(".omama/runtime")
     try:

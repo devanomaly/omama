@@ -272,7 +272,7 @@ class RuntimeContractTests(unittest.TestCase):
     def test_installed_cli_tool_environment_deletion_leaves_receipt_runtime_working(self):
         helper = _helper()
         root = helper.make_repo()
-        tool_python = Path(os.environ["OMAMA_INSTALLED_TOOL_PYTHON"]).resolve()
+        tool_python = Path(os.environ["OMAMA_INSTALLED_TOOL_PYTHON"]).absolute()
         tool_root = tool_python.parents[1]
         allocated = Path(install_fixture._test_root()).resolve()
         marker = tool_root / ".omama-test-owner.json"
@@ -290,7 +290,7 @@ class RuntimeContractTests(unittest.TestCase):
         )
         self.assertEqual(0, result.returncode, result.stderr)
         state = json.loads((root / ".omama" / "state.json").read_text(encoding="utf-8"))
-        receipt_python = Path(state["receipt_interpreter"]).resolve()
+        receipt_python = Path(state["receipt_interpreter"]).absolute()
         self.assertFalse(receipt_python == tool_python or tool_root in receipt_python.parents)
         shutil.rmtree(str(tool_root))
         self.assertFalse(tool_root.exists())
