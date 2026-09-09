@@ -13,6 +13,7 @@ import os
 import platform
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -58,6 +59,7 @@ for directory in (SNAPSHOTS, OUTPUTS, TRACES):
 PROCESS_LOG = ROOT / "processes.jsonl"
 CHILD_LOG = ROOT / "fixture-children.jsonl"
 SEQUENCE = 0
+IMMEDIATE_SNAPSHOTS = {}
 
 
 def _json_write(path, value):
@@ -93,12 +95,16 @@ def _log_process(value):
         stream.write(json.dumps(value, sort_keys=True) + "\n")
 
 
-def _run(label, argv, cwd, env=None, input_text=None, timeout=120):
+def _run(
+    label, argv, cwd, env=None, input_text=None, timeout=120,
+    trace_git=False, immediate_scope=None,
+):
     global SEQUENCE
     SEQUENCE += 1
-    trace = TRACES / ("{0:03d}-{1}.jsonl".format(SEQUENCE, label))
     child_env = dict(env or _clean_env())
-    child_env["GIT_TRACE2_EVENT"] = str(trace)
+    trace = TRACES / ("{0:03d}-{1}.jsonl".format(SEQUENCE, label))
+    if trace_git:
+        child_env["GIT_TRACE2_EVENT"] = str(trace)
     started = time.time_ns()
     process = subprocess.Popen(
         [str(value) for value in argv], cwd=str(cwd), env=child_env,
@@ -113,6 +119,13 @@ def _run(label, argv, cwd, env=None, input_text=None, timeout=120):
         timed_out = True
         process.kill()
         stdout, stderr = process.communicate()
+    if immediate_scope is not None:
+        # This must be the first operation after child completion. In
+        # particular, do not write process/output diagnostics before sampling
+        # a detached Git maintenance lock left by the setup commit.
+        immediate = _snapshot(immediate_scope)
+        IMMEDIATE_SNAPSHOTS[label] = immediate
+        _json_write(SNAPSHOTS / (label + "-immediate.json"), immediate)
     ended = time.time_ns()
     record = {
         "sequence": SEQUENCE,
@@ -134,8 +147,11 @@ def _run(label, argv, cwd, env=None, input_text=None, timeout=120):
     return process.returncode, stdout or "", stderr or ""
 
 
-def _git(label, repo, *args):
-    result = _run(label, ["git", "-C", repo] + list(args), ROOT)
+def _git(label, repo, *args, trace_git=False, immediate_scope=None):
+    result = _run(
+        label, ["git", "-C", repo] + list(args), ROOT,
+        trace_git=trace_git, immediate_scope=immediate_scope,
+    )
     if result[0] != 0:
         raise RuntimeError("git setup failed ({0}): {1}".format(label, result[2][-1000:]))
     return result
@@ -173,14 +189,62 @@ def _capture(label, root):
     return value
 
 
-def _make_repo(path, prefix):
+def _make_repo(path, prefix, trace_git=False):
     path.mkdir(parents=True)
-    _git(prefix + "-git-init", path, "init", "-q")
-    _git(prefix + "-git-email", path, "config", "user.email", "macos-diagnostic@example.invalid")
-    _git(prefix + "-git-name", path, "config", "user.name", "macOS diagnostic")
+    _git(prefix + "-git-init", path, "init", "-q", trace_git=trace_git)
+    _git(prefix + "-git-email", path, "config", "user.email", "macos-diagnostic@example.invalid", trace_git=trace_git)
+    _git(prefix + "-git-name", path, "config", "user.name", "macOS diagnostic", trace_git=trace_git)
     (path / "tracked.txt").write_text("base\n", encoding="utf-8")
-    _git(prefix + "-git-add", path, "add", "tracked.txt")
-    _git(prefix + "-git-commit", path, "commit", "-qm", "base")
+    _git(prefix + "-git-add", path, "add", "tracked.txt", trace_git=trace_git)
+    commit_label = prefix + "-git-commit"
+    git_database = path / ".git"
+    stop_watcher = threading.Event()
+    lock_observations = {}
+
+    def watch_maintenance_locks():
+        objects = git_database / "objects"
+        while not stop_watcher.is_set():
+            try:
+                candidates = list(objects.glob("maintenance*.lock"))
+            except OSError:
+                candidates = []
+            for candidate in candidates:
+                try:
+                    data = candidate.read_bytes()
+                except OSError:
+                    continue
+                key = candidate.name + ":" + hashlib.sha256(data).hexdigest()
+                now = time.time_ns()
+                row = lock_observations.setdefault(key, {
+                    "path": "objects/" + candidate.name,
+                    "sha256": hashlib.sha256(data).hexdigest(),
+                    "size": len(data),
+                    "first_seen_ns": now,
+                    "last_seen_ns": now,
+                    "observations": 0,
+                })
+                row["last_seen_ns"] = now
+                row["observations"] += 1
+
+    watcher = threading.Thread(target=watch_maintenance_locks, name=prefix + "-maintenance-lock-watcher")
+    watcher.start()
+    try:
+        _git(
+            commit_label, path, "commit", "-qm", "base",
+            trace_git=trace_git, immediate_scope=git_database,
+        )
+    finally:
+        stop_watcher.set()
+        watcher.join()
+    after_bookkeeping = _capture(prefix + "-post-commit-bookkeeping", git_database)
+    _json_write(ROOT / (prefix + "-commit-transition.json"), {
+        "immediate_to_post_bookkeeping": _delta(
+            IMMEDIATE_SNAPSHOTS[commit_label], after_bookkeeping,
+        ),
+        "immediate_snapshot": "snapshots/" + commit_label + "-immediate.json",
+        "post_bookkeeping_snapshot": "snapshots/" + prefix + "-post-commit-bookkeeping.json",
+        "maintenance_lock_observations": sorted(lock_observations.values(), key=lambda row: row["path"]),
+    })
 
 
 def _card_text(verify):
@@ -265,6 +329,22 @@ def _routing_case():
     return results
 
 
+def _setup_trace_control():
+    """Trace only a separate setup/no-gate control.
+
+    The challenged repositories deliberately do not enable Git Trace2: its
+    extra setup I/O could change the short interval in which a detached Git
+    maintenance writer races the first preservation snapshot.
+    """
+    repo = ROOT / "setup-trace-control" / "target"
+    _make_repo(repo, "trace-control", trace_git=True)
+    baseline = _capture("trace-control-post-setup", repo)
+    return [_phase(
+        "trace-control-no-gate", repo, baseline,
+        [PYTHON, "-B", "-c", "pass"], repo, _clean_env(), 0, "",
+    )]
+
+
 def _mount_wrapper(outer, plain):
     return _logged_popen_prefix() + (
         "import pathlib, runpy, subprocess, sys, types\n"
@@ -332,7 +412,7 @@ def main():
     git_version = _run("git-version", ["git", "--version"], ROOT)
     # Preserve the historical fixture order: the mounted case is first and
     # routing-response follows later. Only the two challenged cases run here.
-    results = _mount_case() + _routing_case()
+    results = _setup_trace_control() + _mount_case() + _routing_case()
     failures = [
         item for item in results
         if item["returncode"] != item["expected_returncode"]
@@ -348,6 +428,10 @@ def main():
         "cases": results,
         "strict_failures": [item["label"] for item in failures],
         "result": "VERIFIED" if not failures else "FAILED",
+        "setup_commit_transitions": {
+            prefix: json.loads((ROOT / (prefix + "-commit-transition.json")).read_text(encoding="utf-8"))
+            for prefix in ("trace-control", "mount", "routing")
+        },
         "historical_scope": [
             "run 34313675810 / 275c1f5 routing-response target bytes",
             "run 34314782101 / 9f2608a mounted outer-Git bytes",
