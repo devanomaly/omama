@@ -110,7 +110,9 @@ def load_bundle():
 def validate_bundle_directory(root):
     root = Path(root)
     try:
-        manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+        raw = (root / "manifest.json").read_bytes()
+        text = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+        manifest = json.loads(text)
     except FileNotFoundError:
         raise BundleError("missing-resource: manifest.json")
     except (UnicodeDecodeError, ValueError) as exc:
@@ -127,4 +129,4 @@ def validate_bundle_directory(root):
         except (FileNotFoundError, IsADirectoryError):
             return None
 
-    return _validate_manifest(manifest, read_resource, (root / "manifest.json").read_bytes())
+    return _validate_manifest(manifest, read_resource, raw)
