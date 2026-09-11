@@ -35,7 +35,11 @@ the artifacts it ships, not a neutralized stand-in.
   byte-identical copy of `privacy-hook/pre-commit`. The deny-list is the root
   `privacy-deny.json` — this repository's own, not the shipped sample: the sample would block
   the privacy-hook docs that spell its literals in prose (measured in #22). **Per clone,
-  once:** `git config core.hooksPath .githooks`. Nothing sets it for you (rule 6).
+  once:** `git config core.hooksPath .githooks`. Adopting a piece by hand never sets it for
+  you (rule 6): copying files into a repository changes no configuration. The separate,
+  explicitly invoked `omama init` CLI does set this one repository-local value, and only
+  after its private admission has passed — see `cli/README.md`. `omama init --no-git-config`
+  prepares the installation without it and prints the exact command above.
 - **Claude side.** `.claude/settings.json` is the one tracked file under `.claude/`. It
   registers the receipt-gate Stop hook in the certified form — an absolute interpreter
   located outside any user home directory, and

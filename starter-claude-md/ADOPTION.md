@@ -1,5 +1,8 @@
 # 08 — starter CLAUDE.md · ADOPTION
 
+When copying this piece manually, follow [VENDORING.md](../VENDORING.md) to record the
+upstream commit and keep vendored bytes outside formatter/linter rewrites.
+
 The mechanics and the limits are in the [README](README.md); the receipts are the
 fixture cases under `fixture/`, run by `fixture/run_fixture.py`.
 

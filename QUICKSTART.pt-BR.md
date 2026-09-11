@@ -1,239 +1,279 @@
-# Quickstart — o loop mínimo, do clone ao primeiro recibo
+# Quickstart — instale e inspecione o bundle da fase 1
 
-Todo comando abaixo foi executado num repositório de teste antes deste
-documento ser commitado (em Windows, com as substituições de interpretador
-anotadas inline); o caminho mecânico — sem contar leitura — levou pouco mais
-de 6 minutos na máquina do autor. Os comandos estão escritos com `python3` —
-no Windows troque por `py -3` (ver [Pré-requisitos](README.pt-BR.md#pré-requisitos)).
+Esta página usa um wheel construído a partir do checkout. Ela não declara que existe um
+pacote público do Omama. Comece com um worktree Git limpo, não-bare, que já tenha pelo menos
+um commit. Nunca experimente no checkout-fonte do Omama; use primeiro um repositório descartável.
 
 *[English version](QUICKSTART.md)*
 
-## 1. Veja-o se recusar a exagerar (2 comandos, sem compromisso)
+## 1. Construa e instale o wheel local
 
-Instale as dependências PRIMEIRO — sem PyYAML as fixtures reportam `FAILED`,
-que se lê como "repo quebrado" quando significa "dependência faltando" (as
-linhas de detalhe até dizem `pyyaml not installed`, mas só se você ler além
-do sumário):
+Pré-requisitos: Git, `uv` e um Python 3.8+ (abaixo do Python 4) existente e escolhido pelo
+usuário. Os placeholders de caminho abaixo são intencionais; troque-os pelos caminhos da sua máquina.
 
-```
-pip install pyyaml
-python3 verify_all.py --fast
-echo $?
-```
+Os comandos abaixo ficam intencionalmente um por linha: as mesmas aspas funcionam em shell
+POSIX e PowerShell, sem sintaxe de continuação de um shell usada no outro.
 
-Esperado: `7 ok, 0 failed, 1 not-run` — e **exit code 2, não 0**. Sete passes
-mais um check pulado não é um pass; um verificador que reporta sucesso sobre
-cobertura que pulou está mentindo. Esse exit code é a postura inteira deste
-toolkit num único bit observável. (`python3 verify_all.py` sem `--fast` roda
-também o corpus pulado — leva minutos — e sai com 0.)
-
-## 2. O loop mínimo são três peças
-
-- **[work-order](work-order/README.md)** — a tarefa entra como card: goal,
-  non-goals, tier ratificado por humano, done-when observável, UM comando
-  `verify` que pode falhar. Sem ele o gate não tem a que te prender.
-- **[receipt-gate](receipt-gate/README.md)** — um Stop hook que re-roda o
-  `verify` do próprio card antes de um close poder alegar VERIFIED, e escreve
-  um recibo em qualquer caso. Sem ele o card é prosa.
-- **[output-discipline](output-discipline/README.md)** — estrutura para
-  planos/reviews (verdict primeiro, non-findings explícitos). Necessária desde
-  o dia um apenas para cards S3; adote os templates quando chegar lá.
-
-Todo o resto do repo é opcional e separável — ver
-[Como adotar](README.pt-BR.md#como-adotar).
-
-## 3. Instale no seu repositório
-
-Da raiz do seu repo (`<OMAMA>` = seu clone deste repo):
-
-```
-mkdir -p .claude/hooks tools
-cp <OMAMA>/receipt-gate/receipt_gate.py   .claude/hooks/
-cp <OMAMA>/work-order/validate_work_order.py  tools/
-cp <OMAMA>/work-order/work-order.template.yaml .
+```text
+cd "<CHECKOUT_FONTE_OMAMA>"
+uv build --wheel --no-python-downloads --python "<CAMINHO_ABSOLUTO_DO_PYTHON_EXISTENTE>" --out-dir "dist"
+uv tool install "dist/omama-0.1.0-py3-none-any.whl" --python "<CAMINHO_ABSOLUTO_DO_PYTHON_EXISTENTE>" --no-managed-python --no-python-downloads --no-config
 ```
 
-Registre o hook: copie o bloco `hooks` de
-[receipt-gate/adapt/settings.example.json](receipt-gate/adapt/settings.example.json)
-para o `.claude/settings.json` **do seu repositório**. Três regras, cada uma
-prevenindo um gate que *parece* instalado enquanto está silenciosamente
-ausente ou bloqueando para sempre:
+Se o uv informar que seu diretório de executáveis não está no `PATH`, siga o comando
+temporário de shell que ele imprime antes de continuar:
 
-- **Por-repo, NUNCA `~/.claude/settings.json`** — um gate global quebrado
-  bloqueia todos os seus repos; um por-repo quebrado bloqueia só o repo que
-  optou por ele.
-- **Caminho absoluto do interpretador no comando, não `python3`** — se o
-  launcher não existe no host, o shell sai com 127/9009, o que NÃO bloqueia:
-  o gate fica silenciosamente ausente para sempre.
-- **Exporte as env vars ANTES do self-test** — `OMAMA_CARD` (caminho do card
-  ativo) e `OMAMA_VALIDATOR` (caminho do seu `validate_work_order.py`
-  copiado). Sem elas todo close bloqueia com `SCHEMA: validator unrunnable`.
-  `OMAMA_CHECK_ARTIFACT` só é exigida quando você usar cards S3. Tabela
-  completa: [receipt-gate/adapt/README.md](receipt-gate/adapt/README.md).
-
-O gate precisa de um repo git com pelo menos um commit (HEAD não-nascido
-falha-fechado, por design).
-
-## 4. Prove o gate: wiring check, depois vermelho, depois verde (obrigatório — não pule)
-
-Uma instalação que você não viu bloquear não está instalada. Esta seção é o
-self-test que o [adapt/README.md](receipt-gate/adapt/README.md) torna
-obrigatório — primeiro o wiring check (a verificação mecânica da fiação),
-depois rode o gate pela string de comando EXATA registrada no seu
-`settings.json`, copiada e colada, não redigitada.
-
-**Passo 1 — wiring check.** Da raiz do seu repo:
-
-```
-python3 <OMAMA>/receipt-gate/adapt/check_wiring.py    # Windows: py -3 ...
+```text
+omama --version
+omama --help
 ```
 
-**Esperado: `WIRING-OK ...` e exit 0.** Ele resolve o comando de Stop hook
-registrado e faz uma execução de teste (dry run) com stdin vazio —
-interpretador ausente, só o nome do launcher em vez do caminho absoluto,
-argumento `receipt_gate.py` errado ou ausente, um `CLAUDE_PROJECT_DIR` que
-o shell do hook deixaria literal (grafia `%VAR%`, aspas simples), um hook
-numa forma que o check não certifica (`async`, `args` em forma exec,
-`shell: powershell`), qualquer outra expansão `$` no comando, ou
-`disableAllHooks` num arquivo de settings vira uma `VIOLATION` nomeada
-(exit 1) em vez da ausência silenciosa 127/9009; no Windows sem Git Bash a
-resposta é NOT-RUN (exit 2), porque o hook rodaria pelo PowerShell. (Ele
-EXECUTA o comando registrado — esse é o ponto; detalhes, a forma
-certificada, uso em CI e `--static-only` no
-[adapt/README.md](receipt-gate/adapt/README.md).)
+Esses são comandos de artefato local, não `uvx` nem instalação a partir de um índice. Instalar
+a CLI não inicializa o checkout-fonte e não autoriza publicação do pacote.
 
-**Passos 2–3 — vermelho, depois verde.** Adicione o snippet do gitignore primeiro — um card é por tarefa e por
-máquina, não algo para versionar (veja
-[work-order/ADOPTION.md](work-order/ADOPTION.md#the-card-and-its-receipt-stay-local)
-para o porquê):
+## 2. Inicialize um repositório
 
-```
-cat >> .gitignore <<'EOF'
-CARD.yaml
-CARD.close
-CARD.receipt.json
-*.receipt.json
-EOF
-git add .gitignore
-git commit -m "gitignore: card e receipt ficam locais"
+A rota padrão cria um runtime durável do gate de recibo dentro do alvo:
+
+```text
+omama init "<REPOSITORIO_ALVO>"
+omama doctor "<REPOSITORIO_ALVO>"
 ```
 
-Escreva um primeiro card, `CARD.yaml`, cujo `verify` **ainda** não passa —
-p.ex. para um repo onde `app.js` ainda diz `hi`:
+O `init` padrão encontra de forma independente um Python-base suportado já instalado, cria
+`<REPOSITORIO_ALVO>/.omama/runtime` e usa o `uv`, somente durante a instalação, para instalar
+ali apenas `PyYAML>=6.0.2,<7`. Downloads de Python gerenciado e descoberta de configuração
+global são desativados. O init nunca baixa Python, instala a CLI nesse runtime nem muda
+configuração Python, Claude ou Git de usuário/global.
 
-```yaml
-goal: app.js greets with "hello" instead of "hi"
-non_goals:
-  - any file other than app.js
-tier: S1
-task_type: implementation
-done_when:
-  - app.js source contains the string hello
-verify: python3 -c "exit(0 if 'hello' in open('app.js').read() else 1)"
+Se a equipe já possui um ambiente Python/PyYAML durável, selecione-o explicitamente:
+
+```text
+omama init "<REPOSITORIO_ALVO>" --python "<CAMINHO_ABSOLUTO_DO_PYTHON_QUALIFICADO>"
 ```
 
-(Escreva o `verify` no que roda na SUA máquina — no Windows, `python`.)
+Esse interpretador precisa informar Python 3.8+ (abaixo do 4) e importar o PyYAML restrito.
+O Omama o inspeciona com gravação de bytecode desativada e não instala nem modifica esse
+ambiente. O interpretador registrado para recibos é separado do wrapper de privacidade, que
+mantém a seleção upstream pelo PATH (`py -3`, depois `python3`, depois `python`). Doctor
+qualifica ambos.
 
-```
-python3 tools/validate_work_order.py CARD.yaml   # esperado: OK ... valid card
-echo "CLOSE" > CARD.close
-echo '{}' | <string de comando exata do seu settings.json>
-```
+Um init bem-sucedido instala o payload completo de 15 arquivos e registra URL/revisão da
+fonte, versão do pacote, licença, identidade do bundle e hashes por arquivo. Ele também:
 
-Nada para commitar ainda — `CARD.yaml` e `CARD.close` estão no gitignore, e
-`app.js` ainda não mudou.
+- mescla um registro de Stop de sua propriedade no `.claude/settings.local.json` ignorado,
+  com caminho absoluto do interpretador entre aspas, usando barras normais, e
+  `"$CLAUDE_PROJECT_DIR/tools/omama/receipt-gate/receipt_gate.py"`;
+- instala gate de recibo, wiring checker, validator de work order, checker S3, scanner de
+  privacidade, wrapper de privacidade inalterado e os dois chainers Git;
+- inicializa política de deny editável pela equipe, tokens condicionais só com comentário,
+  work-order e templates inertes de starter/PLAN/REVIEW, preservando conteúdo existente;
+- acrescenta caminhos locais/de evidência ao `.gitignore` apenas quando o Git confirma que
+  o ignore resultante é efetivo; e
+- roda **primeiro, em privado**, todas as verificações de inventário do doctor que não
+  dependem de ativação e a admissão obrigatória completa a partir dos bytes instalados;
+  em seguida ativa `core.hooksPath=.githooks` local; e só então roda o doctor completo,
+  ciente da ativação, antes de registrar o estado completo. Uma instalação que falha nunca
+  deixa hooks ativos.
 
-**Esperado: `RECEIPT-GATE BLOCK[VERIFY-RED]` e exit 2.** Esse block é o
-produto funcionando. (O `{}` no stdin faz as vezes do payload de Stop-hook
-que o Claude Code envia; stdin vazio é ele próprio um block nomeado, por
-design.)
+O init imprime instruções para adotar o starter e o bloco por operador de output-discipline;
+não cria `CLAUDE.md` nem grava esse bloco em configuração de usuário.
 
-Agora faça o trabalho e feche de novo:
+## 3. Ativação deliberada da configuração Git
 
-```
-# ...faça app.js imprimir hello...
-git add -A && git commit -m "greet with hello"
-echo "CLOSE" > CARD.close
-echo '{}' | <string de comando exata do seu settings.json>
-```
+Para preparar os arquivos sem alterar a configuração Git local:
 
-**Esperado: exit 0, `VERIFIED ... receipt written`, e `CARD.receipt.json` em
-disco** com comando de verify, exit code e hashes da árvore amarrados juntos.
-`CARD.close` sumiu — o gate o consome em todo close permitido; o recibo é o
-registro durável. Closes honestos (`FAILED: <razão>`, `UNVERIFIED: <razão>`)
-sempre passam e sempre deixam recibo também.
-
-Se você viu o WIRING-OK, o BLOCK vermelho **e** o VERIFIED verde, o loop
-está instalado. Um resultado vermelho/verde sem o outro significa fiação
-quebrada — ver a seção de self-test do
-[adapt/README.md](receipt-gate/adapt/README.md) para o que cada resultado
-parcial significa.
-
-## 5. Despacho
-
-O loop está instalado. Despachar uma tarefa por ele é uma linha:
-
-```
-Implemente o CARD.yaml da raiz.
+```text
+omama init "<REPOSITORIO_ALVO>" --no-git-config
 ```
 
-Três coisas precisam ser verdade antes, e as §§1–4 não produzem nenhuma
-delas: o card real está em disco onde estava o de exemplo da §4
-(`CARD.yaml`, validado, `tier` ratificado por um humano); o branch foi
-cortado da ponta do branch padrão; e o `CLAUDE.md` do repo foi adotado a
-partir do [starter-claude-md](starter-claude-md/ADOPTION.md) (peça 08) e
-passa no checker dela. As §§1–4 instalam o gate, não o starter — e é no
-starter que vivem as regras de close e de branch da tabela abaixo. Sem ele o
-agente para sem `CARD.close`, o gate lê isso corretamente como WIP, e a
-tarefa termina sem recibo.
+Quando a ativação é necessária, esse resultado é intencionalmente incompleto (exit 2). O
+Omama imprime um comando exato com esta forma:
 
-Essa linha basta **porque as peças carregam o resto**. Toda vez que um
-despacho aqui precisou de uma linha extra, a linha extra acabou nomeando
-algo que uma peça já governa:
+```text
+git -C "<REPOSITORIO_ALVO>" config --local core.hooksPath .githooks
+```
 
-| Linha extra que o despacho precisou | Quem já governa isso | Carregada por |
+Rode exatamente o comando impresso e repita o mesmo `omama init ... --no-git-config`.
+Quando `.githooks` já for efetivo, a repetição faz a admissão completa e pode sair com 0.
+
+Para um linked worktree cuja configuração compartilhada ainda não está correta, o init se
+recusa a alterá-la. Primeiro rode a correção exata que ele imprime contra o **checkout principal**:
+
+```text
+git -C "<CHECKOUT_PRINCIPAL>" config --local core.hooksPath .githooks
+omama init "<LINKED_WORKTREE>"
+```
+
+O Omama nunca habilita a extensão worktree-config do Git nem altera silenciosamente config
+compartilhada. Se `git init --separate-git-dir` colocou a configuração de ativação deste worktree fora do
+worktree, o init recusa antes da publicação; a fase 1 não ativa esse layout.
+Se um hooksPath customizado estiver efetivo, ou existir qualquer hook ativo no
+diretório que seria deslocado — mesmo apenas `pre-push` — o init recusa. Integre os hooks
+manualmente; deslocamento do diretório inteiro não se torna seguro só porque os novos arquivos coexistem.
+
+## 4. Leia corretamente os exits e as repetições
+
+Ambos os comandos são tri-estado:
+
+| Exit | `init` | `doctor` |
 |---|---|---|
-| "não toque em nada fora deste diretório" | o `non_goals` do card — a lista congelada do que o diff não pode conter | 02 |
-| "escreva `CLOSE` em `CARD.close` quando terminar, e pare" | a regra do Stop hook no arquivo starter, em "Hooks installed in this repo", com tag `[10]` | 08 |
-| "corte o branch da ponta do branch padrão e abra um PR contra ele" | a regra de branch no arquivo starter, em "Bugfix requires a work order", com tag `[02]` | 08 |
+| 0 | Toda checagem dinâmica e admissão de hook obrigatória passou; estado completo. | Toda linha dinâmica obrigatória rodou e passou. |
+| 1 | Violação nomeada, conflito, alvo inseguro, falha de runtime ou admissão obrigatória falhou/não pôde ser avaliada. Estado de rollback/recovery é explícito. | Ao menos uma violação nomeada; ela domina linhas incompletas. |
+| 2 | Estado preparado deliberado ou outra capacidade obrigatória não foi avaliada; nunca sucesso. | Nenhuma violação conhecida, mas cobertura obrigatória incompleta, inclusive `--static-only`. |
 
-**Um prompt de despacho que precisa de uma segunda linha está nomeando uma
-peça ausente ou não adotada.** Leia a linha extra como achado, não como
-prosa a manter: ou o `non_goals` do card está frouxo demais, ou o
-`CLAUDE.md` deste repo está sem a regra (ver
-[starter-claude-md](starter-claude-md/README.md), cujo checker rejeita
-regra sem tag ou com tag fora do conjunto; se a tag aponta para a peça
-*certa* continua sendo revisão humana). Conserte o artefato, não o prompt.
+Repetições do mesmo bundle reparam somente material imutável/gerado ausente que seja elegível.
+Arquivos bootstrap editáveis pertencem à equipe depois de criados; edições e remoção deliberada
+de templates inertes sobrevivem. Drift imutável, conflito na fiação gerada e outro bundle são
+conflitos nomeados, não update implícito. Estado de card/close/recibo/índice, tokens, política
+de deny, settings/hooks não relacionados e edições externas são protegidos.
 
-**O fechamento, do lado do agente.** Quando o trabalho do card termina, o
-agente escreve `CLOSE` em `CARD.close` ao lado do card — o gate o lê do
-diretório do card, aqui a raiz do repo — e para; esse é todo o protocolo que
-lhe cabe. O gate faz o resto: re-roda o `verify` do próprio card contra a
-árvore atual, escreve `CARD.receipt.json`, e bloqueia um close vermelho
-(exit 2, nomeado) em vez de deixá-lo alegar VERIFIED. Parar sem `CARD.close`
-é um turno WIP e é permitido. Todo valor que `CARD.close` pode carregar —
-inclusive os closes honestos `FAILED:`/`UNVERIFIED:` — está na tabela em
-[receipt-gate/README.md](receipt-gate/README.md#close-model-the-gate-locks-the-claim-not-the-session);
-não é repetido aqui, para haver uma cópia só a manter verdadeira.
+As gravações usam um lock no alvo, journal finito das gravações próprias, substituição por
+arquivo e rollback condicional. Se outro escritor muda um caminho depois que o Omama o gravou,
+o Omama preserva a edição externa e deixa estado nomeado de recovery necessário, em vez de
+restaurar bytes obsoletos. Isso é recovery limitado ao conjunto documentado de arquivos sob
+um alvo quiescente, não atomicidade de todos os arquivos, roubo de lock antigo ou serviço geral
+de transações.
 
-Quando a sessão que despacha **não** é a sessão dentro do worktree, o
-fechamento é uma execução `claude -p` em print mode com o worktree como cwd —
-ver [Closing from an orchestrator](receipt-gate/README.md#closing-from-an-orchestrator-worktree-dispatch),
-cujo `adapt/selftest_orchestrator_close.py` prova isso na sua máquina.
+Se o init deixar `recovery-required` ou informar `unfinished-install`, não apague
+indiscriminadamente `.omama`, seu runtime, lock ou journal. Siga o
+[procedimento finito de recovery manual](cli/RECOVERY.pt-BR.md), que prioriza a preservação,
+retenha as before-images e edições externas e repita somente depois de contabilizar cada
+entrada própria registrada.
 
-## 6. Você agora tem
+## 5. O que doctor realmente verifica
 
-- Cards que congelam goal/non-goals/verify antes do dispatch, validados por
-  `tools/validate_work_order.py`.
-- Um gate que re-roda a prova do próprio card antes de qualquer close poder
-  alegar VERIFIED, e escreve recibo para todo close, falhas honestas
-  incluídas.
-- Um recibo de self-test vermelho provando que o gate realmente bloqueia na
-  sua máquina.
+O doctor padrão é somente leitura quanto a arquivos do alvo, família do card, índice e config,
+mas executa apenas os artefatos instalados esperados depois de conferir sua identidade. Ele relata:
 
-Próximos passos: semântica de tiers e o que só um humano decide —
-[work-order/ADOPTION.md](work-order/ADOPTION.md); review-artefatos S3 —
-[output-discipline/ADOPTION.md](output-discipline/ADOPTION.md); o que o gate
-NÃO pega — a seção de residuais do
-[receipt-gate/README.md](receipt-gate/README.md). Nenhuma alegação de
-eficácia é feita para nada disto; ver o [README](README.pt-BR.md).
+- estado da instalação, propriedade de lock/journal, manifesto/proveniência, skew de bundle/versão,
+  hashes imutáveis/gerados e drift de material editável da equipe;
+- ambos os arquivos de settings do projeto, o único comando Stop gerenciado elegível,
+  registros desativados/async ou conflitantes, quoting certificado e overrides visíveis do
+  ambiente de projeto/processo;
+- interpretador/PyYAML do recibo, resposta do gate, probes válido/inválido do validator e
+  probes válido/malformado do checker S3, inclusive `--budgets-advisory`;
+- hooksPath efetivo, ambos os chainers, identidade/modo de execução do wrapper/scanner,
+  configuração de privacidade, interpretador selecionado pelo wrapper e estado dos tokens; e
+- diferenças de clone/worktree/relocação e runtime/settings locais ausentes.
+
+Doctor não imprime valores de token. Um arquivo de tokens configurado e ausente é violação com
+caminho e correção. Um arquivo configurado existente, vazio ou só com comentários, produz um
+aviso não bloqueante por execução do scanner: a camada literal está inativa; preencha-a ou use
+null explicitamente. `tokens_file: null` e chave omitida desativam deliberadamente a camada sem
+esse aviso. Arquivo preenchido prova apenas que há literais, não que a lista da equipe é completa.
+
+`omama doctor "<REPOSITORIO_ALVO>" --static-only` não executa interpretador, gate, validator,
+checker, scanner nem wrapper instalados. Ainda confere caminhos, formas, bytes, settings e
+estado, nomeia cada linha dinâmica pulada e normalmente retorna incompleto/2. Use-o quando
+executar settings controlados pelo repositório for impróprio; não o chame de prova de saúde.
+
+Doctor observa `settings.json` e `settings.local.json` do projeto e seu ambiente de processo.
+Settings de usuário, política gerenciada e uma fonte separada via `claude --settings` não são
+totalmente observáveis. Portanto, doctor dinâmico certifica o comando modelado, não o merge
+exato de settings que uma sessão Claude real carregará.
+
+## 6. Admissão obrigatória
+
+Antes de o init informar sucesso, ele roda o doctor dinâmico completo sob o proprietário privado
+da transação e testa os comandos instalados no alvo em repositórios Git sintéticos. Ele prova:
+
+- S1 chega a `VERIFY-RED`/2 real e depois `VERIFIED`/0, consumindo o close e permitindo
+  recomputar o vínculo de commit/diff;
+- S3 chega ao checker instalado com review PASS presente sem Non-findings, bloqueia como
+  `S3-REVIEW`/2 e então fecha um review válido; somente excesso de orçamento é advisory;
+- ambos os pontos de entrada de privacidade bloqueiam literal sintético plantado e permitem
+  commit/merge limpo;
+- estados de tokens configurado-ausente, vazio/só comentários, preenchido, null e omitido
+  mantêm comportamentos distintos;
+- remover gate, validator, checker, scanner ou wrapper instalados no scratch falha pelo nome,
+  mesmo havendo cópias saudáveis no pacote/fonte em outro lugar; e
+- todos os arquivos efetivamente instalados são commitados juntos pelo wrapper entregue e
+  pela política corrente. Instalação nova admite o payload completo de 15 arquivos em um commit.
+
+Somente `CLAUDE_PROJECT_DIR` muda para esses worktrees scratch; não há overrides de dependência
+`OMAMA_*` gerados nem fallback para a árvore-fonte. São usados payloads sintéticos, nunca os bytes
+dos tokens do adotante.
+
+## 7. Rode uma tarefa real e inspecione seu recibo
+
+A admissão do init usou cards e literais sintéticos para provar os mecanismos instalados.
+Ela não criou nem fechou sua primeira tarefa real. A partir da raiz do repositório inicializado:
+
+1. Copie `work-order.template.yaml` para `CARD.yaml`. Em shell POSIX, use
+   `cp "work-order.template.yaml" "CARD.yaml"`; no PowerShell, use
+   `Copy-Item -LiteralPath "work-order.template.yaml" -Destination "CARD.yaml"`.
+2. Preencha goal, non-goals, done-when, tipo da tarefa e um `verify` real, relevante e
+   não-vácuo. O agente pode propor o tier, mas um humano o ratifica e é responsável por
+   confirmar `verify`; em bugfix, o humano também fornece ou confirma `repro`. Não invente
+   comando ou reprodução só para preencher o schema.
+3. Um humano roda o validator antes do despacho, usando o interpretador absoluto de recibo
+   exato que o init gravou primeiro em `.claude/settings.local.json`.
+
+   Shell POSIX:
+
+   ```sh
+   "<PYTHON_ABSOLUTO_DE_RECIBO_DOS_SETTINGS_LOCAL>" -B "tools/omama/work-order/validate_work_order.py" "CARD.yaml"
+   ```
+
+   PowerShell (onde um executável entre aspas precisa do operador de chamada):
+
+   ```powershell
+   & "<PYTHON_ABSOLUTO_DE_RECIBO_DOS_SETTINGS_LOCAL>" -B "tools/omama/work-order/validate_work_order.py" "CARD.yaml"
+   ```
+
+   Despache somente depois de ele informar `OK`.
+4. Adote no `CLAUDE.md` do repositório a regra de close de
+   `docs/templates/omama/CLAUDE.starter.md`, seguindo a
+   [adoção do starter](starter-claude-md/ADOPTION.md), ou carregue a regra explicitamente
+   neste despacho:
+
+   ```text
+   Implemente o CARD.yaml da raiz do repositório. Quando o trabalho ratificado terminar, escreva CLOSE em CARD.close e pare.
+   ```
+
+O Stop hook trata a ausência de `CARD.close` como WIP. Num close deliberado ele reexecuta a
+prova do próprio card; um close vermelho é bloqueado e precisa ser corrigido antes de outro
+close deliberado. Depois de um close permitido, confirme que `CARD.close` foi consumido e
+inspecione `CARD.receipt.json` (`cat "CARD.receipt.json"` em shell POSIX ou
+`Get-Content -LiteralPath "CARD.receipt.json"` no PowerShell). Não crie nem edite o recibo
+manualmente. Veja [adoção do work-order](work-order/ADOPTION.md) para a ratificação humana e
+[o modelo de close do receipt](receipt-gate/README.md#close-model-the-gate-locks-the-claim-not-the-session)
+para todos os valores de close e a semântica do recibo.
+
+## 8. Cobertura e o que não pega
+
+A checagem de entrega do repositório é o comando completo, sem `--fast`:
+
+```sh
+python3 verify_all.py # Windows: py -3 verify_all.py
+```
+
+Exit 0 exige que toda fixture contada — inclusive integração da CLI com wheel construído — rode
+e passe. As fixtures avulsas de validator, recibo, privacidade e artefato precedem esta CLI; sua
+cobertura isolada não prova que a integração install/init/doctor passou.
+
+Para a fonte congelada da CLI em `efa675869f42ebcd8d9204dcfbc0f5b34c3babe7`, o runner
+completo passou nas quatro pernas da matriz: Ubuntu/Python 3.8, Ubuntu/Python 3.11,
+macOS/Python 3.11 e Windows/Python 3.11, cada uma com nove entradas de topo e
+`9 ok, 0 failed, 0 not-run`. A entrada contada da CLI contém seis suites e 74 testes nessa
+revisão (inclusive nove testes de runtime); o resumo pai da CI informa a entrada, não um
+log ou hash separado para cada suite filha.
+
+| Alegação | Limite da evidência |
+|---|---|
+| Identidade de bundle/build e admissão S1/S3/privacidade instalada | Medida em artefatos locais construídos, dentro de repositórios descartáveis. |
+| Matriz suportada de plataforma e Python | O runner completo da revisão exata passou em Ubuntu 3.8/3.11, macOS 3.11 e Windows 3.11; isso não amplia o suporte além dos jobs nomeados. |
+| Carregamento de settings pelo Claude | Admissão determinista pelo shell não prova que um host Claude real carregou os settings do projeto. É exigida sessão separada no host. |
+| Segurança de crash/concorrência | Rollback condicional finito não é atomicidade do repo inteiro/de todos os arquivos; escritores hostis e queda de energia ficam fora da promessa. |
+| Eficácia de detecção | Nenhuma alegação de eficácia ou redução antes da evidência do piloto. |
+
+Remover ou mover o Python-base selecionado, o repositório ou `.omama/runtime` pode quebrar a
+execução futura do recibo; doctor detecta essas falhas de ciclo de vida, mas não torna o
+interpretador permanente. Config Git local e estado de máquina ignorado não acompanham um clone.
+O hook de privacidade também mantém os bypasses documentados (`--no-verify`, cherry-pick/am/rebase,
+histórico e segredos genéricos de alta entropia); veja [privacy-hook/README.md](privacy-hook/README.md).
+
+Para instalação manual, proveniência e exclusões de formatter/linter, use
+[VENDORING.md](VENDORING.md) e o `ADOPTION.md` de cada peça. Configuração de formatter nunca é
+reescrita automaticamente.

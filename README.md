@@ -7,9 +7,8 @@
 *In Yanomami cosmology, Omama is the demiurge who gave the world its shape and its rules — a
 fitting name for a toolkit whose job is to give shape and rules to agent behavior.*
 
-**Fastest path: [QUICKSTART.md](QUICKSTART.md)** — clone to first receipt and on to
-the one-line dispatch, every command pre-executed, the install landmines called out
-where they bite.
+**Fastest path: [QUICKSTART.md](QUICKSTART.md)** — build and install the local wheel,
+initialize a synthetic or adopting repository, inspect it with doctor, then dispatch.
 
 **A rule without enforcement is a wish.**
 
@@ -90,16 +89,20 @@ every rule back to a piece via a `[NN]` tag. Here's what each number maps to in 
 
 ## Prerequisites
 
-Python 3 on PATH — `python3` on macOS/Linux, `py -3` on Windows. Every command in this repo is
-written with `python3`; substitute `py -3` if you're on Windows. The code itself is
-launcher-agnostic (it shells out via `sys.executable`), but it is **developed and routinely
-exercised on Windows** — POSIX is supported by construction and covered by CI, not by daily use.
-CI's own `check_pr_base.py` is this repo's PR-hygiene check, not a numbered piece; it's portable
-to a repo whose required branch isn't `master` as-is, by setting `PR_REQUIRED_BASE`.
+The CLI supports Python 3.8 or newer (below Python 4) and requires Git. Build/install it
+from this checkout with `uv`; no public package release is claimed here. Default `init`
+also needs `uv` at installation time and an independently discoverable existing base
+Python. It disables managed-Python downloads: it does not download Python, change a user
+or global Python installation, or write user/global Claude or Git configuration.
 
-**work-order** and **receipt-gate** need PyYAML (`pip install pyyaml`); **receipt-gate** needs
-`git`; **protect-tests** needs Node.js. validator, starter-claude-md, and output-discipline run
-with just Python 3.
+Default `init` creates `.omama/runtime` in the target and installs only constrained PyYAML
+there. `--python <ABSOLUTE_PATH>` instead qualifies an existing Python/PyYAML environment
+read-only. The privacy hook has a separate upstream contract: its unchanged wrapper selects
+`py -3`, `python3`, then `python` through PATH. A receipt interpreter does not configure or
+replace that privacy interpreter.
+
+The standalone pieces retain their documented prerequisites. In particular,
+**work-order** and **receipt-gate** need PyYAML, and **protect-tests** needs Node.js.
 
 ## Principles (why these pieces)
 
@@ -124,23 +127,43 @@ retain NO-CARD, WIP and honest closes across that filesystem boundary.
 
 ## How to adopt
 
-Each piece is opt-in, per repository — nothing here installs itself. Adopt the LOOP, not loose
-pieces: work-order at the repo root, the gate wired into that repo's `.claude/settings.json`
-(per-repo, never global — wiring check plus red AND green self-test required, see
-[receipt-gate/adapt/README.md](receipt-gate/adapt/README.md)), output-discipline's templates for
-plans/reviews. The passive layers (privacy-hook, protect-tests) install alongside (pre-commit and
-PreToolUse). **Third-party code:** protect-tests vendors an MIT-licensed script
-(`vendor/PROVENANCE.md` has the full record).
+Use the local wheel workflow in the [Quickstart](QUICKSTART.md) for the phase-1 bundle:
+receipt gate, validator, S3 checker, privacy scanner and both Git entrypoints, templates,
+sample policy, local runtime/wiring, provenance, and state. Initialization is per repository.
+It merges its Stop entry into ignored `.claude/settings.local.json`, preserves unrelated
+settings, and never creates `CLAUDE.md` or changes user/global configuration.
+
+Manual piece-by-piece adoption remains supported. Follow each piece's `ADOPTION.md` and the
+[vendoring guide](VENDORING.md): copy bytes unchanged, record upstream source/SHA/files,
+and manually exclude copies from formatters and linters. The CLI deliberately does not
+rewrite formatter configuration. **Third-party code:** protect-tests vendors an MIT-licensed
+script (`vendor/PROVENANCE.md` has the full record); protect-tests itself is outside the
+phase-1 CLI bundle.
+
+Re-running the same bundle repairs eligible missing immutable files while preserving adopted
+editable material, including deliberate removal of inert templates. It refuses immutable
+drift and another bundle; it is not an implicit update command. Existing team deny policy,
+tokens, card/receipt/index state, unrelated settings, and custom hooks are not overwritten.
+If activating `.githooks` would displace any active hook in the effective hooks directory,
+including a lone `pre-push`, init refuses and asks for manual integration.
 
 ## Verification and packaging
 
 ```
-python3 verify_all.py        # every active fixture (privacy-hook takes minutes — real git corpus)
-python3 verify_all.py --fast # skip privacy-hook's corpus (becomes NOT-RUN; exit 2)
+python3 verify_all.py # Windows: py -3 verify_all.py
 ```
 
-End-to-end tri-state: `OK` / `FAILED` / `NOT-RUN` per entry; exit 0 only when everything ran and
-passed.
+The release verification command is the full runner without `--fast`. End-to-end tri-state:
+`OK` / `FAILED` / `NOT-RUN` per entry; exit 0 only when every required fixture, including the
+counted built-artifact CLI integration, ran and passed. The measured platform/build matrix and
+remaining limits are summarized in the Quickstart; synthetic shell admission is not evidence
+that a real Claude host loaded project settings.
+
+At frozen CLI source revision `efa675869f42ebcd8d9204dcfbc0f5b34c3babe7`, that runner
+reported `9 ok, 0 failed, 0 not-run` on Ubuntu/Python 3.8, Ubuntu/Python 3.11,
+macOS/Python 3.11, and Windows/Python 3.11. Its counted CLI entry contains six suites and
+74 tests at that revision, including nine runtime tests; CI exposes the nine-entry parent
+summary rather than a distinct artifact hash or log for each child suite.
 
 ## License
 

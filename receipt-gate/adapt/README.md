@@ -7,6 +7,13 @@ close-path proof (step 4). Nothing here is installed in any real repository. The
 ordered happy path lives in [QUICKSTART.md](../../QUICKSTART.md); this file
 is the reference (env vars, troubleshooting, rationale).
 
+The example uses forward slashes in every command path. They are accepted on Windows and
+avoid the invalid-JSON mistakes caused by hand-escaped backslashes. Replace the synthetic
+absolute interpreter path with the qualified interpreter on that machine, but keep
+`$CLAUDE_PROJECT_DIR` for the repository-relative gate path. The CLI generates this form
+in ignored `.claude/settings.local.json`; manual adopters should also follow
+[VENDORING.md](../../VENDORING.md).
+
 ## How a team would adopt it
 
 1. Copy `../receipt_gate.py` into the team's repository (e.g.

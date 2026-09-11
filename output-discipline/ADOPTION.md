@@ -1,5 +1,8 @@
 # 09 — Output Discipline · ADOPTION
 
+When copying this piece manually, follow [VENDORING.md](../VENDORING.md) to record the
+upstream commit and keep vendored bytes outside formatter/linter rewrites.
+
 Mechanics and limits in the [README](README.md).
 
 ## How to adopt

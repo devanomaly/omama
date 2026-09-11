@@ -59,6 +59,8 @@ PIECES = [
      [PY, "fixture/run_fixture.py"], [], 120, "notrun"),
     ("receipt-gate", "receipt-gate",
      [PY, "fixture/run_fixture.py"], ["git"], 600, "notrun"),
+    ("cli (built artifacts, installed admission and lifetime)", "cli/fixture",
+     [PY, "run_fixture.py"], ["git", "uv"], 2400, "notrun"),
     ("release hygiene: LICENSE at root", ".",
      "LICENSE_CHECK", [], 10, "notrun"),  # sentinel, handled below
 ]
@@ -98,15 +100,15 @@ def main(argv):
             print(f"OK       {name}")
             return
         if rc == 2 and rc2_meaning == "notrun":
-            reason = "\n".join(detail.strip().splitlines()[-3:]) or "exit 2"
+            reason = detail.strip() or "exit 2"
             notrun.append((name, reason))
             print(f"NOT-RUN  {name}")
             print("         " + reason.replace("\n", "\n         "))
             return
         failed.append(name)
         print(f"FAILED   {name} (exit={rc})")
-        tail = "\n".join(detail.strip().splitlines()[-6:])
-        print("         " + tail.replace("\n", "\n         "))
+        full = detail.strip() or "no child output"
+        print("         " + full.replace("\n", "\n         "))
 
     for name, cwd, cmd, needs, timeout, rc2 in PIECES:
         if fast and name.startswith("privacy-hook"):

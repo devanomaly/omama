@@ -11,8 +11,15 @@ head, not in code review, but in a pre-commit hook that blocks locally,
 before anything leaves for the remote. The key pattern is **fail
 closed**: if the config file (`privacy-deny.json`) doesn't exist, is
 corrupted, or the referenced `tokens_file` has gone missing, the commit
-is blocked with a specific diagnostic — each of these paths has a red
-case in the corpus (the four `fail-closed-*`, all rc=1;
+is blocked with a specific diagnostic. A missing configured token file
+names the expected repo-relative path and says to create the gitignored
+file (a comment-only bootstrap is allowed) and distribute the real list
+out of band. An existing empty or comment-only file is allowed but emits
+exactly one stderr notice per scanner run: it names the file, says the
+literal layer is inactive, and says to fill the file or explicitly set
+`tokens_file` to `null`. A null or omitted setting is deliberately silent.
+Each blocking config path has a red case in the corpus (the four
+`fail-closed-*`, all rc=1;
 [EVIDENCE.md](EVIDENCE.md)).
 
 ## What it is
@@ -177,8 +184,13 @@ python3 scan_staged.py
 
 | Exit | State | Means |
 |---|---|---|
-| 0 | OK | nothing staged matched any layer; the commit proceeds |
+| 0 | OK | nothing staged matched any active layer; the commit proceeds. A configured empty/comment-only token file also prints one nonblocking stderr notice that its literal layer is inactive. |
 | 1 | BLOCKED | one `BLOCKED <rule-id> <relative path>` line per finding (stdout) — or a fail-closed `hook-error` diagnostic (stderr): missing/malformed config, missing `tokens_file`, no Python interpreter |
+
+The zero-literal notice does not change either exit code or any scan
+decision. Populated literals remain enforced and their values are never
+printed. With `tokens_file: null` or no `tokens_file` key, the layer is
+deliberately disabled without the notice.
 
 `git commit`'s own return code mirrors the hook's exit — that's what
 the corpus charges. Fixture:
@@ -263,6 +275,12 @@ it — none of these is a "generic limitation."
   with `EXAMPLE-DENY-TOKEN` in the list, `example-deny-token` commits
   clean (probe P3, rc=0). Resolved by: **one line per spelling**
   (snake_case, kebab-case, CamelCase, prose).
+- **An incomplete or deliberately disabled team literal list.** The
+  zero-literal notice makes an existing configured empty/comment-only
+  file visible; it cannot prove that a populated list contains every
+  sensitive team spelling. Setting `tokens_file` to `null` or omitting
+  it deliberately disables the layer and stays silent. Resolved by:
+  **team review and out-of-band provisioning** of the intended literals.
 - **Config diverging between working tree and index.** The config is
   read from the **working tree**: neutralizing it there (without
   staging it) turns off the team layers for the staged content (probe
@@ -347,8 +365,9 @@ vs `.git/hooks`), and where `scan_staged.py` lives.
 | Block team literal token | `deny-token-literal` (rc=1) | spelling variant passes (P3, rc=0) — route: one line per spelling | defect |
 | Block team regex | `deny-regex-internal-hostname` (rc=1) | config neutralized in the working tree turns off the layer (P8, rc=0) — route: CI with the committed config | defect |
 | Generic high-entropy secret | none — capability removed on purpose; 6 tripwire cases charge the rc=0 so silent reintroduction goes red | the entire class — route: gitleaks / trufflehog in CI | defect |
-| The piece's own fixture source commits through the shipped hook | `fixture-source-self-clean` in `fixture/check.py`: all 9 `fixture/` files staged in a throwaway repo with the shipped wrapper + config, real `git commit`, rc=0 — red on the un-split source was 4 `BLOCKED` lines (`aws-access-key` ×2, `deny-list:internal-hostname`, `deny-token`) | judged on working-tree bytes, not this repo's index; fixture-only — this README and `EVIDENCE.md` block under the shipped config (`deny-token`, rc=1) — route: an adopter's config carries its own vocabulary | defect |
+| The piece's own fixture source commits through the shipped hook | `fixture-source-self-clean` in `fixture/check.py`: all 10 `fixture/` files staged in a throwaway repo with the shipped wrapper + config, real `git commit`, rc=0 — red on the un-split source was 4 `BLOCKED` lines (`aws-access-key` ×2, `deny-list:internal-hostname`, `deny-token`) | judged on working-tree bytes, not this repo's index; fixture-only — this README and `EVIDENCE.md` block under the shipped config (`deny-token`, rc=1) — route: an adopter's config carries its own vocabulary | defect |
 | Fail-closed on missing / malformed config / missing tokens_file | 4 `fail-closed-*` cases (rc=1), each charging the diagnostic in the output | the `bad-tokens-file` branch (file present but unreadable) has no case or probe | not assessed |
+| Signal literal-token file state without changing decisions | `fixture/case_token_state.py`: missing configured file blocks with path/remedy; empty and comment-only files each emit exactly one stderr notice on allowed scans; a comment-only file also emits one notice when an independent rule blocks; populated literal still blocks without value output; null/omitted controls are silent | the notice proves configured zero literals are visible, not that a populated team list is complete; null/omitted deliberately disables the layer — route: team review and out-of-band provisioning | not assessed |
 | Scan the blob's wide-Unicode reading | `utf16le-builtin-pattern`, `utf16-bom-deny-token` (rc=1); mutation M1 goes red only on these 2 | no NUL in the first 4 KB (P5, rc=0); blob >8 MB (P6, rc=0) — route: raise `WIDE_PROBE_BYTES` / `WIDE_MAX_BLOB`, or CI | defect |
 | Config exemption restricted to self-referential layers | `secret-inside-deny-config`, `tokens-file-redirect`, `case-variant-config-name` (rc=1); P11 (rc=1); mutations M2/M3 go red only on these cases | content that only the team layers would catch, inside `tokens_file` itself, passes (P10, rc=0) — route: PR review of the config | defect |
 | Pasteable output: no matched value, no absolute path, no traceback | absence of absolute path is charged on **all** 55 cases; `Traceback` forbidden on the 2 malformed-config cases; echoing the value forbidden on 6 cases | non-echo of the value is not charged on the remaining rules; the override notice echoes `PRIVACY_HOOK_SCANNER` verbatim, so an adopter who sets an absolute path sees it — a value they typed, not one the hook discovered | not assessed |

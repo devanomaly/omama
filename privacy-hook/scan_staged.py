@@ -318,8 +318,19 @@ def load_config(root):
             # silent no-op -- fail closed so the deny-list can't quietly go
             # dark because a file was renamed or forgotten during checkout.
             sys.stderr.write(
-                "BLOCKED hook-error missing-tokens-file %s\n" % tokens_file)
+                "BLOCKED hook-error missing-tokens-file %s (create this "
+                "gitignored file; it may start comment-only, then distribute "
+                "the real literal list out of band)\n" % tokens_file)
             sys.exit(1)
+
+        if not tokens:
+            # This is deliberately nonblocking: a comment-only bootstrap is
+            # a supported installation state. Say once per scanner process
+            # that the literal layer is inactive and name both remedies.
+            sys.stderr.write(
+                "notice privacy-hook: tokens file %s has zero literals; "
+                "literal layer inactive (fill the file or set "
+                "tokens_file=null explicitly)\n" % tokens_file)
 
     return deny_regexes, deny_filenames, tokens, tokens_file
 

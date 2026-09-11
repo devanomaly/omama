@@ -15,6 +15,12 @@ announced on stderr; ADOPTION route (a) + step 2c + step 3 composed: the
 launcher under both hook names blocks a key on commit AND on automatic
 merge while a clean merge goes through).
 
+case_token_state.py charges the configured literal-token states through
+the real staged index and shipped wrapper: missing file blocks with the
+one-line bootstrap/remedy, empty and comment-only files emit exactly one
+nonblocking stderr notice per run, null/omitted stay silent, and populated
+literals still block without printing the planted value.
+
 Then runs case_corpus.py, the table-driven corpus: one red case per KEPT
 pattern, the deny-filename / literal-token / deny-regex red cases, the
 sixteen measured false positives as green cases, and the
@@ -129,6 +135,19 @@ def main():
         ok = False
     else:
         print("PASS: clean commit went through (green proven)")
+
+    rc, out, err = run("case_token_state.py")
+    print("--- case_token_state.py (expect zero) -> rc=%d ---" % rc)
+    print(out, end="")
+    print(err, end="", file=sys.stderr)
+    if rc != 0:
+        print("FAIL: token-file state case reported wrong behavior",
+              file=sys.stderr)
+        ok = False
+    else:
+        print("PASS: missing token file gives remedy; zero literals give "
+              "one nonblocking notice; null/omitted stay silent; populated "
+              "literals stay enforced")
 
     rc, out, err = run("case_gitlink.py")
     print("--- case_gitlink.py (expect zero) -> rc=%d ---" % rc)

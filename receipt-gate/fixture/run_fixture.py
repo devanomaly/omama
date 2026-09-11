@@ -80,7 +80,11 @@ def _rmtree(path):
 
 
 def git(repo, *args, check_rc=True):
-    r = subprocess.run(["git", "-C", str(repo)] + list(args),
+    # The maintenance pin is applied in this one helper so every fixture commit
+    # carries it, rather than at whichever call sites happened to remember it:
+    # background maintenance during a fixture run perturbs exactly the
+    # preservation measurements these cases make.
+    r = subprocess.run(["git", "-C", str(repo), "-c", "maintenance.auto=false"] + list(args),
                        capture_output=True, text=True, encoding="utf-8",
                        errors="replace", env=scrubbed_env())
     if check_rc and r.returncode != 0:
@@ -97,6 +101,10 @@ def make_repo(base, name="repo", commit=True):
     if commit:
         (repo / "tracked.txt").write_text("base\n", encoding="utf-8")
         git(repo, "add", "tracked.txt")
+        # Git 2.55 can leave its detached auto-maintenance lock alive after
+        # commit returns. Preservation cases snapshot the complete synthetic
+        # Git database, so keep that setup-owned writer out of their measured
+        # interval without excluding any path from strict equality.
         git(repo, "commit", "-qm", "base")
     return repo
 
@@ -948,14 +956,60 @@ def a_tracked_receipt_recomputable(tmp):
     check(r.returncode == 0, f"expected exit 0, got {r.returncode}", r)
     rc = receipt(repo)
     check(rc and rc["verdict"] == "VERIFIED", f"bad receipt {rc}", r)
-    d = git(repo, "-c", "core.quotepath=false", "-c", "diff.noprefix=false",
-            "-c", "diff.mnemonicPrefix=false", "-c", "diff.interHunkContext=0",
-            "diff", "--no-ext-diff", "--no-color", "--no-textconv", "-U3",
-            "HEAD", "--", ".", ":(exclude)CARD.receipt.json")
+    # The gate hashes git's raw stdout bytes. Recomputing through Python text
+    # mode would apply universal-newline translation and silently drop CR
+    # bytes, so any diff carrying CRLF -- an ordinary Windows checkout -- would
+    # "fail" recomputation while the receipt binding was in fact correct.
+    # Recompute from the same bytes the gate hashed.
+    d = subprocess.run(
+        ["git", "-C", str(repo), "-c", "maintenance.auto=false",
+         "-c", "core.quotepath=false", "-c", "diff.noprefix=false",
+         "-c", "diff.mnemonicPrefix=false", "-c", "diff.interHunkContext=0",
+         "diff", "--no-ext-diff", "--no-color", "--no-textconv", "-U3",
+         "HEAD", "--", ".", ":(exclude)CARD.receipt.json"],
+        capture_output=True, env=scrubbed_env())
+    check(d.returncode == 0, f"could not recompute receipt diff: {d.stderr!r}", r)
     import hashlib
-    recomputed = hashlib.sha256(d.stdout.encode("utf-8")).hexdigest()
+    recomputed = hashlib.sha256(d.stdout).hexdigest()
     check(recomputed == rc["diff_sha"],
           f"diff_sha not recomputable: recorded {rc['diff_sha'][:12]} vs "
+          f"recomputed {recomputed[:12]}", r)
+
+
+def a_tracked_receipt_recomputable_crlf(tmp):
+    """PR #48 Phase B: the same binding must hold when the pinned diff carries
+    CR bytes. This reproduces, platform-independently, the mechanism behind the
+    retained Windows baseline red: the gate hashes raw bytes, so any
+    recomputation that reads git through text mode disagrees the moment a CRLF
+    working tree is diffed."""
+    repo = make_repo(tmp)
+    (repo / "CARD.receipt.json").write_text("{}", encoding="utf-8")
+    git(repo, "add", "CARD.receipt.json")
+    git(repo, "commit", "-qm", "track receipt")
+    (repo / "crlf.txt").write_bytes(b"first line\r\nsecond line\r\n")
+    git(repo, "-c", "core.autocrlf=false", "-c", "core.safecrlf=false", "add", "crlf.txt")
+    git(repo, "-c", "core.autocrlf=false", "commit", "-qm", "crlf base")
+    (repo / "crlf.txt").write_bytes(b"first line\r\nsecond line\r\nthird line\r\n")
+    write_card(repo)
+    (repo / "CARD.close").write_text("CLOSE", encoding="utf-8")
+    r = run_gate(repo)
+    check(r.returncode == 0, f"expected exit 0, got {r.returncode}", r)
+    rc = receipt(repo)
+    check(rc and rc["verdict"] == "VERIFIED", f"bad receipt {rc}", r)
+    d = subprocess.run(
+        ["git", "-C", str(repo), "-c", "maintenance.auto=false",
+         "-c", "core.quotepath=false", "-c", "diff.noprefix=false",
+         "-c", "diff.mnemonicPrefix=false", "-c", "diff.interHunkContext=0",
+         "diff", "--no-ext-diff", "--no-color", "--no-textconv", "-U3",
+         "HEAD", "--", ".", ":(exclude)CARD.receipt.json"],
+        capture_output=True, env=scrubbed_env())
+    check(d.returncode == 0, f"could not recompute receipt diff: {d.stderr!r}", r)
+    check(b"\r" in d.stdout,
+          "this case is inert unless the pinned diff actually carries CR bytes", r)
+    import hashlib
+    recomputed = hashlib.sha256(d.stdout).hexdigest()
+    check(recomputed == rc["diff_sha"],
+          f"CRLF diff_sha not recomputable: recorded {rc['diff_sha'][:12]} vs "
           f"recomputed {recomputed[:12]}", r)
 
 
@@ -1584,6 +1638,17 @@ def _binding_snapshot(repo):
             for p in repo.rglob("*") if p.is_file()}
 
 
+def _binding_delta(before, after):
+    """Name changed synthetic paths without printing their contents."""
+    before_names = set(before)
+    after_names = set(after)
+    added = sorted(after_names - before_names)
+    removed = sorted(before_names - after_names)
+    changed = sorted(name for name in before_names & after_names
+                     if before[name] != after[name])
+    return "added={0}; removed={1}; changed={2}".format(added, removed, changed)
+
+
 def b_routing_refusal(tmp, variable="GIT_DIR", empty=False):
     """Two distinct HEADs: routing must fail before verify or evidence writes."""
     session = make_repo(tmp, "session")
@@ -1751,8 +1816,10 @@ def a_nongit_mount_outer_marker(tmp):
         marker = {"no-card": "NO-CARD:", "wip": "WIP:", "honest": "CLOSE: FAILED"}[intent]
         check(r.returncode == 0 and marker in r.stdout,
               "outer marker across filesystem boundary blocked " + intent, r)
-        check(_binding_snapshot(outer / ".git") == outer_before,
-              "mounted close changed the outer Git database", r)
+        outer_after = _binding_snapshot(outer / ".git")
+        check(outer_after == outer_before,
+              "mounted close changed the outer Git database: "
+              + _binding_delta(outer_before, outer_after), r)
     check(receipt(plain)["verdict"] == "FAILED" and not (plain / "CARD.close").exists(),
           "mounted honest close did not complete", r)
 
@@ -1851,7 +1918,9 @@ def w_routing_response(tmp):
         check(variable in r.stderr and "private-routing-value" not in r.stderr and
               "WIRING-OK" not in r.stdout and "gate did not answer" not in r.stderr,
               "routing diagnostic disclosed a value or certified unusable wiring", r)
-        check(_binding_snapshot(repo) == before, "wiring probe changed target bytes", r)
+        after = _binding_snapshot(repo)
+        check(after == before,
+              "wiring probe changed target bytes: " + _binding_delta(before, after), r)
     r = run_wiring(repo)
     check(r.returncode == 0 and "WIRING-OK" in r.stdout,
           "removing inherited routing did not restore wiring", r)
@@ -1922,6 +1991,8 @@ CASES = [
     ("allow: honest close survives OMAMA_VERIFY_TIMEOUT typo", a_honest_bad_timeout),
     ("block: OMAMA_VERIFY_TIMEOUT typo blocks CLOSE-intent, named", b_bad_timeout_close),
     ("allow: tracked receipt stays diff_sha-recomputable", a_tracked_receipt_recomputable),
+    ("allow: tracked receipt stays diff_sha-recomputable with a CRLF diff",
+     a_tracked_receipt_recomputable_crlf),
     ("block: removed untracked file named in UNEXPECTED-CHANGE", b_unexpected_untracked_removed),
     ("block: mutate + --assume-unchanged mid-verify", b_assume_unchanged_mid),
     ("block: pre-seeded assume-unchanged at H1", b_assume_preseed),

@@ -1,5 +1,8 @@
 # 04 — protect-tests · ADOPTION
 
+When copying this piece manually, follow [VENDORING.md](../VENDORING.md) to record the
+upstream commit and keep vendored bytes outside formatter/linter rewrites.
+
 Integration and human decisions. The mechanics and the limits are in the [README](README.md).
 
 **Nothing in this piece is installed.** `vendor/` and `adapt/` are reference/example material.

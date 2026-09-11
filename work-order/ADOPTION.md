@@ -1,5 +1,8 @@
 # 02 — Work Order · ADOPTION
 
+When copying this piece manually, follow [VENDORING.md](../VENDORING.md) to record the
+upstream commit and keep vendored bytes outside formatter/linter rewrites.
+
 Integration and human decisions. The mechanics and the limits are in the
 [README](README.md); the evidence is the re-runnable fixture (`fixture/run_fixture.py`).
 

@@ -5,9 +5,9 @@
 *Omama, na cosmologia Yanomami, é o demiurgo que deu forma e regra ao mundo — o nome certo para
 um toolkit cujo trabalho é dar forma e regra ao comportamento de agentes.*
 
-**Caminho mais rápido: [QUICKSTART.pt-BR.md](QUICKSTART.pt-BR.md)** — do clone
-ao primeiro recibo e daí ao despacho de uma linha, todo comando pré-executado,
-as armadilhas de instalação apontadas onde mordem.
+**Caminho mais rápido: [QUICKSTART.pt-BR.md](QUICKSTART.pt-BR.md)** — construa e
+instale o wheel local, inicialize um repositório sintético ou adotante, inspecione-o com
+doctor e então despache.
 
 **Regra sem enforcement é desejo.**
 
@@ -93,17 +93,21 @@ toda regra de volta a uma peça via tag `[NN]`. Eis o que cada número mapeia ne
 
 ## Pré-requisitos
 
-Python 3 no PATH — `python3` no macOS/Linux, `py -3` no Windows. Todos os comandos deste repo
-estão escritos com `python3`; troque por `py -3` se estiver no Windows. O código em si independe
-do launcher (invoca via `sys.executable`), mas é **desenvolvido e exercitado no dia a dia em
-Windows** — POSIX é suportado por construção e coberto por CI, não por uso diário.
-O `check_pr_base.py` da CI é a checagem de higiene de PR deste repo, não uma peça numerada; é
-portável para um repo cujo branch exigido não é `master` tal como está, bastando definir
-`PR_REQUIRED_BASE`.
+A CLI suporta Python 3.8 ou mais recente (abaixo do Python 4) e requer Git. Construa/instale
+a partir deste checkout com `uv`; este documento não declara um pacote público disponível.
+O `init` padrão também precisa do `uv` durante a instalação e de um Python-base existente,
+descoberto de forma independente. Downloads de Python gerenciado são desativados: o comando
+não baixa Python, não altera uma instalação Python de usuário/global e não grava configuração
+Claude ou Git de usuário/global.
 
-**work-order** e **receipt-gate** precisam de PyYAML (`pip install pyyaml`); **receipt-gate**
-precisa de `git`; **protect-tests** precisa de Node.js. validator, starter-claude-md e
-output-discipline rodam só com Python 3.
+O `init` padrão cria `.omama/runtime` no alvo e instala ali apenas o PyYAML restrito.
+`--python <CAMINHO_ABSOLUTO>` qualifica, em vez disso, um ambiente Python/PyYAML existente
+somente para leitura. O hook de privacidade tem contrato separado: seu wrapper inalterado
+seleciona `py -3`, `python3` e depois `python` pelo PATH. O interpretador do recibo não
+configura nem substitui esse interpretador de privacidade.
+
+As peças avulsas mantêm seus pré-requisitos documentados. Em particular, **work-order** e
+**receipt-gate** precisam de PyYAML, e **protect-tests** precisa de Node.js.
 
 ## Princípios (por que essas peças)
 
@@ -126,23 +130,43 @@ de um checkout mantêm NO-CARD, WIP e closes honestos nesse limite de filesystem
 
 ## Como adotar
 
-Cada peça é opt-in por repositório; nada aqui se instala sozinho. Adote o LOOP, não peças
-avulsas: work-order na raiz do repo, o gate no `.claude/settings.json` DO repo (por-repo, nunca
-global — wiring check e self-test vermelho E verde obrigatórios, ver
-[receipt-gate/adapt/README.md](receipt-gate/adapt/README.md)), os templates de output-discipline
-para plano/review. As passivas (privacy-hook, protect-tests) entram junto (pre-commit e
-PreToolUse). **Código de terceiros:** protect-tests vendoriza um script MIT
-(`vendor/PROVENANCE.md` tem o registro completo).
+Use o fluxo de wheel local no [Quickstart](QUICKSTART.pt-BR.md) para o bundle da fase 1:
+gate de recibo, validator, checker S3, scanner de privacidade e os dois pontos de entrada Git,
+templates, política de exemplo, runtime/fiação local, proveniência e estado. A inicialização é
+por repositório. Ela mescla sua entrada de Stop no `.claude/settings.local.json` ignorado,
+preserva settings não relacionados e nunca cria `CLAUDE.md` nem muda configuração de usuário/global.
+
+A adoção manual peça a peça continua disponível. Siga o `ADOPTION.md` de cada peça e o
+[guia de vendoring](VENDORING.md): copie bytes sem alterações, registre fonte/SHA/arquivos
+upstream e exclua manualmente as cópias dos formatters e linters. A CLI deliberadamente não
+reescreve configuração de formatter. **Código de terceiros:** protect-tests inclui um script
+MIT (`vendor/PROVENANCE.md` tem o registro completo); o próprio protect-tests fica fora do
+bundle da CLI de fase 1.
+
+Reexecutar o mesmo bundle repara arquivos imutáveis ausentes que sejam elegíveis e preserva
+material editável adotado, inclusive a remoção deliberada de templates inertes. Ele recusa
+drift imutável e outro bundle; não é um comando implícito de update. Política de deny da equipe,
+tokens, estado de card/recibo/índice, settings não relacionados e hooks customizados não são
+sobrescritos. Se ativar `.githooks` deslocaria qualquer hook ativo do diretório efetivo,
+inclusive um `pre-push` solitário, o init recusa e pede integração manual.
 
 ## Verificação e empacotamento
 
 ```
-python3 verify_all.py        # toda fixture ativa (privacy-hook leva minutos — corpus git real)
-python3 verify_all.py --fast # pula o corpus da privacy-hook (vira NOT-RUN; exit 2)
+python3 verify_all.py # Windows: py -3 verify_all.py
 ```
 
-Tri-estado de ponta a ponta: `OK` / `FAILED` / `NOT-RUN` por entrada; exit 0 só quando tudo
-rodou e passou.
+O comando de verificação da entrega é o runner completo, sem `--fast`. Tri-estado ponta a ponta:
+`OK` / `FAILED` / `NOT-RUN` por entrada; exit 0 somente quando toda fixture obrigatória,
+inclusive a integração contada da CLI a partir do artefato construído, rodou e passou. A matriz
+medida de plataforma/build e os limites restantes estão resumidos no Quickstart; admissão
+sintética pelo shell não prova que um host Claude real carregou os settings do projeto.
+
+Na revisão congelada da fonte da CLI `efa675869f42ebcd8d9204dcfbc0f5b34c3babe7`, esse
+runner informou `9 ok, 0 failed, 0 not-run` em Ubuntu/Python 3.8, Ubuntu/Python 3.11,
+macOS/Python 3.11 e Windows/Python 3.11. Sua entrada contada da CLI contém seis suites e
+74 testes nessa revisão, inclusive nove testes de runtime; a CI expõe o resumo pai de nove
+entradas, não um hash de artefato ou log distinto para cada suite filha.
 
 ## Licença
 

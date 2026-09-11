@@ -51,6 +51,11 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: false
+
       - name: PRs must branch off master
         if: github.event_name == 'pull_request'
         # Untrusted PR data must never be template-expanded straight into
@@ -102,7 +107,12 @@ jobs:
 
       - name: Run every fixture
         shell: bash
+        env:
+          # The CLI fixture confines builds, installs, caches, synthetic repos,
+          # and destructive lifetime checks to this disposable runner path.
+          OMAMA_CLI_TEST_ROOT: ${{ runner.temp }}/omama-cli-fixture
         run: |
+          mkdir -p "$OMAMA_CLI_TEST_ROOT"
           set +e
           python verify_all.py
           rc=$?
@@ -113,3 +123,20 @@ jobs:
             2) echo "::error::something was NOT-RUN — a coverage hole is not a pass"; exit 1 ;;
             *) echo "::error::a fixture FAILED (exit $rc)"; exit "$rc" ;;
           esac
+
+      # The mandatory 32-run macOS diagnostic loop was removed as an explicitly
+      # accepted evidence tradeoff (PR #48 Phase B, C15/F30): it gated product
+      # CI on deliberately variable diagnostic sampling, and repeated sampling
+      # is not deterministic proof. What it observed is still covered
+      # deterministically by receipt-gate's strict counted preservation fixture
+      # and its binding-delta assertions, which run on every leg above.
+      #
+      # Surrendered on purpose: future repeated 32-run forensic sampling is no
+      # longer collected automatically. Archived historical evidence is
+      # retained, and the diagnostic remains available on demand:
+      #
+      #   OMAMA_MACOS_DIAGNOSTIC_ROOT=<disposable path> \
+      #     python -B receipt-gate/fixture/diagnose_macos_preservation.py
+      #
+      # Run it deliberately when a macOS preservation question is actually
+      # open; do not reintroduce it as a gate.
