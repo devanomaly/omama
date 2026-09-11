@@ -8,16 +8,34 @@ Antes de planejar qualquer coisa, o `omama init` reconcilia automaticamente uma
 instalação interrompida quando — e somente quando — todas as entradas do
 journal forem inequívocas.
 
-Primeiro ele estabelece **um único** dono, adquirindo o lock canônico do
-repositório no diretório comum do Git (`<git-common-dir>/omama-install.lock`),
-compartilhado por todos os worktrees vinculados do mesmo repositório. Um lock
-cujo dono ainda possa estar em execução, ou cuja identidade não possa ser
-estabelecida, nunca é tomado: só o PID não é identidade, porque PIDs são
-reaproveitados, e só a idade também não é, porque uma instalação lenta não é
-uma instalação morta. O lock só pode ser reivindicado quando se observa, na
-mesma máquina e no mesmo boot, que o processo registrado desapareceu — ou que
-é comprovadamente outro processo — e o lock reivindicado é renomeado como
-evidência, nunca apagado.
+Primeiro ele exige que **nenhum lock esteja presente**. O lock canônico do
+repositório fica no diretório comum do Git
+(`<git-common-dir>/omama-install.lock`) e é compartilhado por todos os
+worktrees vinculados do mesmo repositório. Um lock que já existe **nunca** é
+tomado automaticamente — qualquer que seja seu schema, seu dono registrado ou
+quão antigo ele pareça. Se o processo que o criou ainda está em execução não é
+algo que esta instalação consiga estabelecer com segurança: só o PID não é
+identidade, porque PIDs são reaproveitados, e só a idade também não é, porque
+uma instalação lenta não é uma instalação morta.
+
+Portanto a instalação não decide isso. **Você** decide, em um único passo,
+idêntico em todas as plataformas:
+
+1. Confirme que nenhum processo `omama` está em execução para este repositório.
+2. Renomeie o lock, preservando-o como evidência:
+
+   ```text
+   mv <git-common-dir>/omama-install.lock <git-common-dir>/omama-install.lock.stale-<timestamp UTC>
+   ```
+
+3. Rode `omama init` de novo.
+
+O `omama init` e a reconciliação automática descrita abaixo recusam enquanto
+houver qualquer lock presente, e ambos imprimem exatamente esse remédio com o
+caminho concreto preenchido. Um lock escrito por uma versão anterior
+(`schema: 1`, registrando apenas um PID) recebe o mesmo tratamento, assim como
+um lock sem journal ao lado — nesse caso não há nada a reconciliar, e a
+renomeação é tudo o que é necessário.
 
 Em seguida ele classifica cada entrada do journal, **inclusive as que ainda
 estão marcadas como `applied: false`**, comparando com os bytes efetivamente
@@ -33,9 +51,18 @@ presentes em disco:
 
 A classificação termina para todas as entradas antes de qualquer alteração. Se
 alguma entrada for **neither**, o init não altera absolutamente nada, preserva
-o journal, o estado do lock e todos os bytes, e para com `recovery-ambiguous`,
-nomeando os caminhos e seus hashes registrados. Uma entrada ambígua nunca custa
-a evidência mantida pelas entradas inequívocas.
+o journal e todos os bytes, e para com `recovery-ambiguous`, nomeando os
+caminhos e seus hashes registrados. Uma entrada ambígua nunca custa a
+evidência mantida pelas entradas inequívocas.
+
+**O que a reconciliação faz — e o que ela não faz.** O caminho automático
+reverte as entradas classificadas como **after** para suas before-images
+registradas. Ele **não** conclui a instalação interrompida. O repositório volta
+ao estado anterior à instalação, e a execução de init que fez a recuperação
+instala tudo desde o começo; as linhas `RECOVERED:` dizem isso. O journal
+reconciliado também não é descartado — ele é renomeado para
+`.omama/install-journal.json.reconciled-<owner>` e mantido como registro do que
+foi classificado, no mesmo padrão que este procedimento manual exige de você.
 
 Use o procedimento manual abaixo somente quando o init parar com
 `recovery-ambiguous`, parar com `recovery-owner-uncertain`, ou informar
@@ -187,19 +214,23 @@ compatível de propriedade da equipe, cada entrada de árvore/config não estive
 contabilizada e os hashes protegidos de CARD/índice/evidência ainda
 coincidirem.
 
-Um lock retido não é um beco sem saída. Quando o acima valer, resolva o lock
-antes de remover o journal:
+Um lock retido não é um beco sem saída, e resolvê-lo é decisão sua, não do
+instalador. Quando o acima valer:
 
-- Se o dono registrado estiver **em execução**, pare. Nada aqui é seguro
-  enquanto um instalador vivo for dono do repositório.
-- Se o dono registrado tiver **comprovadamente desaparecido** — mesma máquina,
-  mesmo boot, e aquele processo exato ausente ou comprovadamente outro
-  processo — renomeie o lock como evidência (por exemplo para
-  `<git-common-dir>/omama-install.lock.reclaimed-<suas-iniciais>-<data>`) em
-  vez de apagá-lo, e registre o hash dele junto com as demais evidências.
-- Se a propriedade **não puder ser estabelecida** — outra máquina, ou um lock
-  legado `schema: 1` que registra apenas um PID — pare e escale. Só o PID não
-  é identidade.
+- Se algum processo `omama` ainda estiver em execução para este repositório,
+  **pare**. Nada aqui é seguro enquanto um instalador vivo for dono do
+  repositório.
+- Caso contrário, renomeie o lock em vez de apagá-lo, e registre o hash dele
+  junto com as demais evidências:
+
+  ```text
+  mv <git-common-dir>/omama-install.lock <git-common-dir>/omama-install.lock.stale-<timestamp UTC>
+  ```
+
+  Este é o mesmo passo único descrito na seção 0, e vale igualmente para um
+  lock legado `schema: 1` que registra apenas um PID. Renomeá-lo é um ato
+  humano deliberado que diz "eu verifiquei"; o instalador nunca infere isso a
+  partir de um PID, de um hostname ou de um timestamp.
 
 Depois remova somente `.omama/install-journal.json`; mantenha a cópia
 protegida. Não remova outro estado de `.omama` como atalho.

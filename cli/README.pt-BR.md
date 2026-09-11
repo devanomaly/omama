@@ -52,16 +52,28 @@ escritos por aquela tentativa. Uma edição intercorrente é preservada e deixa 
 journal `recovery-required` nomeado.
 
 O `omama init` reconcilia sozinho uma instalação interrompida quando todas as
-entradas do journal são inequívocas. Primeiro ele estabelece um único dono: um
-lock cujo dono ainda possa estar em execução, ou cuja identidade não possa ser
-estabelecida, nunca é tomado — só o PID não é identidade, porque PIDs são
-reaproveitados, e só a idade também não é, porque uma instalação lenta não é uma
-instalação morta. Depois classifica cada entrada, **inclusive as ainda marcadas
+entradas do journal são inequívocas **e nenhum lock está presente**. Um lock que
+já existe nunca é tomado automaticamente, qualquer que seja seu schema, seu dono
+registrado ou quão antigo pareça: se o processo que o criou ainda está em
+execução não é algo que esta instalação consiga estabelecer com segurança — só o
+PID não é identidade, porque PIDs são reaproveitados, e só a idade também não é,
+porque uma instalação lenta não é uma instalação morta. Em vez disso, tanto o
+init quanto a recuperação recusam e imprimem um único passo documentado,
+idêntico em todas as plataformas: confirme que nenhum processo `omama` está em
+execução para o repositório, renomeie o lock para
+`<git-common-dir>/omama-install.lock.stale-<timestamp UTC>` preservando-o como
+evidência, e rode `omama init` de novo.
+
+Sem lock presente, o init classifica cada entrada, **inclusive as ainda marcadas
 como `applied: false`**, comparando com os bytes em disco: `before` (não
 aplicada), `after` (aplicada, mesmo que o journal ainda não tivesse registrado)
 ou `neither`. Se qualquer entrada for `neither`, ele não altera absolutamente
-nada, preserva o journal e todos os bytes, e para com `recovery-ambiguous`. Para
-esse caso, siga o [procedimento manual de recovery](RECOVERY.pt-BR.md), que
+nada, preserva o journal e todos os bytes, e para com `recovery-ambiguous`. A
+reconciliação reverte as entradas `after` para suas before-images registradas;
+ela **não** conclui a instalação interrompida, de modo que a execução de init
+que recuperou instala tudo desde o começo, e o journal reconciliado é mantido
+como `.omama/install-journal.json.reconciled-<owner>` em vez de descartado. Para
+o caso ambíguo, siga o [procedimento manual de recovery](RECOVERY.pt-BR.md), que
 prioriza preservação; nunca apague `.omama`, seu runtime, o lock ou o journal
 indiscriminadamente.
 
@@ -125,6 +137,10 @@ para execução de Python, gate, validador ou checker, e não enfraquece a recus
 de roteamento Git herdado — inclusive a do próprio gate instalado.
 
 ## Admissão, doctor e verificação
+
+Falha ou cobertura de shell indisponível na admissão é nomeada e impede o
+estado completo; um NOT-RUN interno da admissão se traduz em saída `1` do init,
+depois de rollback completo da instalação.
 
 A fixture de artefatos construídos instala a CLI empacotada em um ambiente de
 ferramenta pertencente ao teste, fora do checkout de entrega. Ela admite `init` e

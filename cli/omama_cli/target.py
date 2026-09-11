@@ -97,6 +97,20 @@ def _is_reparse_or_symlink(path):
         info = path.lstat()
     except FileNotFoundError:
         return False
+    except NotADirectoryError:
+        # A regular file stands where one of this path's parent directories
+        # must be.  That is a malformed destination, and the containment walk
+        # is where it is first observed -- before any snapshot is taken -- so
+        # it is named here rather than escaping as a traceback.
+        raise TargetError(
+            "unsafe-destination",
+            "a path component is a regular file, not a directory: {0}".format(path),
+        )
+    except OSError as exc:
+        raise TargetError(
+            "unsafe-destination",
+            "path component could not be inspected: {0}: {1}".format(type(exc).__name__, path),
+        )
     if path.is_symlink():
         return True
     attributes = getattr(info, "st_file_attributes", 0)

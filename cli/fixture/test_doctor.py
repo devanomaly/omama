@@ -408,3 +408,63 @@ class DoctorContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DoctorRowCoherenceTests(unittest.TestCase):
+    """F-07 / F-08: one condition, one row; no contradictory companions.
+
+    The doctor helpers are reused through one instance rather than by
+    inheriting the contract suite, so those cases are not counted twice.
+    """
+
+    def setUp(self):
+        self._doctor = DoctorContractTests("test_wrong_hooks_path_and_relocation_are_named")
+        self._doctor.setUp()
+
+    def prepare(self, **kwargs):
+        return self._doctor.prepare(**kwargs)
+
+    def run_cli(self, root, *arguments, **kwargs):
+        return self._doctor.run_cli(root, *arguments, **kwargs)
+
+    def _rows(self, output, name):
+        return [line for line in output.splitlines() if "[{0}]".format(name) in line]
+
+    def test_fresh_clone_reports_missing_state_once_and_claims_no_hash_mismatch(self):
+        # A clone of a healthy install has the payload but no local state.
+        # "state is missing" is the finding; a hash "mismatch" against state
+        # that does not exist is not a second finding, it is a contradiction.
+        installed = self.prepare(complete=True)
+        clone = Path(tempfile.mkdtemp(prefix="f07-clone-parent-", dir=install_fixture._test_root())) / "clone"
+        subprocess.run(["git", "-C", str(installed), "-c", "core.hooksPath=.no-hooks",
+                        "add", "-A"], check=True, stdout=subprocess.PIPE)
+        subprocess.run(["git", "-C", str(installed), "-c", "core.hooksPath=.no-hooks",
+                        "-c", "commit.gpgsign=false", "commit", "-qm", "installed payload"],
+                       check=True, stdout=subprocess.PIPE)
+        subprocess.run(["git", "clone", "--quiet", str(installed), str(clone)], check=True,
+                       stdout=subprocess.PIPE)
+        result = self.run_cli(clone, "doctor", str(clone), "--static-only")
+        output = result.stdout + result.stderr
+        state_rows = self._rows(output, "installation-state")
+        self.assertEqual(1, len(state_rows), output)
+        self.assertIn("state is missing; run `omama init", state_rows[0])
+        mismatch = [line for line in self._rows(output, "vendor-manifest")
+                    if "does not match local installation state" in line]
+        self.assertEqual([], mismatch, output)
+
+    def test_symlinked_token_file_produces_exactly_one_token_row(self):
+        root = self.prepare(complete=True)
+        token = root / "privacy-tokens.txt"
+        if token.exists():
+            token.unlink()
+        try:
+            token.symlink_to(root / "sentinel.txt")
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest("host cannot create fixture symlink: {0}".format(type(exc).__name__))
+        result = self.run_cli(root, "doctor", str(root), "--static-only")
+        output = result.stdout + result.stderr
+        rows = self._rows(output, "token-state")
+        self.assertEqual(1, len(rows), output)
+        self.assertIn("is a symlink", rows[0])
+        # The symlink only suppresses the token read; later checks still run.
+        self.assertTrue(self._rows(output, "privacy-interpreter"), output)

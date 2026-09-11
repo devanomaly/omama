@@ -38,16 +38,28 @@ by that attempt. An intervening edit is preserved and leaves a named
 recovery-required journal.
 
 `omama init` reconciles an interrupted installation itself when every journal
-entry is unambiguous. It first establishes one owner: a lock whose owner may
-still be running, or whose identity cannot be established, is never taken — a
-PID alone is not identity because PIDs are reused, and age alone is not identity
-because a slow install is not a dead one. It then classifies every entry,
-including entries still marked `applied: false`, against the bytes on disk as
-`before` (unapplied), `after` (applied even if the journal had not recorded it
-yet) or `neither`. If anything is `neither` it changes nothing at all, preserves
-the journal and every byte, and stops with `recovery-ambiguous`. Follow the
-linked, preservation-first [manual recovery procedure](RECOVERY.md) for that
-case; never delete `.omama`, its runtime, lock, or journal wholesale. Re-init refuses another
+entry is unambiguous **and no lock is present**. A lock that already exists is
+never taken automatically, whatever its schema, recorded owner or apparent age:
+whether the process that took it is still running is not something this
+installation can establish safely — a PID alone is not identity because PIDs
+are reused, and age alone is not identity because a slow install is not a dead
+one. Instead, init and recovery both refuse and print one documented step,
+identical on every platform: confirm that no `omama` process is running for the
+repository, rename the lock aside to
+`<git-common-dir>/omama-install.lock.stale-<UTC timestamp>` keeping it as
+evidence, and rerun `omama init`.
+
+With no lock present, init classifies every entry, including entries still
+marked `applied: false`, against the bytes on disk as `before` (unapplied),
+`after` (applied even if the journal had not recorded it yet) or `neither`. If
+anything is `neither` it changes nothing at all, preserves the journal and every
+byte, and stops with `recovery-ambiguous`. Reconciliation rolls `after` entries
+back to their recorded before-images; it does **not** complete the interrupted
+installation, so the init run that recovered then installs from the beginning,
+and the reconciled journal is kept as
+`.omama/install-journal.json.reconciled-<owner>` rather than discarded. Follow
+the linked, preservation-first [manual recovery procedure](RECOVERY.md) for the
+ambiguous case; never delete `.omama`, its runtime, lock, or journal wholesale. Re-init refuses another
 recorded bundle, repairs missing same-bundle immutable material, and preserves adopted
 editable bootstrap files (including deliberate deletion). Active closes, tracked local
 state, immutable/generated drift, read-only paths, path escapes and symlink/junction
@@ -170,9 +182,9 @@ per-operator block. It never creates `CLAUDE.md` or writes user/global Claude co
 These deterministic shell tests prove the installed commands and Git entrypoints, not that a
 real Claude host loaded project settings; paid/login-dependent host sessions remain separate.
 
-The counted `cli/fixture/run_fixture.py` builds both wheel and sdist in an explicitly owned
-disposable root, rebuilds a wheel from the extracted sdist, and installs the console entrypoint
-into a test-owned tool environment outside the delivery checkout. It admits real public
+The counted `cli/fixture/run_fixture.py` builds the phase-1 wheel in an explicitly owned
+disposable root, asserts that no source distribution was produced, and installs the console
+entrypoint from that wheel into a test-owned tool environment outside the delivery checkout. It admits real public
 `init`/`doctor` from those installed resources, retains complete child logs, and treats a
 missing prerequisite as NOT-RUN rather than success. The fixture also runs the preservation,
 conflict, rollback, recovery, linked-worktree, doctor, and installed-admission contract suites

@@ -16,7 +16,7 @@ shell and in PowerShell, with no cross-shell continuation syntax.
 
 ```text
 cd "<OMAMA_SOURCE_CHECKOUT>"
-uv build --wheel --sdist --no-python-downloads --python "<ABSOLUTE_PATH_TO_EXISTING_PYTHON>" --out-dir "dist"
+uv build --wheel --no-python-downloads --python "<ABSOLUTE_PATH_TO_EXISTING_PYTHON>" --out-dir "dist"
 uv tool install "dist/omama-0.1.0-py3-none-any.whl" --python "<ABSOLUTE_PATH_TO_EXISTING_PYTHON>" --no-managed-python --no-python-downloads --no-config
 ```
 

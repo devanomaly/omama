@@ -558,3 +558,39 @@ class InstallerContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MalformedDestinationTests(unittest.TestCase):
+    """F-06: a destination whose parent is a regular file is a named violation."""
+
+    def _helper(self):
+        return InstallerContractTests("test_inherited_git_routing_refuses_before_target_writes")
+
+    def test_regular_file_where_a_destination_parent_must_be_is_named_not_a_traceback(self):
+        from omama_cli.install import InstallError, preflight_bundle
+        from omama_cli.target import TargetError, resolve_target
+
+        for blocker in ("tools", ".githooks"):
+            helper = self._helper()
+            root = helper.make_repo()
+            (root / blocker).write_text("a regular file where a directory must be\n", encoding="utf-8")
+            # Either guard may observe it first depending on the destination;
+            # what the promise requires is a named tri-state violation, and
+            # both carry the same reason and print the same VIOLATION line.
+            with self.assertRaises((TargetError, InstallError)) as caught:
+                preflight_bundle(resolve_target(str(root), environ={}), helper.bundle())
+            self.assertEqual("unsafe-destination", caught.exception.reason, blocker)
+            self.assertIn(blocker, caught.exception.message)
+            # Refused before publication: nothing was written to the target.
+            self.assertFalse((root / ".omama").exists(), blocker)
+
+    def test_the_public_cli_reports_it_as_a_violation_with_no_traceback(self):
+        helper = self._helper()
+        root = helper.make_repo()
+        (root / "tools").write_text("a regular file where a directory must be\n", encoding="utf-8")
+        result = helper.run_cli(root)
+        self.assertEqual(1, result.returncode)
+        self.assertIn("VIOLATION[unsafe-destination]", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertNotIn("NotADirectoryError", result.stderr)
+        self.assertFalse((root / ".omama").exists())

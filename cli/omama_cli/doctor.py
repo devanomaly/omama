@@ -154,7 +154,13 @@ def _load_installed_identity(target, package_bundle, state, report):
         report.add("VIOLATION", "vendor-manifest", "installed manifest is invalid: {0}".format(exc))
         return None, {}, False
     trusted = True
-    if not state or state.get("manifest_sha256") != _sha(raw):
+    if not state:
+        # There is no local state to compare against -- a fresh clone, which
+        # `_state` already reported with its own remedy.  Claiming a hash
+        # "mismatch" here would contradict that row rather than add to it.
+        trusted = False
+        report.add("WARNING", "vendor-manifest", "manifest semantics are valid; no local installation state exists yet to bind it to")
+    elif state.get("manifest_sha256") != _sha(raw):
         report.add("VIOLATION", "vendor-manifest", "installed manifest hash does not match local installation state")
         trusted = False
     else:
@@ -586,20 +592,25 @@ def _privacy(target, by_destination, interpreter, static_only, scratch, report, 
             report.add("VIOLATION", "token-state", "configured token path escapes the worktree")
         else:
             if token_path.is_symlink():
+                # One diagnosis per condition.  The symlink is the finding;
+                # reading through it would add a second, contradictory
+                # `token-state` row about a path the adopter never configured.
+                # Only the token read is skipped -- every later check in this
+                # function still runs.
                 report.add("VIOLATION", "token-state", "configured token file is a symlink; use an in-repository regular file")
-                token_path = target.root / ".omama" / "refused-token-symlink"
-            try:
-                lines = token_path.read_text(encoding="utf-8").splitlines()
-            except FileNotFoundError:
-                report.add("VIOLATION", "token-state", "configured token file is missing at {0}; create the gitignored file (comment-only is allowed) or set tokens_file=null".format(token))
-            except (OSError, UnicodeDecodeError):
-                report.add("VIOLATION", "token-state", "configured token file is unreadable")
             else:
-                count = sum(1 for line in lines if line.strip() and not line.lstrip().startswith("#"))
-                if count:
-                    report.add("OK", "token-state", "configured token file is populated ({0} literal line(s)); values not displayed".format(count))
+                try:
+                    lines = token_path.read_text(encoding="utf-8").splitlines()
+                except FileNotFoundError:
+                    report.add("VIOLATION", "token-state", "configured token file is missing at {0}; create the gitignored file (comment-only is allowed) or set tokens_file=null".format(token))
+                except (OSError, UnicodeDecodeError):
+                    report.add("VIOLATION", "token-state", "configured token file is unreadable")
                 else:
-                    report.add("WARNING", "token-state", "configured token file has zero literals; fill it or set tokens_file=null explicitly")
+                    count = sum(1 for line in lines if line.strip() and not line.lstrip().startswith("#"))
+                    if count:
+                        report.add("OK", "token-state", "configured token file is populated ({0} literal line(s)); values not displayed".format(count))
+                    else:
+                        report.add("WARNING", "token-state", "configured token file has zero literals; fill it or set tokens_file=null explicitly")
     elif token is None:
         report.add("OK", "token-state", "literal token layer is deliberately disabled by null/omitted configuration")
 

@@ -16,7 +16,7 @@ POSIX e PowerShell, sem sintaxe de continuação de um shell usada no outro.
 
 ```text
 cd "<CHECKOUT_FONTE_OMAMA>"
-uv build --wheel --sdist --no-python-downloads --python "<CAMINHO_ABSOLUTO_DO_PYTHON_EXISTENTE>" --out-dir "dist"
+uv build --wheel --no-python-downloads --python "<CAMINHO_ABSOLUTO_DO_PYTHON_EXISTENTE>" --out-dir "dist"
 uv tool install "dist/omama-0.1.0-py3-none-any.whl" --python "<CAMINHO_ABSOLUTO_DO_PYTHON_EXISTENTE>" --no-managed-python --no-python-downloads --no-config
 ```
 

@@ -8,6 +8,7 @@ import shutil
 import socket
 import stat
 import tempfile
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -111,86 +112,52 @@ def canonical_lock_path(target):
     return Path(target.common_dir) / CANONICAL_LOCK_NAME
 
 
-def _boot_identity():
-    """A value that changes when the machine restarts, when one is available."""
-    for candidate in ("/proc/sys/kernel/random/boot_id",):
-        try:
-            return Path(candidate).read_text(encoding="utf-8").strip()
-        except (OSError, UnicodeDecodeError):
-            continue
-    return None
-
-
-def _process_start_token(pid):
-    """A per-process value that distinguishes a reused PID from the original."""
-    try:
-        fields = Path("/proc/{0}/stat".format(int(pid))).read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError, ValueError, TypeError):
-        return None
-    # The executable name is parenthesized and may contain spaces.
-    tail = fields.rpartition(")")[2].split()
-    # Field 22 overall is the 20th field after the state field.
-    return tail[19] if len(tail) > 19 else None
-
-
 def process_identity():
-    pid = os.getpid()
-    return {
-        "pid": pid,
-        "host": socket.gethostname(),
-        "boot_id": _boot_identity(),
-        "start_token": _process_start_token(pid),
-    }
+    """Who took the lock, recorded for a human to read.
 
-
-def _pid_exists(pid):
-    try:
-        pid = int(pid)
-    except (TypeError, ValueError):
-        return None
-    if pid <= 0:
-        return None
-    if os.name == "nt":
-        return None
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return None
-    return True
-
-
-def owner_liveness(record, current=None):
-    """Classify a recorded lock owner as ``live``, ``dead`` or ``uncertain``.
-
-    PID alone is not identity because PIDs are reused, and age alone is not
-    identity because a slow install is not a dead one.  Only a same-host,
-    same-boot observation that the recorded process is gone -- or is a
-    different process than the one that took the lock -- proves death.
+    ``pid`` and ``host`` are evidence for the operator, never inputs to an
+    automatic decision about whether the owner is still alive.  Deciding death
+    from a PID is unsafe (PIDs are reused) and platform-dependent, so this
+    installation does not decide it at all: a present lock always refuses, and
+    a human performs the documented rename-aside.
     """
-    current = current or process_identity()
+    return {"pid": os.getpid(), "host": socket.gethostname()}
+
+
+def describe_lock_owner(record):
+    """Render a recorded lock owner for the refusal diagnostic."""
     if not isinstance(record, dict):
-        return "uncertain", "lock payload is unreadable"
-    if record.get("host") and record["host"] != current["host"]:
-        return "uncertain", "lock was taken on host {0!r}, not this host".format(record["host"])
-    recorded_boot = record.get("boot_id")
-    if recorded_boot and current["boot_id"] and recorded_boot != current["boot_id"]:
-        return "dead", "lock predates the current boot of this machine"
-    exists = _pid_exists(record.get("pid"))
-    if exists is False:
-        return "dead", "recorded process {0} is not running on this host".format(record.get("pid"))
-    if exists is None:
-        return "uncertain", "process identity cannot be established on this platform"
-    recorded_token = record.get("start_token")
-    live_token = _process_start_token(record.get("pid"))
-    if recorded_token and live_token and recorded_token != live_token:
-        return "dead", "process {0} exists but is a different process than the lock owner".format(record.get("pid"))
-    if not recorded_token or not live_token:
-        return "uncertain", "process {0} exists and cannot be distinguished from the lock owner".format(record.get("pid"))
-    return "live", "process {0} is the running lock owner".format(record.get("pid"))
+        return "its payload is unreadable"
+    owner = record.get("owner")
+    pid = record.get("pid")
+    host = record.get("host")
+    parts = []
+    if owner:
+        parts.append("owner {0}".format(owner))
+    if pid is not None:
+        parts.append("pid {0}".format(pid))
+    if host:
+        parts.append("host {0}".format(host))
+    if record.get("schema") != LOCK_SCHEMA:
+        parts.append("schema {0!r} written by an earlier version".format(record.get("schema")))
+    return ", ".join(parts) if parts else "it records no owner identity"
+
+
+def stale_lock_remedy(path):
+    """The one documented step that resolves a retained lock, on every platform.
+
+    A lock is never reclaimed automatically.  Whether the process that took it
+    is still running is a question only the operator can answer safely, so the
+    operator answers it and renames the lock aside; the rename is what
+    transfers ownership, and the renamed file stays as evidence.
+    """
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    return (
+        "Confirm that no omama process is running for this repository, then rename the lock "
+        "aside, keeping it as evidence:\n"
+        "    mv {0} {0}.stale-{1}\n"
+        "and rerun `omama init`. See cli/RECOVERY.md section 0."
+    ).format(path, stamp)
 
 
 def _sha(data):
@@ -203,6 +170,20 @@ def _snapshot_file(path, include_bytes=True):
         info = path.lstat()
     except FileNotFoundError:
         return {"kind": "missing"}
+    except NotADirectoryError:
+        # A regular file stands where a destination's parent directory must be
+        # (a file named `tools`, or `.githooks`).  That is a malformed
+        # destination, which is a named tri-state violation -- never a
+        # traceback out of the installer.
+        raise InstallError(
+            "unsafe-destination",
+            "a destination's parent path is a regular file, not a directory: {0}".format(path),
+        )
+    except OSError as exc:
+        raise InstallError(
+            "unsafe-destination",
+            "destination could not be inspected: {0}: {1}".format(type(exc).__name__, path),
+        )
     if path.is_symlink() or not stat.S_ISREG(info.st_mode):
         return {"kind": "other", "mode": stat.S_IMODE(info.st_mode)}
     data = path.read_bytes()
@@ -312,12 +293,14 @@ def read_lock(target):
         return {}
 
 
-def acquire_canonical_lock(target, owner, reclaim_dead=False):
+def acquire_canonical_lock(target, owner):
     """Take the one repository-wide lock, or refuse with a bounded diagnostic.
 
     Acquisition is a single atomic ``O_EXCL`` create: concurrent attempts
-    produce exactly one owner and an explicit loser.  No attempt waits, retries
-    indefinitely or steals a lock whose owner may still be live.
+    produce exactly one owner and an explicit loser.  Nothing waits, retries
+    indefinitely, or takes a lock that already exists -- whatever its schema,
+    owner, or apparent age.  The only way a retained lock is resolved is the
+    operator's documented rename-aside, which is identical on every platform.
     """
     path = canonical_lock_path(target)
     payload = _lock_payload(owner)
@@ -325,27 +308,12 @@ def acquire_canonical_lock(target, owner, reclaim_dead=False):
         path.parent.mkdir(parents=True, exist_ok=True)
         descriptor = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:
-        existing = read_lock(target)
-        liveness, detail = owner_liveness(existing)
-        if reclaim_dead and liveness == "dead":
-            # Not theft: the recorded owner is provably gone on this host.  The
-            # old lock is quarantined as evidence rather than deleted, and the
-            # re-create below is still exclusive, so a racing reclaimer loses.
-            quarantine = path.with_name(path.name + ".reclaimed-" + owner)
-            try:
-                os.rename(str(path), str(quarantine))
-            except FileNotFoundError:
-                pass
-            except OSError as exc:
-                raise InstallError("installer-locked", "dead lock could not be quarantined: {0}".format(type(exc).__name__))
-            return acquire_canonical_lock(target, owner, reclaim_dead=False)
         raise InstallError(
             "installer-locked",
-            "another omama operation holds the repository lock at {0} ({1}: {2}); "
-            "no stale-lock theft is attempted. If that operation is finished, rerun "
-            "`omama init` in this repository to reconcile it, or ask a maintainer to "
-            "inspect the lock before removing it."
-            .format(path, liveness, detail),
+            "the repository lock at {0} already exists ({1}); it is never taken "
+            "automatically, because whether its owner is still running is not "
+            "something this installation can establish safely.\n{2}"
+            .format(path, describe_lock_owner(read_lock(target)), stale_lock_remedy(path)),
         )
     except OSError as exc:
         raise InstallError("installer-locked", "repository lock could not be created at {0}: {1}".format(path, type(exc).__name__))
@@ -404,15 +372,20 @@ def preflight_bundle(target, bundle):
             raise InstallError("tracked-local-state", "local installer/settings path is tracked: {0}; untrack it before init".format(relative))
     if (target.root / JOURNAL_REL).exists():
         raise InstallError("unfinished-install", "unfinished journal exists at {0}; recover it before retrying".format(JOURNAL_REL))
-    if (target.root / LOCK_REL).exists():
-        raise InstallError("installer-locked", "installer lock already exists at {0}; no stale-lock theft is attempted".format(LOCK_REL))
-    canonical = canonical_lock_path(target)
-    if canonical.exists():
-        liveness, detail = owner_liveness(read_lock(target))
+    legacy_lock = target.root / LOCK_REL
+    if legacy_lock.exists():
         raise InstallError(
             "installer-locked",
-            "the repository lock at {0} is held ({1}: {2}); no stale-lock theft is attempted"
-            .format(canonical, liveness, detail),
+            "an installer lock from an earlier version exists at {0}; it is never taken "
+            "automatically.\n{1}".format(LOCK_REL, stale_lock_remedy(legacy_lock)),
+        )
+    canonical = canonical_lock_path(target)
+    if canonical.exists():
+        raise InstallError(
+            "installer-locked",
+            "the repository lock at {0} already exists ({1}); it is never taken "
+            "automatically.\n{2}"
+            .format(canonical, describe_lock_owner(read_lock(target)), stale_lock_remedy(canonical)),
         )
 
     state = read_state(target)
@@ -546,8 +519,13 @@ class InstallationTransaction:
         # routed through the in-repository destination guards.
         # The legacy per-worktree lock still blocks: an installation that was
         # interrupted before the canonical lock existed must not be overrun.
-        if (self.plan.target.root / LOCK_REL).exists():
-            raise InstallError("installer-locked", "legacy installer lock exists at {0}; recover it before retrying".format(LOCK_REL))
+        legacy_lock = self.plan.target.root / LOCK_REL
+        if legacy_lock.exists():
+            raise InstallError(
+                "installer-locked",
+                "an installer lock from an earlier version exists at {0}; it is never taken "
+                "automatically.\n{1}".format(LOCK_REL, stale_lock_remedy(legacy_lock)),
+            )
         acquire_canonical_lock(self.plan.target, self.owner)
         self._locked = True
 
@@ -942,22 +920,27 @@ def recover(target, owner=None):
     if not journal_path.exists():
         return None
     owner = owner or uuid.uuid4().hex
+    # A lock left behind by the interrupted attempt -- of either shape -- is
+    # never taken automatically.  Establishing that its owner is gone is the
+    # operator's step, and performing the documented rename-aside is what
+    # hands ownership over.  Until then nothing here reads or changes anything.
     legacy_lock = target.root / LOCK_REL
     if legacy_lock.exists():
-        try:
-            legacy = json.loads(legacy_lock.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, ValueError):
-            legacy = {}
-        liveness, detail = owner_liveness(legacy)
-        if liveness != "dead":
-            raise InstallError(
-                "recovery-owner-uncertain",
-                "the interrupted installation's lock at {0} is {1} ({2}); its owner is not "
-                "recovered automatically. Confirm that no omama process is running in this "
-                "repository, then ask a maintainer to inspect and remove that lock."
-                .format(LOCK_REL, liveness, detail),
-            )
-    acquire_canonical_lock(target, owner, reclaim_dead=True)
+        raise InstallError(
+            "recovery-owner-uncertain",
+            "the interrupted installation left a lock from an earlier version at {0}; its "
+            "owner is not established automatically.\n{1}"
+            .format(LOCK_REL, stale_lock_remedy(legacy_lock)),
+        )
+    canonical = canonical_lock_path(target)
+    if canonical.exists():
+        raise InstallError(
+            "recovery-owner-uncertain",
+            "the interrupted installation left the repository lock at {0} ({1}); its owner is "
+            "not established automatically.\n{2}"
+            .format(canonical, describe_lock_owner(read_lock(target)), stale_lock_remedy(canonical)),
+        )
+    acquire_canonical_lock(target, owner)
     try:
         try:
             journal = json.loads(journal_path.read_text(encoding="utf-8"))
@@ -1021,9 +1004,15 @@ def recover(target, owner=None):
                     shutil.rmtree(str(staging))
                     row["staging"] = "removed transaction-owned staging"
             report["trees"].append(row)
-        journal_path.unlink()
-        if legacy_lock.exists():
-            legacy_lock.unlink()
+        # O-2: the reconciled journal is kept as evidence, like a lock the
+        # operator renames aside.  The manual procedure tells maintainers to
+        # retain the journal after the repository is healthy; the automatic
+        # path now honours the same standard instead of discarding the only
+        # record of what was classified.
+        reconciled = journal_path.with_name(journal_path.name + ".reconciled-" + owner)
+        os.replace(str(journal_path), str(reconciled))
+        _fsync_directory(journal_path.parent)
+        report["reconciled_journal"] = str(reconciled)
         return report
     finally:
         release_canonical_lock(target, owner)

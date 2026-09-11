@@ -19,6 +19,38 @@ def _test_root():
     return str(root)
 
 
+# Loaded under a private package name so that `build_backend`'s own relative
+# imports resolve, without claiming the real top-level name or putting the
+# source root on the path.
+_BACKEND_PACKAGE = "omama_build_backend_pkg"
+
+
+def _build_backend(module):
+    """Load a `build_backend` submodule by file path from the source root.
+
+    The counted entry (`cli/fixture/run_fixture.py`) runs each suite with
+    `cwd = cli/fixture` and `PYTHONPATH = <wheel>:<cli/fixture>`.
+    `build_backend` lives at the repository root and is deliberately not in
+    the wheel, so a bare `import build_backend` only resolves when the
+    interpreter happens to be started from the source root.  Resolving it by
+    file path keeps these tests working from the counted entry without putting
+    the source tree on the path of suites that must exercise installed
+    resources.
+    """
+    source_root = Path(__file__).resolve().parents[2]
+    package_dir = source_root / "build_backend"
+    if _BACKEND_PACKAGE not in sys.modules:
+        spec = importlib.util.spec_from_file_location(
+            _BACKEND_PACKAGE, str(package_dir / "__init__.py"),
+            submodule_search_locations=[str(package_dir)],
+        )
+        package = importlib.util.module_from_spec(spec)
+        sys.modules[_BACKEND_PACKAGE] = package
+        spec.loader.exec_module(package)
+    return importlib.import_module(_BACKEND_PACKAGE + "." + module)
+
+
+
 class PackagingContractTests(unittest.TestCase):
     def setUp(self):
         from omama_cli.bundle import load_bundle
@@ -217,6 +249,28 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class BuildBackendResolutionTests(unittest.TestCase):
+    """F-01: the counted entry runs from cli/fixture, not the source root."""
+
+    def test_build_backend_resolves_with_cwd_outside_the_source_root(self):
+        source_root = Path(__file__).resolve().parents[2]
+        previous = os.getcwd()
+        os.chdir(tempfile.gettempdir())
+        try:
+            self.assertNotEqual(source_root, Path(os.getcwd()).resolve())
+            # A bare `import build_backend` is what broke the counted entry;
+            # it must stay broken from here, so this test proves the file-path
+            # resolution is what these suites actually depend on.
+            self.assertIsNone(importlib.util.find_spec("build_backend")
+                              if "build_backend" not in sys.modules else None)
+            inventory = _build_backend("inventory")
+            backend = _build_backend("backend")
+        finally:
+            os.chdir(previous)
+        self.assertTrue(inventory.PACKAGE_VERSION)
+        self.assertEqual(source_root, backend.ROOT)
+
+
 class VersionAuthorityTests(unittest.TestCase):
     """Phase-B M4 (F27): one authoritative version across every surface."""
 
@@ -230,7 +284,7 @@ class VersionAuthorityTests(unittest.TestCase):
 
     def test_source_build_and_runtime_versions_agree(self):
         import omama_cli
-        from build_backend import inventory
+        inventory = _build_backend("inventory")
 
         declared = self._pyproject_version()
         self.assertEqual(declared, inventory.PACKAGE_VERSION,
@@ -299,7 +353,7 @@ class BuildProvenanceTests(unittest.TestCase):
         return path
 
     def test_revision_is_claimed_only_when_git_describes_this_source_root(self):
-        from build_backend import backend
+        backend = _build_backend("backend")
         from unittest import mock
 
         own = "a" * 40
@@ -336,7 +390,7 @@ class BuildProvenanceTests(unittest.TestCase):
         self.assertTrue(source["dirty"])
 
     def test_enclosing_repository_revision_is_never_published_as_omama_identity(self):
-        from build_backend import backend
+        backend = _build_backend("backend")
         from unittest import mock
 
         foreign = "f" * 40
@@ -352,7 +406,7 @@ class BuildProvenanceTests(unittest.TestCase):
         self.assertTrue(source["dirty"], "an unidentifiable source tree must not claim to be clean")
 
     def test_stale_setuptools_staging_is_discarded_before_generation(self):
-        from build_backend import backend
+        backend = _build_backend("backend")
         from unittest import mock
 
         staging = Path(self._root()) / "fake-source-root"
@@ -366,7 +420,7 @@ class BuildProvenanceTests(unittest.TestCase):
         self.assertFalse((staging / "build").exists())
 
     def test_phase_one_refuses_to_build_a_source_distribution(self):
-        from build_backend import backend
+        backend = _build_backend("backend")
 
         with self.assertRaises(RuntimeError) as caught:
             backend.build_sdist(str(self._root()))
@@ -376,7 +430,7 @@ class BuildProvenanceTests(unittest.TestCase):
         self.assertNotIn("equivalent", message.lower().replace("equivalence is claimed", ""))
 
     def test_build_lock_serializes_generation_and_is_released(self):
-        from build_backend import backend
+        backend = _build_backend("backend")
         from unittest import mock
 
         staging = Path(self._root()) / "lock-source-root"

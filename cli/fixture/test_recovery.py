@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import tempfile
 import threading
 import unittest
@@ -27,6 +28,26 @@ def _helper():
 def _sha(path):
     path = Path(path)
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+
+
+def _operator_renames_lock_aside(root):
+    """The documented manual step, performed here exactly as an operator would.
+
+    A retained lock is never taken automatically: this installation does not
+    decide whether the recorded owner is still running.  The operator confirms
+    that no omama process is running for the repository and renames the lock
+    aside, keeping it as evidence.  That rename is what hands ownership over,
+    and it is identical on every platform.
+    """
+    from omama_cli.install import canonical_lock_path
+    from omama_cli.target import resolve_target
+
+    lock = canonical_lock_path(resolve_target(str(root), environ={}))
+    if not lock.exists():
+        return None
+    stale = lock.with_name(lock.name + ".stale-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()))
+    os.replace(str(lock), str(stale))
+    return stale
 
 
 def _interrupt(root, window):
@@ -59,12 +80,26 @@ class RecoveryContractTests(unittest.TestCase):
         self.assertFalse(entry["applied"])
         self.assertEqual(entry["after_sha256"], _sha(replaced))
 
+        # The dead child's lock is never taken automatically; the operator
+        # performs the documented rename-aside first.
+        stale = _operator_renames_lock_aside(root)
+        self.assertIsNotNone(stale, "the interrupted child left no lock to rename aside")
+        self.assertTrue(stale.is_file(), "the renamed-aside lock was not kept as evidence")
+
         report = recover(resolve_target(str(root), environ={}))
         reconciled = [row for row in report["files"]
                       if row["journal_applied_flag"] is False and row["classification"] == "after"]
         self.assertTrue(reconciled, "an applied=false entry whose bytes are the after-image was not reconciled")
         self.assertFalse(Path(replaced).exists(), "the published file was not rolled back to its absent before-image")
+        # O-2: the live journal is gone, but the record of what was classified
+        # is kept alongside it, to the same standard the manual procedure asks
+        # of maintainers.
         self.assertFalse((root / ".omama" / "install-journal.json").exists())
+        reconciled = Path(report["reconciled_journal"])
+        self.assertTrue(reconciled.is_file(), "the reconciled journal was discarded")
+        self.assertEqual(".omama", reconciled.parent.name)
+        self.assertIn("install-journal.json.reconciled-", reconciled.name)
+        self.assertEqual(journal["operations"], json.loads(reconciled.read_text(encoding="utf-8"))["operations"])
 
     def test_post_activation_window_reconciles_state_and_activation(self):
         from omama_cli.install import canonical_lock_path, recover
@@ -81,6 +116,8 @@ class RecoveryContractTests(unittest.TestCase):
         self.assertEqual("installing", json.loads((root / ".omama" / "state.json").read_text(encoding="utf-8"))["status"])
         activation = [item for item in journal.get("config_operations") or [] if item.get("applied")]
         self.assertTrue(activation, "the wired interruption did not record an applied activation")
+        stale = _operator_renames_lock_aside(root)
+        self.assertIsNotNone(stale)
         target = resolve_target(str(root), environ={})
         report = recover(target)
         self.assertFalse((root / ".omama" / "state.json").exists(), "incomplete install state survived recovery")
@@ -103,6 +140,8 @@ class RecoveryContractTests(unittest.TestCase):
         edited = _sha(replaced)
         other = [item["relative"] for item in
                  json.loads((root / ".omama" / "install-journal.json").read_text(encoding="utf-8"))["operations"]]
+        stale = _operator_renames_lock_aside(root)
+        self.assertIsNotNone(stale)
         target = resolve_target(str(root), environ={})
         with self.assertRaises(InstallError) as caught:
             recover(target)
@@ -116,24 +155,117 @@ class RecoveryContractTests(unittest.TestCase):
         self.assertIn(Path(replaced).name, caught.exception.message)
         self.assertTrue(other)
 
-    def test_live_and_uncertain_owners_are_never_stolen_and_pid_alone_is_not_identity(self):
-        from omama_cli.install import owner_liveness, process_identity
+    def test_a_lock_left_by_a_dead_child_is_refused_with_the_printed_remedy(self):
+        from omama_cli.install import InstallError, canonical_lock_path, recover
+        from omama_cli.target import resolve_target
 
-        current = process_identity()
-        # The running process itself is live and must never be reclaimed.
-        self.assertEqual("live", owner_liveness(dict(current, owner="x"))[0])
-        # A different host cannot be inspected from here.
-        self.assertEqual("uncertain", owner_liveness(dict(current, host="some-other-host"))[0])
-        # A PID that exists but is demonstrably a different process is dead:
-        # PID reuse must not be mistaken for the original owner.
-        if current["start_token"]:
-            reused = dict(current, start_token=str(int(current["start_token"]) + 1))
-            self.assertEqual("dead", owner_liveness(reused)[0])
-            # Without a per-process token, an existing PID stays uncertain:
-            # the PID alone is not identity.
-            self.assertEqual("uncertain", owner_liveness(dict(current, start_token=None))[0])
-        # Age is never consulted.
-        self.assertEqual("live", owner_liveness(dict(current, started_at=0, owner="x"))[0])
+        helper = _helper()
+        root = helper.make_repo()
+        _interrupt(root, "post-replace")
+        target = resolve_target(str(root), environ={})
+        lock = canonical_lock_path(target)
+        before_lock = lock.read_bytes()
+        journal = root / ".omama" / "install-journal.json"
+        before_journal = journal.read_bytes()
+
+        # The child is genuinely gone, and that still does not license taking
+        # its lock: this installation does not decide liveness at all.
+        with self.assertRaises(InstallError) as caught:
+            recover(target)
+        self.assertEqual("recovery-owner-uncertain", caught.exception.reason)
+        message = caught.exception.message
+        self.assertIn("mv ", message)
+        self.assertIn(".stale-", message)
+        self.assertIn("cli/RECOVERY.md", message)
+        self.assertEqual(before_lock, lock.read_bytes(), "the refused lock was modified")
+        self.assertEqual(before_journal, journal.read_bytes(), "the refused journal was modified")
+
+        # After the documented step, the same call reconciles normally.
+        _operator_renames_lock_aside(root)
+        report = recover(resolve_target(str(root), environ={}))
+        self.assertTrue(report["files"])
+        self.assertFalse(canonical_lock_path(target).exists())
+
+    def test_legacy_pid_only_lock_with_an_absent_pid_is_refused_not_removed(self):
+        from omama_cli.install import InstallError, LOCK_REL, recover
+        from omama_cli.target import resolve_target
+
+        helper = _helper()
+        root = helper.make_repo()
+        _interrupt(root, "post-replace")
+        _operator_renames_lock_aside(root)
+        # A pre-canonical-lock installation records only a schema and a PID.
+        # An absent PID is not proof of anything: PIDs are reused, and the
+        # record may have been written in another PID namespace or on another
+        # host reaching the same repository.
+        absent = 4194303
+        while Path("/proc/{0}".format(absent)).exists():
+            absent -= 1
+        legacy = root / LOCK_REL
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        legacy.write_text(json.dumps({"schema": 1, "owner": "legacy", "pid": absent}) + "\n",
+                          encoding="utf-8")
+        before_legacy = legacy.read_bytes()
+        journal = root / ".omama" / "install-journal.json"
+        before_journal = journal.read_bytes()
+
+        with self.assertRaises(InstallError) as caught:
+            recover(resolve_target(str(root), environ={}))
+        self.assertEqual("recovery-owner-uncertain", caught.exception.reason)
+        self.assertIn("mv ", caught.exception.message)
+        self.assertEqual(before_legacy, legacy.read_bytes(), "an absent PID licensed removing the lock")
+        self.assertEqual(before_journal, journal.read_bytes())
+
+    def test_a_lock_with_no_journal_is_refused_with_the_printed_remedy(self):
+        from omama_cli.install import InstallError, canonical_lock_path, preflight_bundle, process_identity
+        from omama_cli.target import resolve_target
+
+        helper = _helper()
+        root = helper.make_repo()
+        target = resolve_target(str(root), environ={})
+        # Death between taking the lock and the first journal write, or
+        # between the journal's removal and the lock's release, leaves a lock
+        # with nothing to reconcile. That must still print a way out.
+        payload = dict(process_identity(), schema=2, owner="died-before-journal")
+        canonical_lock_path(target).write_text(json.dumps(payload) + "\n", encoding="utf-8")
+        self.assertFalse((root / ".omama" / "install-journal.json").exists())
+
+        with self.assertRaises(InstallError) as caught:
+            preflight_bundle(target, helper.bundle())
+        self.assertEqual("installer-locked", caught.exception.reason)
+        message = caught.exception.message
+        self.assertIn("mv ", message)
+        self.assertIn(".stale-", message)
+        self.assertIn("cli/RECOVERY.md", message)
+        self.assertTrue(canonical_lock_path(target).exists(), "the refused lock was removed")
+
+        # The documented step resolves it; there is nothing to reconcile.
+        _operator_renames_lock_aside(root)
+        preflight_bundle(resolve_target(str(root), environ={}), helper.bundle())
+
+    def test_the_running_process_own_lock_is_never_taken(self):
+        from omama_cli.install import InstallError, acquire_canonical_lock, canonical_lock_path, recover, release_canonical_lock
+        from omama_cli.target import resolve_target
+
+        helper = _helper()
+        root = helper.make_repo()
+        target = resolve_target(str(root), environ={})
+        acquire_canonical_lock(target, "live-owner")
+        try:
+            with self.assertRaises(InstallError) as caught:
+                acquire_canonical_lock(target, "second-owner")
+            self.assertEqual("installer-locked", caught.exception.reason)
+            # Recovery is no more privileged than a fresh init.
+            (root / ".omama").mkdir(parents=True, exist_ok=True)
+            (root / ".omama" / "install-journal.json").write_text(
+                json.dumps({"schema": 1, "owner": "x", "status": "planned", "operations": [],
+                            "owned_trees": [], "config_operations": []}) + "\n", encoding="utf-8")
+            with self.assertRaises(InstallError) as caught:
+                recover(target)
+            self.assertEqual("recovery-owner-uncertain", caught.exception.reason)
+            self.assertEqual("live-owner", json.loads(canonical_lock_path(target).read_text())["owner"])
+        finally:
+            release_canonical_lock(target, "live-owner")
 
     def test_simultaneous_owners_produce_one_winner_and_an_explicit_loser(self):
         from omama_cli.install import InstallError, acquire_canonical_lock, release_canonical_lock
@@ -222,25 +354,6 @@ class RecoveryContractTests(unittest.TestCase):
             self.assertTrue(caught.exception.incomplete)
         finally:
             install_module._snapshot_file = real
-
-    def test_legacy_worktree_lock_still_blocks_and_is_not_stolen(self):
-        from omama_cli.install import InstallError, LOCK_REL, recover
-        from omama_cli.target import resolve_target
-
-        helper = _helper()
-        root = helper.make_repo()
-        _interrupt(root, "post-replace")
-        # A pre-canonical-lock installation is represented by the legacy lock
-        # with no host, boot or per-process identity recorded.
-        legacy = root / LOCK_REL
-        legacy.parent.mkdir(parents=True, exist_ok=True)
-        legacy.write_text(json.dumps({"schema": 1, "owner": "legacy", "pid": os.getpid()}) + "\n",
-                          encoding="utf-8")
-        with self.assertRaises(InstallError) as caught:
-            recover(resolve_target(str(root), environ={}))
-        self.assertEqual("recovery-owner-uncertain", caught.exception.reason)
-        self.assertTrue(legacy.exists(), "an uncertain legacy lock was removed")
-        self.assertTrue((root / ".omama" / "install-journal.json").exists())
 
 
 if __name__ == "__main__":

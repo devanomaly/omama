@@ -50,8 +50,10 @@ def main(argv=None):
             # edit is preserved and stops the run.
             recovery = recover(target)
             if recovery is not None:
-                print("RECOVERED: reconciled an interrupted installation (journal status {0}); {1} file, {2} configuration and {3} runtime entry/entries were classified against their recorded before/after images".format(
+                print("RECOVERED: reconciled an interrupted installation (journal status {0}); {1} file, {2} configuration and {3} runtime entry/entries were classified against their recorded before/after images.".format(
                     recovery["journal_status"], len(recovery["files"]), len(recovery["config"]), len(recovery["trees"])))
+                print("RECOVERED: entries that had taken effect were rolled back to their recorded before-images; the interrupted installation was NOT completed. This init run installs from the beginning. The reconciled journal is kept at {0}.".format(
+                    recovery.get("reconciled_journal", "(not retained)")))
             plan = preflight_bundle(target, bundle)
             # An empty --python is an explicit invalid value, not a silent
             # fall-through to the managed route.
