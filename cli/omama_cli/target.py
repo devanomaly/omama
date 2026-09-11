@@ -1,6 +1,7 @@
 """Repository discovery and path safety for the phase-1 installer."""
 
 import os
+import stat
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -92,10 +93,53 @@ def validate_command_path(path):
         )
 
 
+def blocking_non_directory_ancestor(path):
+    """The nearest existing ancestor of ``path`` that is not a directory.
+
+    A regular file standing where a destination's parent directory must be
+    raises different exceptions per platform: POSIX raises
+    ``NotADirectoryError``, Windows raises ``FileNotFoundError`` (WinError 3),
+    which is indistinguishable by type from a path that is simply absent. The
+    exception type therefore cannot decide this; the ancestors can.
+
+    ``lstat`` is used deliberately, so a symlinked ancestor is not followed.
+    A symlinked ancestor returns ``None`` here rather than being reported as a
+    blocking file: ``ensure_no_reparse`` already names that case
+    ``path-reparse``, and widening it is outside this correction.
+
+    Returns ``None`` when every existing ancestor is a directory -- that is,
+    when the path is genuinely missing.
+    """
+    current = Path(path).parent
+    while True:
+        try:
+            info = current.lstat()
+        except FileNotFoundError:
+            parent = current.parent
+            if parent == current:
+                return None
+            current = parent
+            continue
+        except OSError:
+            # An ancestor that cannot be inspected is not a usable directory.
+            return current
+        if current.is_symlink():
+            return None
+        return None if stat.S_ISDIR(info.st_mode) else current
+
+
 def _is_reparse_or_symlink(path):
     try:
         info = path.lstat()
     except FileNotFoundError:
+        # Absent, or blocked by a regular-file ancestor: on Windows both
+        # surface as FileNotFoundError, so ask the ancestors which it is.
+        blocker = blocking_non_directory_ancestor(path)
+        if blocker is not None:
+            raise TargetError(
+                "unsafe-destination",
+                "a path component is a regular file, not a directory: {0}".format(blocker),
+            )
         return False
     except NotADirectoryError:
         # A regular file stands where one of this path's parent directories

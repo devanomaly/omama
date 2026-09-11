@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .identity import ExistingState, classify_existing
-from .target import TargetError, ensure_no_reparse, safe_destination
+from .target import TargetError, blocking_non_directory_ancestor, ensure_no_reparse, safe_destination
 
 
 STATE_REL = ".omama/state.json"
@@ -169,6 +169,14 @@ def _snapshot_file(path, include_bytes=True):
     try:
         info = path.lstat()
     except FileNotFoundError:
+        # Absent, or blocked by a regular-file ancestor: on Windows both
+        # surface as FileNotFoundError, so ask the ancestors which it is.
+        blocker = blocking_non_directory_ancestor(path)
+        if blocker is not None:
+            raise InstallError(
+                "unsafe-destination",
+                "a destination's parent path is a regular file, not a directory: {0}".format(blocker),
+            )
         return {"kind": "missing"}
     except NotADirectoryError:
         # A regular file stands where a destination's parent directory must be
