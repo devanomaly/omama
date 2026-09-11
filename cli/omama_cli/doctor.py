@@ -15,7 +15,7 @@ from pathlib import Path
 from .install import JOURNAL_REL, LOCK_REL, STATE_REL, InstallError, _snapshot_file, read_state
 from .runtime import _probe
 from .wiring import (
-    LOCAL_SETTINGS, MANAGED_ENV_KEYS, SETTINGS, _compatible_gate,
+    LOCAL_SETTINGS, MANAGED_ENV_KEYS, SETTINGS, _active_hooks, _compatible_gate,
     _git_config_value, _mentions_gate, _read_json, _stop_handlers,
     managed_command,
 )
@@ -26,6 +26,11 @@ class InternalDoctorContext:
     owner: str
     state: dict
     scratch_root: object = None
+    # True for the inventory pass that runs *before* repository-local
+    # activation.  It never claims activation happened; it records that the
+    # activation-aware check is still owed, and that check must pass before
+    # the installation may be marked complete.
+    pre_activation: bool = False
 
 
 @dataclass(frozen=True)
@@ -397,15 +402,25 @@ def _interpreter(target, state, report, static_only=False):
         report.add("OK", "interpreter-static", "recorded receipt interpreter exists; execution was not attempted")
         report.add("NOT-RUN", "interpreter", "static-only skipped Python/PyYAML execution and version/import qualification")
         return path
+    # Doctor must qualify by the same rule init used: the read-only explicit
+    # route is capability-qualified, the managed route keeps its pinned bound.
+    capability = state.get("runtime_mode") == "explicit"
     try:
-        value = _probe(path, require_yaml=True)
+        value = _probe(path, require_yaml=True, capability=capability)
     except InstallError as exc:
         report.add("VIOLATION", "interpreter", "{0}: {1}".format(exc.reason, exc.message))
         return None
     if str(value.get("pyyaml")) != str(state.get("pyyaml_version")):
         report.add("VIOLATION", "interpreter", "resolved PyYAML version differs from local state")
         return None
-    report.add("OK", "interpreter", "Python {0}; PyYAML {1}; source=recorded receipt interpreter".format(".".join(str(x) for x in value["version"]), value["pyyaml"]))
+    recorded_path = str(state.get("pyyaml_path") or "")
+    resolved_path = str(value.get("pyyaml_path") or "")
+    if recorded_path and resolved_path and recorded_path != resolved_path:
+        report.add("VIOLATION", "interpreter", "resolved PyYAML imports from {0}, not the recorded {1}".format(resolved_path, recorded_path))
+        return None
+    report.add("OK", "interpreter", "Python {0}; PyYAML {1} imported from {2}; qualification={3}; source=recorded receipt interpreter".format(
+        ".".join(str(x) for x in value["version"]), value["pyyaml"], resolved_path or "unrecorded",
+        "capability" if capability else "pinned"))
     return path
 
 
@@ -490,15 +505,25 @@ def _bash_path():
     return str(next((path for path in candidates if path.is_file()), "")) or None
 
 
-def _privacy(target, by_destination, interpreter, static_only, scratch, report, base_trusted=True):
-    value = _git_config_value(target)
-    candidate = Path(value) if value else None
-    if candidate is not None and not candidate.is_absolute():
-        candidate = target.root / candidate
-    if candidate is None or candidate.resolve() != (target.root / ".githooks").resolve():
-        report.add("VIOLATION", "privacy-hooks-path", "effective core.hooksPath is not .githooks")
+def _privacy(target, by_destination, interpreter, static_only, scratch, report, base_trusted=True,
+             pre_activation=False):
+    if pre_activation:
+        # This pass runs before activation by design.  It makes no claim about
+        # the effective hooks path; the activation-aware pass that follows
+        # activation asserts it, and the installation is not complete until
+        # that pass returns 0.
+        report.add("OK", "privacy-hooks-path-deferred",
+                   "activation is deliberately deferred until private admission passes; "
+                   "the activation-aware check runs after activation and before completion")
     else:
-        report.add("OK", "privacy-hooks-path", "effective core.hooksPath resolves to this worktree's .githooks")
+        value = _git_config_value(target)
+        candidate = Path(value) if value else None
+        if candidate is not None and not candidate.is_absolute():
+            candidate = target.root / candidate
+        if candidate is None or candidate.resolve() != (target.root / ".githooks").resolve():
+            report.add("VIOLATION", "privacy-hooks-path", "effective core.hooksPath is not .githooks")
+        else:
+            report.add("OK", "privacy-hooks-path", "effective core.hooksPath resolves to this worktree's .githooks")
     required = {
         ".githooks/pre-commit": "generated-wiring",
         ".githooks/pre-merge-commit": "generated-wiring",
@@ -521,6 +546,17 @@ def _privacy(target, by_destination, interpreter, static_only, scratch, report, 
             report.add("VIOLATION", "privacy-mode", "hook is not executable: {0}".format(destination))
     if privacy_trusted:
         report.add("OK", "privacy-components", "both chainers, wrapper and scanner match installed identity; LF/mode checks passed for this OS")
+
+    # Mirror the activation-time authorization safeguard: a real hook name in
+    # .githooks that this bundle does not own is live under core.hooksPath.
+    unknown = [name for name in _active_hooks(target.root / ".githooks")
+               if name not in {Path(destination).name for destination in by_destination
+                               if str(destination).startswith(".githooks/")}]
+    if unknown:
+        report.add("VIOLATION", "unknown-active-hook",
+                   "hook(s) not owned by the installed bundle are live in .githooks: {0}".format(", ".join(unknown)))
+    else:
+        report.add("OK", "unknown-active-hook", "every real hook name live in .githooks belongs to the installed bundle")
 
     config = target.root / "privacy-deny.json"
     token = None
@@ -668,11 +704,14 @@ def doctor(target, package_bundle, static_only=False, context=None):
 
     if scratch_parent is not None:
         scratch_parent.cleanup()
+    pre_activation = bool(context is not None and context.pre_activation)
     if static_only or not scratch_ok:
-        _privacy(target, by_destination, interpreter, True, target.root, report, vendor_trusted)
+        _privacy(target, by_destination, interpreter, True, target.root, report, vendor_trusted,
+                 pre_activation=pre_activation)
     else:
         with tempfile.TemporaryDirectory(
                 prefix="omama-doctor-privacy-",
                 dir=str(scratch_directory) if scratch_directory else None) as privacy_temp:
-            _privacy(target, by_destination, interpreter, False, Path(privacy_temp), report, vendor_trusted)
+            _privacy(target, by_destination, interpreter, False, Path(privacy_temp), report, vendor_trusted,
+                     pre_activation=pre_activation)
     return report

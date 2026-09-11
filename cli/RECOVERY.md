@@ -2,19 +2,54 @@
 
 [Português (Brasil)](RECOVERY.pt-BR.md)
 
-Use this procedure only when `omama init` or `omama doctor` reports
-`unfinished-install` or `recovery-required` and names
-`.omama/install-journal.json`. It is a finite reconciliation of the paths in
-that journal, not permission to delete `.omama`, its runtime, the lock, or the
-journal wholesale.
+## 0. `omama init` recovers unambiguous state by itself
+
+Before planning anything, `omama init` reconciles an interrupted installation
+automatically when — and only when — every journal entry is unambiguous.
+
+It first establishes **one** owner by taking the canonical repository lock in
+the Git common directory (`<git-common-dir>/omama-install.lock`), which every
+linked worktree of the repository shares. A lock whose owner may still be
+running, or whose identity cannot be established, is never taken: a PID alone
+is not identity because PIDs are reused, and age alone is not identity because
+a slow install is not a dead one. Only a same-host, same-boot observation that
+the recorded process is gone — or is demonstrably a different process — allows
+the lock to be reclaimed, and the reclaimed lock is renamed aside as evidence
+rather than deleted.
+
+It then classifies every journal entry, **including entries still marked
+`applied: false`**, against the bytes actually on disk:
+
+- **before** — the recorded before-image. The operation never took effect.
+- **after** — the recorded after-image. The operation did take effect, even if
+  the journal had not yet recorded it. This is the real post-replace
+  interruption window: a replacement can be durable before its journal update
+  is, so an "applied-only" replay would silently skip an already-published
+  file.
+- **neither** — possibly an external edit made after the failure.
+
+Classification finishes for every entry before anything is changed. If any
+entry is **neither**, init changes nothing at all, preserves the journal, the
+lock state and every byte, and stops with `recovery-ambiguous` naming the
+paths and their recorded hashes. An ambiguous entry never costs the evidence
+held by the unambiguous ones.
+
+Use the manual procedure below only when init stops with `recovery-ambiguous`,
+stops with `recovery-owner-uncertain`, or reports `unfinished-install` or
+`recovery-required` naming `.omama/install-journal.json`. It is a finite
+reconciliation of the paths in that journal, not permission to delete
+`.omama`, its runtime, the lock, or the journal wholesale.
 
 ## 1. Establish quiescence and retain evidence
 
-Stop new `omama init`, Git, and Claude operations in this worktree. Confirm
-that the init process which reported the failure has exited. If
-`.omama/install.lock` still exists, do not remove or steal it: identify its
-recorded `owner`/`pid`, establish whether that exact process is still running,
-and stop here for maintainer help if ownership is uncertain.
+Stop new `omama init`, Git, and Claude operations in this worktree **and in
+every linked worktree of the same repository**, because they share one
+canonical lock. Confirm that the init process which reported the failure has
+exited. If a lock still exists — the canonical
+`<git-common-dir>/omama-install.lock` or the legacy `.omama/install.lock` —
+do not remove or steal it: identify its recorded `owner`/`pid`, establish
+whether that exact process is still running, and stop here for maintainer help
+if ownership is uncertain.
 
 Before changing the target, copy these items to a protected evidence directory
 outside the repository and record SHA-256 hashes for both the originals and
@@ -32,9 +67,14 @@ explain the failed attempt.
 
 ## 2. Inspect the actual journal and current hashes
 
-The supported journal has `schema: 1`, a nonempty `owner`, status
-`recovery-required`, and three finite lists: `operations`, `owned_trees`, and
-`config_operations`. Stop for maintainer help if the schema/status differs, a
+The supported journal has `schema: 1`, a nonempty `owner`, a status recorded
+at the boundary the attempt reached (`planned`, `publishing`, `published`,
+`runtime-reserved`, `runtime-published`, `activation-planned`, `activated`,
+`writing-state`, `state-written` or `recovery-required`), and three finite
+lists: `operations`, `owned_trees`, and `config_operations`. A status other
+than `recovery-required` means the attempt died before it could record its own
+failure; treat every entry by its bytes, not by its `applied` flag. Stop for
+maintainer help if the schema differs, a
 listed path is outside the worktree, the lock owner is unresolved, or an entry
 has an unfamiliar shape. In particular, never follow an old journal's external
 Git-config path: current init refuses that unsupported layout before
@@ -138,10 +178,25 @@ order, and update your evidence notes after every decision:
 
 Do not remove the active journal until every applied entry is either restored
 to its before-image or deliberately retained as compatible team-owned state,
-every tree/config entry is accounted for, protected CARD/index/evidence hashes
-still match, and no lock exists. Then remove only
-`.omama/install-journal.json`; retain the protected copy. Do not remove other
-`.omama` state as a shortcut.
+every tree/config entry is accounted for, and protected CARD/index/evidence
+hashes still match.
+
+A retained lock is not a dead end. Once the above holds, resolve the lock
+before removing the journal:
+
+- If the recorded owner is **running**, stop. Nothing here is safe while a
+  live installer owns the repository.
+- If the recorded owner is **provably gone** — same host, same boot, and that
+  exact process is absent or is demonstrably a different process — rename the
+  lock aside as evidence (for example to
+  `<git-common-dir>/omama-install.lock.reclaimed-<your-initials>-<date>`)
+  rather than deleting it, and record its hash with the rest of the evidence.
+- If ownership **cannot be established** — a different host, or a legacy
+  `schema: 1` lock that records only a PID — stop and escalate. A PID alone is
+  not identity.
+
+Then remove only `.omama/install-journal.json`; retain the protected copy. Do
+not remove other `.omama` state as a shortcut.
 
 ## 4. Retry admission once
 

@@ -2,19 +2,58 @@
 
 [English](RECOVERY.md)
 
-Use este procedimento somente quando `omama init` ou `omama doctor` informar
-`unfinished-install` ou `recovery-required` e indicar
+## 0. O `omama init` reconcilia sozinho o estado inequívoco
+
+Antes de planejar qualquer coisa, o `omama init` reconcilia automaticamente uma
+instalação interrompida quando — e somente quando — todas as entradas do
+journal forem inequívocas.
+
+Primeiro ele estabelece **um único** dono, adquirindo o lock canônico do
+repositório no diretório comum do Git (`<git-common-dir>/omama-install.lock`),
+compartilhado por todos os worktrees vinculados do mesmo repositório. Um lock
+cujo dono ainda possa estar em execução, ou cuja identidade não possa ser
+estabelecida, nunca é tomado: só o PID não é identidade, porque PIDs são
+reaproveitados, e só a idade também não é, porque uma instalação lenta não é
+uma instalação morta. O lock só pode ser reivindicado quando se observa, na
+mesma máquina e no mesmo boot, que o processo registrado desapareceu — ou que
+é comprovadamente outro processo — e o lock reivindicado é renomeado como
+evidência, nunca apagado.
+
+Em seguida ele classifica cada entrada do journal, **inclusive as que ainda
+estão marcadas como `applied: false`**, comparando com os bytes efetivamente
+presentes em disco:
+
+- **before** — a before-image registrada. A operação não chegou a ter efeito.
+- **after** — a after-image registrada. A operação teve efeito, mesmo que o
+  journal ainda não tivesse registrado isso. Esta é a verdadeira janela de
+  interrupção pós-substituição: a substituição pode se tornar durável antes da
+  atualização do journal, de modo que uma reexecução baseada apenas em
+  `applied` pularia silenciosamente um arquivo já publicado.
+- **neither** — possivelmente uma edição externa feita depois da falha.
+
+A classificação termina para todas as entradas antes de qualquer alteração. Se
+alguma entrada for **neither**, o init não altera absolutamente nada, preserva
+o journal, o estado do lock e todos os bytes, e para com `recovery-ambiguous`,
+nomeando os caminhos e seus hashes registrados. Uma entrada ambígua nunca custa
+a evidência mantida pelas entradas inequívocas.
+
+Use o procedimento manual abaixo somente quando o init parar com
+`recovery-ambiguous`, parar com `recovery-owner-uncertain`, ou informar
+`unfinished-install` ou `recovery-required` indicando
 `.omama/install-journal.json`. Esta é uma reconciliação finita dos caminhos
 registrados nesse journal, não uma permissão para apagar indiscriminadamente
 `.omama`, seu runtime, o lock ou o journal.
 
 ## 1. Estabeleça quiescência e retenha as evidências
 
-Interrompa novas operações de `omama init`, Git e Claude neste worktree.
-Confirme que o processo de init que informou a falha terminou. Se
-`.omama/install.lock` ainda existir, não o remova nem o roube: identifique o
-`owner`/`pid` registrado, confirme se exatamente esse processo ainda está em
-execução e pare para pedir ajuda ao mantenedor se a propriedade for incerta.
+Interrompa novas operações de `omama init`, Git e Claude neste worktree **e em
+todos os worktrees vinculados do mesmo repositório**, pois eles compartilham um
+único lock canônico. Confirme que o processo de init que informou a falha
+terminou. Se algum lock ainda existir — o canônico
+`<git-common-dir>/omama-install.lock` ou o legado `.omama/install.lock` — não o
+remova nem o roube: identifique o `owner`/`pid` registrado, confirme se
+exatamente esse processo ainda está em execução e pare para pedir ajuda ao
+mantenedor se a propriedade for incerta.
 
 Antes de alterar o alvo, copie estes itens para um diretório protegido de
 evidências fora do repositório e registre os hashes SHA-256 dos originais e das
@@ -32,11 +71,16 @@ dados de propriedade necessários para explicar a tentativa que falhou.
 
 ## 2. Inspecione o journal real e os hashes atuais
 
-O journal aceito tem `schema: 1`, `owner` não vazio, status
-`recovery-required` e três listas finitas: `operations`, `owned_trees` e
-`config_operations`. Pare e peça ajuda ao mantenedor se o schema/status for
-diferente, um caminho listado estiver fora do worktree, o dono do lock não for
-resolvido ou uma entrada tiver formato desconhecido. Em particular, nunca siga
+O journal aceito tem `schema: 1`, `owner` não vazio, um status registrado na
+fronteira que a tentativa alcançou (`planned`, `publishing`, `published`,
+`runtime-reserved`, `runtime-published`, `activation-planned`, `activated`,
+`writing-state`, `state-written` ou `recovery-required`) e três listas finitas:
+`operations`, `owned_trees` e `config_operations`. Um status diferente de
+`recovery-required` significa que a tentativa morreu antes de conseguir
+registrar a própria falha; trate cada entrada pelos bytes, não pela flag
+`applied`. Pare e peça ajuda ao mantenedor se o schema for diferente, um
+caminho listado estiver fora do worktree, o dono do lock não for resolvido ou
+uma entrada tiver formato desconhecido. Em particular, nunca siga
 o caminho de configuração Git externo de um journal antigo: o init atual
 recusa esse layout não suportado antes da publicação.
 
@@ -137,12 +181,28 @@ e atualize suas notas de evidência após cada decisão:
    `after_sha256`. Se divergir, preserve-o e reconcilie `core.hooksPath`
    manualmente. Nunca escreva em um banco Git externo por este procedimento.
 
-Não remova o journal ativo até que cada entrada aplicada tenha sido restaurada
-para sua before-image ou deliberadamente retida como estado compatível do time,
-cada árvore/configuração esteja contabilizada, os hashes protegidos de
-CARD/índice/evidência ainda coincidam e nenhum lock exista. Depois remova
-somente `.omama/install-journal.json`; retenha a cópia protegida. Não remova
-outro estado sob `.omama` como atalho.
+Não remova o journal ativo enquanto cada entrada aplicada não estiver
+restaurada à sua before-image ou deliberadamente mantida como estado
+compatível de propriedade da equipe, cada entrada de árvore/config não estiver
+contabilizada e os hashes protegidos de CARD/índice/evidência ainda
+coincidirem.
+
+Um lock retido não é um beco sem saída. Quando o acima valer, resolva o lock
+antes de remover o journal:
+
+- Se o dono registrado estiver **em execução**, pare. Nada aqui é seguro
+  enquanto um instalador vivo for dono do repositório.
+- Se o dono registrado tiver **comprovadamente desaparecido** — mesma máquina,
+  mesmo boot, e aquele processo exato ausente ou comprovadamente outro
+  processo — renomeie o lock como evidência (por exemplo para
+  `<git-common-dir>/omama-install.lock.reclaimed-<suas-iniciais>-<data>`) em
+  vez de apagá-lo, e registre o hash dele junto com as demais evidências.
+- Se a propriedade **não puder ser estabelecida** — outra máquina, ou um lock
+  legado `schema: 1` que registra apenas um PID — pare e escale. Só o PID não
+  é identidade.
+
+Depois remova somente `.omama/install-journal.json`; mantenha a cópia
+protegida. Não remova outro estado de `.omama` como atalho.
 
 ## 4. Repita a admissão uma vez
 

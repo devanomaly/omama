@@ -1,13 +1,26 @@
 # Omama CLI packaging surface
 
+[Português (Brasil)](README.pt-BR.md)
+
 The package exposes `omama init [PATH] [--python ABSOLUTE_PATH] [--no-git-config]`
 and `omama doctor [PATH] [--static-only]`, plus help and version. The installer
 resolves only non-bare Git worktrees, rejects inherited Git routing and
 unsafe destinations before publication, and provides finite lock/journal/conditional
-rollback mechanics. A normally activated init returns 0 only after private-owner doctor
-and mandatory exact-installed-command admission both pass; it otherwise reports a named
-failure and conditionally rolls back. Deliberate `--no-git-config` preparation remains
-the distinct incomplete/2 route while activation is still required.
+rollback mechanics.
+
+A normally activated init runs in this order: publish the payload, run every
+non-activation doctor inventory check and the complete installed
+adopter-specific admission privately, and only then set repository-local
+`core.hooksPath=.githooks` and run the complete activation-aware doctor. It
+returns 0 only after that final check passes, so a failing installation never
+leaves hooks live in the repository while its own state is still incomplete. It
+otherwise reports a named failure and conditionally rolls back, activation
+included. Deliberate `--no-git-config` preparation remains the distinct
+incomplete/2 route while activation is still required.
+
+Exit codes are exact: `0` means every required selected check ran and passed;
+`1` means a named observed failure; `2` means deliberately incomplete or
+NOT-RUN coverage. No success language accompanies `1` or `2`.
 
 Builds generate the packaged payload from the authoritative repository files listed in
 `build_backend/inventory.py`. `omama_cli.bundle.load_bundle()` reads only installed
@@ -16,12 +29,25 @@ distinguishes immutable vendored files, editable bootstrap material, generated w
 and later local state. `omama_cli.identity` supplies read-only conservative classifications;
 it performs no installer writes.
 
-Publication uses one target-owned lock with no stale-lock theft, records each finite
-before-image before the first asset write, uses individual same-directory replacements,
-and conditionally restores only bytes still written by that attempt. An intervening edit
-is preserved and leaves a named recovery-required journal. Follow the linked, preservation-first
-[manual recovery procedure](RECOVERY.md) before retrying; never delete `.omama`, its runtime,
-lock, or journal wholesale. Re-init refuses another
+Publication uses one canonical repository lock in the Git common directory,
+shared by every linked worktree of the repository, with no stale-lock theft. It
+records each finite before-image before the first asset write, verifies every
+durable write by reading it back before recording it as applied, uses individual
+same-directory replacements, and conditionally restores only bytes still written
+by that attempt. An intervening edit is preserved and leaves a named
+recovery-required journal.
+
+`omama init` reconciles an interrupted installation itself when every journal
+entry is unambiguous. It first establishes one owner: a lock whose owner may
+still be running, or whose identity cannot be established, is never taken — a
+PID alone is not identity because PIDs are reused, and age alone is not identity
+because a slow install is not a dead one. It then classifies every entry,
+including entries still marked `applied: false`, against the bytes on disk as
+`before` (unapplied), `after` (applied even if the journal had not recorded it
+yet) or `neither`. If anything is `neither` it changes nothing at all, preserves
+the journal and every byte, and stops with `recovery-ambiguous`. Follow the
+linked, preservation-first [manual recovery procedure](RECOVERY.md) for that
+case; never delete `.omama`, its runtime, lock, or journal wholesale. Re-init refuses another
 recorded bundle, repairs missing same-bundle immutable material, and preserves adopted
 editable bootstrap files (including deliberate deletion). Active closes, tracked local
 state, immutable/generated drift, read-only paths, path escapes and symlink/junction
@@ -29,19 +55,43 @@ traversal are named preflight failures. The operational boundary remains a quies
 target: an uncooperative writer can still win the final check-to-replace race, so this is
 not an all-files atomicity claim or a generic transaction service.
 
-Python 3.8+ and `PyYAML>=6.0.2,<7` are the runtime contract. The build-only backend is
-constrained to `setuptools>=68,<76`.
+Python 3.8+ is the runtime contract on both routes. The managed route installs
+and requires `PyYAML>=6.0.2,<7`; the read-only `--python` route is qualified by
+the capability the installed gate actually needs rather than by that version
+floor (see below). The build-only backend is constrained to `setuptools>=68,<76`.
 
 The default receipt runtime is `.omama/runtime`, created from an existing independently
 probed system Python. Installation-time `uv` discovery and provisioning explicitly disable
 managed-Python downloads and config/project discovery, target the selected interpreter,
-use copy mode, and keep cache/temp beneath `.omama/cache`. Only constrained PyYAML is
-installed; the Omama CLI is rejected from the receipt runtime. The effective base,
-interpreter, Python version and resolved PyYAML version are recorded in local state.
+use copy mode, and keep cache/temp beneath `.omama/cache`. Every inherited `UV_*`
+and `PIP_*` control and every unsafe Python control is removed from the
+environment uv runs in, so a caller cannot add unapproved distributions or
+redirect the Python selection; `--no-seed` is not credited as enforcement,
+because it is inert on the uv versions exercised. The scrubbed environment
+carries the guarantee and a post-provision inventory proves it: the owned
+runtime must contain the selected PyYAML distribution and nothing else. The
+Omama CLI is rejected from the receipt runtime. uv's actionable `error:` lines
+are preserved in diagnostics instead of whatever printed last.
 
-`--python ABSOLUTE_PATH` is a separate, read-only route. It requires Python >=3.8,<4 and
-existing PyYAML >=6.0.2,<7, probes with `-B`/`PYTHONDONTWRITEBYTECODE`, and never calls uv
-against the supplied environment. The privacy wrapper remains byte-identical and continues
+An absent owned managed runtime is re-provisioned, so doctor's "rerun init in
+this clone/worktree" remedy works. A managed runtime that is present but not
+owned by omama, or whose owner marker has drifted, is named and refused without
+being deleted or overwritten. The effective base, interpreter, Python version,
+resolved PyYAML version and the path the dependency was actually imported from
+are recorded in local state.
+
+`--python ABSOLUTE_PATH` is a separate, read-only route. It requires Python
+>=3.8,<4 and a PyYAML that actually satisfies the installed gate — qualified by
+executing the `safe_load`/`safe_dump` round trip the gate depends on, and
+recording which module file was imported — rather than by the universal
+`>=6.0.2,<7` floor it never earned. A missing or incapable dependency fails
+closed. It probes with `-B`/`PYTHONDONTWRITEBYTECODE`, runs from a neutral
+working directory with only the unsafe current-directory entry removed from the
+search path, and never calls uv against the supplied environment. That
+interpreter's real HOME and user-site selection are deliberately preserved:
+rewriting them would qualify a different dependency than the gate will import.
+An empty `--python` is a named invalid value, not a silent fall-through to the
+managed route. The privacy wrapper remains byte-identical and continues
 to select `py -3`, `python3`, or `python` through PATH independently. Removing the selected
 base Python, moving the repository, or deleting its managed runtime can still break the
 gate; doctor reports those lifecycle failures rather than promising interpreter lifetime.
@@ -136,9 +186,10 @@ disabled. The repository runtime and its independently recorded base Python rema
 or relocating that base is deliberately not simulated by deleting a real interpreter: it is
 an explicit doctor-detectable prerequisite and relocation limitation.
 
-The full command is `python verify_all.py` without `--fast`; the development-host approved
-form uses `C:/Program Files/Python310/python.exe`. CI runs the same counted entry on Windows,
-Linux, and macOS with Python 3.11 plus Linux with Python 3.8. Platform-specific inability is
+The full command is `python verify_all.py` without `--fast`, run with the
+interpreter the operator selects; it uses that interpreter for its child
+fixtures. CI runs the same counted entry on Windows, Linux, and macOS with
+Python 3.11 plus Linux with Python 3.8. Platform-specific inability is
 reported as NOT-RUN and fails the job; it is never replaced by a static portability claim.
 
 `--static-only` executes no installed interpreter, gate, validator, checker, scanner, or
@@ -149,3 +200,14 @@ owner. Missing clone-local state/runtime, relocation, foreign ownership, depende
 or untrusted overrides get concrete re-init/recovery messages. Doctor creates synthetic
 probe files only in temporary space and does not modify the target, card family, index, or
 configuration through its own operations.
+
+Phase-1 pilot delivery is **wheel-only**. The build backend produces an
+installable wheel and refuses to build a source distribution; no wheel-to-sdist
+equivalence is claimed, and whether a public release requires a source
+distribution is a separate, later decision. Build provenance names this source
+tree or nothing: a revision is recorded only when Git's top level is the Omama
+source root, so a copy sitting inside an unrelated repository reports its
+revision as unavailable and non-clean instead of borrowing that repository's
+commit. Payload generation discards this project's own stale setuptools staging
+first, and overlapping builds of one checkout are serialized by a build lock so
+each produces the same payload inventory and identity.

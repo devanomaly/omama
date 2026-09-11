@@ -124,21 +124,19 @@ jobs:
             *) echo "::error::a fixture FAILED (exit $rc)"; exit "$rc" ;;
           esac
 
-      - name: Diagnose the two retained macOS preservation observations
-        if: always() && runner.os == 'macOS'
-        shell: bash
-        run: |
-          failed=0
-          for trial in $(seq -w 1 32); do
-            export OMAMA_MACOS_DIAGNOSTIC_ROOT="${{ runner.temp }}/omama-macos-preservation/trial-$trial"
-            python -B receipt-gate/fixture/diagnose_macos_preservation.py || failed=1
-          done
-          exit "$failed"
-
-      - name: Retain scoped macOS preservation evidence
-        if: always() && runner.os == 'macOS'
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-preservation-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/omama-macos-preservation
-          if-no-files-found: error
+      # The mandatory 32-run macOS diagnostic loop was removed as an explicitly
+      # accepted evidence tradeoff (PR #48 Phase B, C15/F30): it gated product
+      # CI on deliberately variable diagnostic sampling, and repeated sampling
+      # is not deterministic proof. What it observed is still covered
+      # deterministically by receipt-gate's strict counted preservation fixture
+      # and its binding-delta assertions, which run on every leg above.
+      #
+      # Surrendered on purpose: future repeated 32-run forensic sampling is no
+      # longer collected automatically. Archived historical evidence is
+      # retained, and the diagnostic remains available on demand:
+      #
+      #   OMAMA_MACOS_DIAGNOSTIC_ROOT=<disposable path> \
+      #     python -B receipt-gate/fixture/diagnose_macos_preservation.py
+      #
+      # Run it deliberately when a macOS preservation question is actually
+      # open; do not reintroduce it as a gate.

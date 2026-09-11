@@ -69,8 +69,10 @@ package version, license, bundle identity, and per-file hashes. It also:
   inert starter/PLAN/REVIEW templates, while preserving existing team content;
 - appends required local/evidence paths to `.gitignore` only when Git confirms the result
   is effective; and
-- activates local `core.hooksPath=.githooks` last, then runs doctor and mandatory admission
-  from installed bytes before recording complete state.
+- runs every non-activation doctor inventory check and the complete mandatory admission
+  from installed bytes **privately first**, then activates local
+  `core.hooksPath=.githooks`, then runs the complete activation-aware doctor before
+  recording complete state. A failing install never leaves hooks live.
 
 Init prints the starter adoption instructions and the output-discipline per-operator block;
 it does not create `CLAUDE.md` or write that block into user configuration.

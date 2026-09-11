@@ -106,13 +106,21 @@ class WiringContractTests(unittest.TestCase):
 
     def install(self, root, no_git_config=False, before_finish=None):
         from omama_cli.install import run_asset_transaction
-        from omama_cli.wiring import finish_wiring
+        from omama_cli.wiring import activate_wiring, finish_wiring
 
         plan, wiring = self.plan(root, no_git_config)
+
+        def admit_then_activate(transaction):
+            # Publication no longer activates.  Activation happens where init
+            # performs it: after the private admission step has passed.
+            if before_finish is not None:
+                before_finish(transaction)
+            activate_wiring(transaction, wiring)
+
         run_asset_transaction(
             plan, status="prepared",
             after_publication=lambda transaction: finish_wiring(transaction, wiring),
-            before_finish=before_finish, state_extra=wiring.state_extra,
+            before_finish=admit_then_activate, state_extra=wiring.state_extra,
         )
         return wiring
 
@@ -338,15 +346,19 @@ class WiringContractTests(unittest.TestCase):
         root = self.make_repo()
         plan, wiring = self.plan(root)
 
+        from omama_cli.wiring import activate_wiring
+
         def activate_then_external(transaction):
-            finish_wiring(transaction, wiring)
+            activate_wiring(transaction, wiring)
             subprocess.run(["git", "-C", str(root), "config", "--local", "fixture.external", "preserve"], check=True)
             raise RuntimeError("injected-after-activation")
 
         from omama_cli.install import run_asset_transaction
         with self.assertRaises(InstallError) as caught:
             run_asset_transaction(
-                plan, after_publication=activate_then_external,
+                plan,
+                after_publication=lambda transaction: finish_wiring(transaction, wiring),
+                before_finish=activate_then_external,
                 state_extra=wiring.state_extra,
             )
         self.assertEqual("recovery-required", caught.exception.reason)
@@ -474,3 +486,191 @@ class WiringContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ActivationOrderingTests(unittest.TestCase):
+    """Phase-B M3: activation is published only after private admission passes.
+
+    The wiring helpers are reused through one instance rather than by
+    inheriting the contract suite, so those cases are not counted twice.
+    """
+
+    def setUp(self):
+        self._wiring = WiringContractTests("test_no_git_config_prepares_with_exact_remedy_and_no_activation")
+
+    def make_repo(self):
+        return self._wiring.make_repo()
+
+    def plan(self, root, no_git_config=False):
+        return self._wiring.plan(root, no_git_config)
+
+    def test_activation_does_not_precede_private_admission(self):
+        from omama_cli.install import InstallError, run_asset_transaction
+        from omama_cli.wiring import activate_wiring, finish_wiring
+
+        root = self.make_repo()
+        plan, wiring = self.plan(root)
+        timeline = []
+
+        def hooks_path():
+            result = subprocess.run(
+                ["git", "-C", str(root), "config", "--local", "--get", "core.hooksPath"],
+                stdout=subprocess.PIPE, text=True, encoding="utf-8", check=False)
+            return result.stdout.strip() if result.returncode == 0 else None
+
+        def publish(transaction):
+            finish_wiring(transaction, wiring)
+            timeline.append(("after publication", hooks_path()))
+
+        def admit(transaction):
+            timeline.append(("private admission begins", hooks_path()))
+            activate_wiring(transaction, wiring)
+            timeline.append(("after activation", hooks_path()))
+            raise InstallError("admission-failed", "synthetic failure raised after activation")
+
+        with self.assertRaises(InstallError):
+            run_asset_transaction(plan, status="prepared", after_publication=publish,
+                                  before_finish=admit, state_extra=wiring.state_extra)
+        self.assertEqual(None, dict(timeline)["after publication"],
+                         "publication activated repository-local hooks")
+        self.assertEqual(None, dict(timeline)["private admission begins"],
+                         "hooks were live while private admission ran")
+        self.assertEqual(".githooks", dict(timeline)["after activation"])
+        # A failure after activation still restores the adopter's configuration.
+        self.assertEqual(None, hooks_path(), "activation was not rolled back after the failure")
+
+    def test_unknown_destination_hook_refuses_before_any_activation(self):
+        from omama_cli.install import InstallError
+        from omama_cli.wiring import preflight_wiring, unknown_destination_hooks
+
+        root = self.make_repo()
+        hooks = root / ".githooks"
+        hooks.mkdir(exist_ok=True)
+        foreign = hooks / "pre-push"
+        foreign.write_text("#!/bin/sh\necho unreviewed\n", encoding="utf-8")
+        os.chmod(str(foreign), 0o755)
+        # A file that is not a real Git hook name cannot be executed by Git and
+        # is therefore not an authorization expansion.
+        inert = hooks / "notes.txt"
+        inert.write_text("documentation\n", encoding="utf-8")
+        os.chmod(str(inert), 0o755)
+
+        plan, _wiring_unused = None, None
+        from omama_cli.install import preflight_bundle
+        from omama_cli.target import resolve_target
+        bundle = install_fixture.InstallerContractTests(
+            "test_inherited_git_routing_refuses_before_target_writes").bundle()
+        plan = preflight_bundle(resolve_target(str(root), environ={}), bundle)
+        self.assertEqual(["pre-push"], unknown_destination_hooks(plan.target, bundle))
+        with self.assertRaises(InstallError) as caught:
+            preflight_wiring(plan, sys.executable, False)
+        self.assertEqual("unknown-destination-hook", caught.exception.reason)
+        self.assertIn("pre-push", caught.exception.message)
+        self.assertNotIn("notes.txt", caught.exception.message)
+        # Refusal happens before publication: nothing was activated.
+        self.assertEqual(1, subprocess.run(
+            ["git", "-C", str(root), "config", "--local", "--get", "core.hooksPath"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False).returncode)
+
+    def test_only_real_git_hook_names_count_as_active(self):
+        from omama_cli.wiring import GIT_HOOK_NAMES, _active_hooks
+
+        base = Path(tempfile.mkdtemp(prefix="hooknames-", dir=install_fixture._test_root()))
+        for name in ("pre-commit", "README.md", "helper.sh", "pre-push.sample"):
+            path = base / name
+            path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            os.chmod(str(path), 0o755)
+        self.assertEqual(["pre-commit"], _active_hooks(base))
+        self.assertIn("pre-push", GIT_HOOK_NAMES)
+        self.assertNotIn("helper.sh", GIT_HOOK_NAMES)
+
+
+class IgnoreAuthorityTests(unittest.TestCase):
+    """Phase-B M4 (C05/F22): Git is the ignore authority; input is validated first."""
+
+    def setUp(self):
+        self._wiring = WiringContractTests("test_no_git_config_prepares_with_exact_remedy_and_no_activation")
+
+    def make_repo(self):
+        return self._wiring.make_repo()
+
+    def test_tokens_path_carrying_pattern_syntax_is_refused_before_any_write(self):
+        from omama_cli.install import InstallError
+        from omama_cli.wiring import validate_ignore_token
+
+        root = self.make_repo()
+        before = sorted(path.name for path in root.iterdir())
+        ignore_before = (root / ".gitignore").read_bytes() if (root / ".gitignore").is_file() else None
+        for token in ("secrets.txt\nEXTRA", "secrets.txt\n*", "secrets.txt\n!important.py",
+                      "*.txt", "secrets?.txt", "#secrets.txt", "secrets[0].txt", " secrets.txt "):
+            with self.assertRaises(InstallError) as caught:
+                validate_ignore_token(token)
+            self.assertEqual("unsafe-tokens-path", caught.exception.reason)
+        # A plain relative path is accepted unchanged.
+        self.assertEqual("tools/secrets.txt", validate_ignore_token("tools/secrets.txt"))
+        # Nothing was created or changed by the refusals.
+        self.assertEqual(before, sorted(path.name for path in root.iterdir()))
+        self.assertEqual(ignore_before, (root / ".gitignore").read_bytes() if (root / ".gitignore").is_file() else None)
+
+    def test_injected_tokens_path_never_reaches_the_repository(self):
+        from omama_cli.install import InstallError, preflight_bundle
+        from omama_cli.target import resolve_target
+        from omama_cli.wiring import preflight_wiring
+
+        root = self.make_repo()
+        (root / "privacy-deny.json").write_text(json.dumps({"tokens_file": "secrets.txt\n*"}) + "\n", encoding="utf-8")
+        (root / "important.py").write_text("print('tracked source')\n", encoding="utf-8")
+        plan = preflight_bundle(resolve_target(str(root), environ={}),
+                                install_fixture.InstallerContractTests(
+                                    "test_inherited_git_routing_refuses_before_target_writes").bundle())
+        with self.assertRaises(InstallError) as caught:
+            preflight_wiring(plan, sys.executable, True)
+        self.assertEqual("unsafe-tokens-path", caught.exception.reason)
+        ignore = (root / ".gitignore").read_text(encoding="utf-8") if (root / ".gitignore").is_file() else ""
+        self.assertNotIn("*", [line.strip() for line in ignore.splitlines()],
+                         "a bare wildcard reached .gitignore")
+        self.assertEqual([], [path.name for path in root.iterdir() if "\n" in path.name],
+                         "a filename containing a newline was created")
+        unrelated = subprocess.run(
+            ["git", "-C", str(root), "check-ignore", "--no-index", "-q", "--", "important.py"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        self.assertEqual(1, unrelated.returncode, "an unrelated tracked source became ignored")
+
+    def test_excluded_parent_succeeds_while_real_child_reinclusion_is_a_named_failure(self):
+        from omama_cli.install import InstallError
+        from omama_cli.wiring import LOCAL_SETTINGS, _check_effective_ignore, _would_be_ignored
+
+        # An excluded parent directory is a success under Git; the matcher this
+        # replaced refused it.
+        root = self.make_repo()
+        self.assertTrue(_would_be_ignored(root, [".claude/"], LOCAL_SETTINGS))
+        # A genuine nested negation that re-includes the path stays a named failure.
+        nested = root / ".claude" / ".gitignore"
+        nested.parent.mkdir(exist_ok=True)
+        nested.write_text("!settings.local.json\n", encoding="utf-8")
+        self.assertFalse(_would_be_ignored(root, [LOCAL_SETTINGS], LOCAL_SETTINGS))
+        with self.assertRaises(InstallError) as caught:
+            _check_effective_ignore(root, [(LOCAL_SETTINGS, LOCAL_SETTINGS)])
+        self.assertEqual("ignore-negation-conflict", caught.exception.reason)
+        self.assertIn(LOCAL_SETTINGS, caught.exception.message)
+
+    def test_one_table_drives_both_the_written_rules_and_their_proof(self):
+        from omama_cli.install import preflight_bundle
+        from omama_cli.target import resolve_target
+        from omama_cli.wiring import preflight_wiring
+
+        root = self.make_repo()
+        plan = preflight_bundle(resolve_target(str(root), environ={}),
+                                install_fixture.InstallerContractTests(
+                                    "test_inherited_git_routing_refuses_before_target_writes").bundle())
+        wiring = preflight_wiring(plan, sys.executable, True)
+        # Every proven path corresponds to a rule that is actually written.
+        merged = next((operation for operation in wiring.operations if operation.relative == ".gitignore"), None)
+        self.assertIsNotNone(merged)
+        written = {line.strip() for line in merged.data.decode("utf-8").splitlines() if line.strip()}
+        self.assertIn("privacy-tokens.txt", wiring.ignore_paths)
+        for representative in wiring.ignore_paths:
+            self.assertTrue(
+                any(representative.startswith(line.rstrip("/")) or line == "*.receipt.json"
+                    for line in written),
+                "no written rule covers the proven path " + representative)

@@ -215,3 +215,174 @@ class CommandContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VersionAuthorityTests(unittest.TestCase):
+    """Phase-B M4 (F27): one authoritative version across every surface."""
+
+    def _pyproject_version(self):
+        root = Path(__file__).resolve().parents[2]
+        for line in (root / "pyproject.toml").read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("version ="):
+                return stripped.split("=", 1)[1].strip().strip('"')
+        raise AssertionError("pyproject.toml declares no version")
+
+    def test_source_build_and_runtime_versions_agree(self):
+        import omama_cli
+        from build_backend import inventory
+
+        declared = self._pyproject_version()
+        self.assertEqual(declared, inventory.PACKAGE_VERSION,
+                         "build inventory version disagrees with pyproject.toml")
+        self.assertEqual(declared, omama_cli._SOURCE_VERSION,
+                         "package source fallback version disagrees with pyproject.toml")
+        # At runtime the installed distribution's metadata is the authority.
+        self.assertEqual(declared, omama_cli.__version__)
+
+    def test_built_wheel_metadata_and_manifest_agree_with_the_source_version(self):
+        import json
+        import zipfile
+
+        wheel = os.environ.get("OMAMA_BUILT_WHEEL") or os.environ.get("OMAMA_T8_WHEEL")
+        if not wheel:
+            raise unittest.SkipTest("built-wheel version binding requires OMAMA_BUILT_WHEEL")
+        declared = self._pyproject_version()
+        with zipfile.ZipFile(wheel) as archive:
+            manifest = json.loads(archive.read("omama_cli/_payload/manifest.json").decode("utf-8"))
+            metadata_name = next(name for name in archive.namelist() if name.endswith(".dist-info/METADATA"))
+            metadata = archive.read(metadata_name).decode("utf-8")
+        self.assertEqual(declared, manifest["package_version"])
+        self.assertIn("Version: " + declared, metadata)
+
+
+class ManifestShapeTests(unittest.TestCase):
+    """Phase-B M4 (F26): a malformed manifest is a named BundleError."""
+
+    def _manifest(self):
+        return {
+            "schema": 1, "package_version": "0.1.0", "bundle_id": "0" * 64,
+            "source": {"url": "u", "revision": "r", "dirty": True, "exact_revision": None,
+                       "dirty_digest": "d", "identity_inputs_digest": "d",
+                       "modified_after_identity_capture": False, "dirty_digest_policy": "p"},
+            "license": {"destination": "tools/omama/LICENSE", "expression": "MIT"},
+            "files": [{"resource": "files/0", "destination": "tools/omama/LICENSE",
+                       "ownership": "immutable", "sha256": "a" * 64}],
+            "required_destinations": ["tools/omama/LICENSE"],
+            "installed_identity": {"destination": "tools/omama/manifest.json"},
+        }
+
+    def test_malformed_entries_raise_a_named_bundle_error(self):
+        from omama_cli.bundle import BundleError, _validate_manifest
+
+        for label, mutate in (
+            ("non-object entry", lambda m: m.__setitem__("files", ["not-an-object"])),
+            ("missing resource", lambda m: m["files"][0].pop("resource")),
+            ("non-string destination", lambda m: m["files"][0].__setitem__("destination", 7)),
+            ("bad hash", lambda m: m["files"][0].__setitem__("sha256", "nope")),
+        ):
+            manifest = self._manifest()
+            mutate(manifest)
+            with self.assertRaises(BundleError, msg=label):
+                _validate_manifest(manifest, lambda name: b"", b"{}")
+
+
+class BuildProvenanceTests(unittest.TestCase):
+    """Phase-B M4 (F23/F24/C17): truthful identity, fresh staging, wheel-only."""
+
+    def _root(self):
+        value = os.environ.get("OMAMA_PACKAGING_TEST_ROOT") or os.environ.get("OMAMA_CLI_TEST_ROOT")
+        if not value:
+            raise unittest.SkipTest("a disposable root is required")
+        path = Path(value)
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def test_revision_is_claimed_only_when_git_describes_this_source_root(self):
+        from build_backend import backend
+        from unittest import mock
+
+        own = "a" * 40
+        absent_identity = Path(self._root()) / "absent-identity.json"
+
+        def answers(toplevel, head):
+            return lambda *args: {
+                ("rev-parse", "--show-toplevel"): toplevel,
+                ("rev-parse", "HEAD"): head,
+                ("status", "--porcelain=v1", "--untracked-files=all"): "",
+            }.get(args)
+
+        # Git's top level is this source root: the revision is this project's,
+        # and a clean tree earns an exact revision.
+        with mock.patch.object(backend, "_git", side_effect=answers(str(backend.ROOT), own)), \
+                mock.patch.object(backend, "IDENTITY_FILE", absent_identity):
+            self.assertTrue(backend._git_owns_source_root())
+            source = backend._identity()
+        self.assertEqual(own, source["revision"])
+        self.assertEqual(own, source["exact_revision"])
+        self.assertFalse(source["dirty"])
+
+        # Git resolves to some enclosing repository instead: nothing is claimed.
+        with mock.patch.object(backend, "_git", side_effect=answers("/some/enclosing/repository", own)):
+            self.assertFalse(backend._git_owns_source_root())
+
+        # Not a Git checkout at all: still unavailable, never "clean".
+        with mock.patch.object(backend, "_git", side_effect=answers(None, None)), \
+                mock.patch.object(backend, "IDENTITY_FILE", absent_identity):
+            self.assertFalse(backend._git_owns_source_root())
+            source = backend._identity()
+        self.assertEqual("unknown", source["revision"])
+        self.assertIsNone(source["exact_revision"])
+        self.assertTrue(source["dirty"])
+
+    def test_enclosing_repository_revision_is_never_published_as_omama_identity(self):
+        from build_backend import backend
+        from unittest import mock
+
+        foreign = "f" * 40
+        with mock.patch.object(backend, "_git", side_effect=lambda *args: {
+                ("rev-parse", "--show-toplevel"): "/enclosing/foreign/repo",
+                ("rev-parse", "HEAD"): foreign,
+                ("status", "--porcelain=v1", "--untracked-files=all"): "",
+        }.get(args)), mock.patch.object(backend, "IDENTITY_FILE", Path(self._root()) / "absent-identity.json"):
+            source = backend._identity()
+        self.assertNotEqual(foreign, source["revision"])
+        self.assertEqual("unknown", source["revision"])
+        self.assertIsNone(source["exact_revision"])
+        self.assertTrue(source["dirty"], "an unidentifiable source tree must not claim to be clean")
+
+    def test_stale_setuptools_staging_is_discarded_before_generation(self):
+        from build_backend import backend
+        from unittest import mock
+
+        staging = Path(self._root()) / "fake-source-root"
+        build_root = staging / "build" / "lib" / "omama_cli" / "_payload" / "files"
+        build_root.mkdir(parents=True, exist_ok=True)
+        stale = build_root / "STALE-LEFTOVER.txt"
+        stale.write_text("payload file from a previous build\n", encoding="utf-8")
+        with mock.patch.object(backend, "ROOT", staging):
+            backend._discard_stale_build_output()
+        self.assertFalse(stale.exists(), "stale staging survived into the next build")
+        self.assertFalse((staging / "build").exists())
+
+    def test_phase_one_refuses_to_build_a_source_distribution(self):
+        from build_backend import backend
+
+        with self.assertRaises(RuntimeError) as caught:
+            backend.build_sdist(str(self._root()))
+        message = str(caught.exception)
+        self.assertIn("wheel-only", message)
+        # The refusal must not claim any equivalence it has not established.
+        self.assertNotIn("equivalent", message.lower().replace("equivalence is claimed", ""))
+
+    def test_build_lock_serializes_generation_and_is_released(self):
+        from build_backend import backend
+        from unittest import mock
+
+        staging = Path(self._root()) / "lock-source-root"
+        staging.mkdir(parents=True, exist_ok=True)
+        lock = staging / ".omama-build.lock"
+        with mock.patch.object(backend, "BUILD_LOCK", lock):
+            with backend._build_lock():
+                self.assertTrue(lock.exists(), "the build lock was not taken")
+            self.assertFalse(lock.exists(), "the build lock was not released")

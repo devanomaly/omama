@@ -54,7 +54,9 @@ class RuntimeContractTests(unittest.TestCase):
                 mock.patch.object(path_type, "is_symlink", return_value=True), \
                 mock.patch("omama_cli.runtime._probe", return_value=probe) as execute_probe:
             result = runtime.qualify_explicit(str(supplied))
-        execute_probe.assert_called_once_with(supplied, require_yaml=True)
+        # The read-only explicit route is capability-qualified: it records what
+        # the installed gate actually needs instead of a universal version floor.
+        execute_probe.assert_called_once_with(supplied, require_yaml=True, capability=True)
         self.assertEqual(supplied.absolute().as_posix(), result["receipt_interpreter"])
         self.assertEqual(canonical.as_posix(), result["base_interpreter"])
 
@@ -315,3 +317,177 @@ class RuntimeContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RuntimeBoundaryTests(unittest.TestCase):
+    """Phase-B M1: the runtime and environment boundary.
+
+    Each case reproduces the mechanism the repair addresses, not merely the
+    illustrative example that first exposed it.
+    """
+
+    def test_repository_shadow_neither_executes_nor_masquerades_as_the_dependency(self):
+        from omama_cli import runtime
+
+        root = Path(tempfile.mkdtemp(prefix="cwd-shadow-", dir=install_fixture._test_root()))
+        marker = root / "SHADOW-EXECUTED.txt"
+        (root / "yaml.py").write_text(
+            "import pathlib\n"
+            "pathlib.Path(__file__).with_name('SHADOW-EXECUTED.txt').write_text('shadow ran\\n')\n"
+            "__version__ = '6.0.2'\n",
+            encoding="utf-8",
+        )
+        previous = os.getcwd()
+        os.chdir(str(root))
+        try:
+            genuine = subprocess.run(
+                [sys.executable, "-B", "-c", "import yaml;print(yaml.__file__)"],
+                cwd=tempfile.gettempdir(), stdout=subprocess.PIPE, text=True, check=False,
+            )
+            try:
+                value = runtime._probe(sys.executable, require_yaml=True, capability=True)
+            except Exception:
+                value = None
+            self.assertFalse(marker.exists(), "repository-local yaml.py executed during qualification")
+            if value is not None and genuine.returncode == 0:
+                self.assertEqual(
+                    Path(genuine.stdout.strip()).resolve(),
+                    Path(value["pyyaml_path"]).resolve(),
+                    "qualification recorded a dependency other than the one actually importable",
+                )
+                self.assertNotEqual("6.0.2", value["pyyaml"]) if genuine.stdout.strip().startswith(str(root)) else None
+        finally:
+            os.chdir(previous)
+
+    def test_inherited_uv_and_pip_controls_never_reach_uv_and_no_seed_is_not_credited(self):
+        from omama_cli import runtime
+
+        root = Path(tempfile.mkdtemp(prefix="uv-scrub-", dir=install_fixture._test_root()))
+
+        class _Target:
+            pass
+
+        _Target.root = root
+        poisoned = {
+            "UV_VENV_SEED": "1", "UV_MANAGED_PYTHON": "1", "UV_INDEX_URL": "https://example.invalid",
+            "PIP_INDEX_URL": "https://example.invalid", "PIP_TARGET": str(root),
+            "PYTHONPATH": str(root), "VIRTUAL_ENV": str(root),
+        }
+        with mock.patch.dict(os.environ, poisoned):
+            inventory = runtime.scrubbed_environment_inventory()
+            env = runtime._uv_env(_Target)
+        for name in poisoned:
+            self.assertIn(name, inventory["removed"])
+            if name not in inventory["imposed"]:
+                self.assertNotIn(name, env, "inherited control reached uv: " + name)
+        self.assertFalse(inventory["no_seed_credited"])
+        # HOME and user-site selection are deliberately preserved: rewriting
+        # them would change which dependency the installed gate imports.
+        self.assertEqual("HOME" in os.environ, "HOME" in env)
+
+    def test_uv_failure_preserves_the_actionable_line_under_usage_boilerplate(self):
+        from omama_cli import runtime
+
+        class _Result:
+            stdout = ""
+            stderr = (
+                "error: the argument '--no-managed-python' cannot be used with '--managed-python'\n"
+                "Usage: uv venv --python <PYTHON>\n"
+                "For more information, try '--help'.\n"
+            )
+
+        diagnostic = runtime._uv_diagnostic(_Result)
+        self.assertIn("cannot be used with", diagnostic)
+        self.assertNotEqual("For more information, try '--help'.", diagnostic)
+
+    def test_prerelease_versions_are_not_glued_into_a_higher_release(self):
+        from omama_cli import runtime
+
+        self.assertEqual(((6, 0, 2), True), runtime._release_tuple("6.0.2rc1"))
+        self.assertEqual(((6, 0, 2), True), runtime._release_tuple("6.0.2.dev0"))
+        self.assertEqual(((6, 0, 2), False), runtime._release_tuple("6.0.2"))
+        for rejected in ("6.0.2rc1", "6.0.2.dev0", "5.4.1", "7.0.0"):
+            self.assertFalse(
+                runtime._version_at_least(rejected, runtime.PYYAML_MIN)
+                and runtime._version_below(rejected, runtime.PYYAML_MAX),
+                "managed bound accepted " + rejected,
+            )
+        for accepted in ("6.0.2", "6.0.3"):
+            self.assertTrue(
+                runtime._version_at_least(accepted, runtime.PYYAML_MIN)
+                and runtime._version_below(accepted, runtime.PYYAML_MAX))
+
+    def test_lexically_equivalent_peer_path_is_not_inside_the_target(self):
+        from omama_cli import runtime
+
+        base = Path(tempfile.mkdtemp(prefix="lexical-", dir=install_fixture._test_root()))
+        repository = base / "repo"
+        peer = base / "peer"
+        repository.mkdir()
+        peer.mkdir()
+        self.assertFalse(runtime._is_lexically_within(repository / ".." / "peer" / "python", repository))
+        self.assertTrue(runtime._is_lexically_within(repository / "inside" / "python", repository))
+
+    def test_absent_owned_runtime_reprovisions_while_unowned_or_drifted_is_refused(self):
+        from omama_cli.install import InstallError
+        from omama_cli import runtime
+
+        base = Path(tempfile.mkdtemp(prefix="owned-runtime-", dir=install_fixture._test_root()))
+
+        class _Plan:
+            pass
+
+        class _Target:
+            pass
+
+        _Target.root = base
+        _Plan.target = _Target
+        interpreter = runtime._runtime_python(base / ".omama" / "runtime").absolute()
+        _Plan.existing_state = {
+            "runtime_mode": "managed",
+            "receipt_interpreter": interpreter.as_posix(),
+            "base_interpreter": sys.executable,
+        }
+        # Absent: doctor's "rerun init in this clone/worktree" remedy must work.
+        self.assertIsNone(runtime._reusable_managed(_Plan))
+        # Present but not owned by omama: named and preserved, never deleted.
+        runtime_tree = base / ".omama" / "runtime"
+        runtime_tree.mkdir(parents=True)
+        (runtime_tree / "foreign.txt").write_text("adopter content\n", encoding="utf-8")
+        with self.assertRaises(InstallError) as caught:
+            runtime._reusable_managed(_Plan)
+        self.assertEqual("incompatible-runtime", caught.exception.reason)
+        self.assertTrue((runtime_tree / "foreign.txt").is_file(), "refusal deleted an unowned runtime tree")
+        # Present, marked, but drifted marker: still refused without deletion.
+        (runtime_tree / runtime.RUNTIME_OWNER_MARKER).write_text("not json\n", encoding="utf-8")
+        with self.assertRaises(InstallError) as caught:
+            runtime._reusable_managed(_Plan)
+        self.assertEqual("incompatible-runtime", caught.exception.reason)
+        self.assertTrue((runtime_tree / "foreign.txt").is_file())
+
+    def test_owned_runtime_inventory_refuses_unapproved_distributions(self):
+        from omama_cli.install import InstallError
+        from omama_cli import runtime
+
+        with mock.patch.object(runtime, "runtime_distributions", return_value=["pyyaml", "pip", "setuptools"]):
+            with self.assertRaises(InstallError) as caught:
+                runtime._require_owned_inventory("ignored")
+        self.assertEqual("runtime-inventory-unapproved", caught.exception.reason)
+        self.assertIn("pip", caught.exception.message)
+        with mock.patch.object(runtime, "runtime_distributions", return_value=["pyyaml"]):
+            self.assertEqual(["pyyaml"], runtime._require_owned_inventory("ignored"))
+        with mock.patch.object(runtime, "runtime_distributions", return_value=[]):
+            with self.assertRaises(InstallError) as caught:
+                runtime._require_owned_inventory("ignored")
+        self.assertEqual("runtime-inventory-incomplete", caught.exception.reason)
+
+    def test_empty_explicit_python_is_a_named_invalid_value_not_the_managed_route(self):
+        from omama_cli.command import _parser
+        from omama_cli.install import InstallError
+        from omama_cli.runtime import qualify_explicit
+
+        arguments = _parser().parse_args(["init", ".", "--python", ""])
+        self.assertIsNotNone(arguments.python, "empty --python must remain distinguishable from an omitted flag")
+        with self.assertRaises(InstallError) as caught:
+            qualify_explicit(arguments.python)
+        self.assertEqual("explicit-python-not-absolute", caught.exception.reason)

@@ -3,6 +3,7 @@
 import hashlib
 import json
 import pkgutil
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -54,6 +55,16 @@ def _validate_manifest(manifest, read_resource, manifest_bytes):
         raise BundleError("incomplete-resource-inventory: {0}".format(detail))
     files = {}
     for entry in entries:
+        # Validate each entry's shape before any key access: a malformed
+        # manifest must produce a named BundleError, never an AttributeError or
+        # a KeyError from deep inside resource loading.
+        if not isinstance(entry, dict):
+            raise BundleError("invalid-resource-inventory: manifest file entry is not an object")
+        for key in ("resource", "destination", "ownership", "sha256"):
+            if not isinstance(entry.get(key), str) or not entry.get(key):
+                raise BundleError("invalid-resource-inventory: entry is missing a usable {0}".format(key))
+        if not re.match(r"^[0-9a-f]{64}$", entry["sha256"]):
+            raise BundleError("invalid-resource-inventory: entry sha256 is not a sha256 digest")
         resource = entry.get("resource", "")
         destination = entry.get("destination", "")
         data = read_resource(resource)

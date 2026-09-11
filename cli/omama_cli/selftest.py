@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .doctor import _bash_path
 from .install import InstallError
-from .target import GIT_CONFIG_PREFIXES, GIT_ROUTING, safe_destination
+from .target import GIT_CONFIG_PREFIXES, GIT_ROUTING, git_scratch_command, safe_destination
 
 
 @dataclass(frozen=True)
@@ -210,7 +210,10 @@ class _Harness:
         return repo
 
     def _git(self, repo, *args, expected=0):
-        result = _run(["git", "-C", str(repo)] + list(args), repo)
+        # Scratch repositories measure this installation, not the adopter's
+        # global signing, template or line-ending configuration.  The pins are
+        # command arguments, so they reach Git subprocesses only.
+        result = _run(git_scratch_command(repo, *args), repo)
         _require(result.returncode == expected, "git {0} exited {1}, expected {2}".format(args[0], result.returncode, expected), result)
         return result
 

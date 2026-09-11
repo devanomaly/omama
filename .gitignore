@@ -4,6 +4,7 @@ build/
 dist/
 *.egg-info/
 _build_identity.json
+.omama-build.lock
 cli/omama_cli/_payload/
 
 # work-order card and receipt-gate receipt: per task, per machine, never

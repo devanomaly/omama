@@ -1,3 +1,7 @@
+# Phase-1 Omama delivery is wheel-only: no source distribution is built, so
+# these directives are currently inert. They are retained because this file is
+# an authoritative build-identity input; a later release decision about a
+# source distribution would make them load-bearing again.
 include LICENSE
 include MANIFEST.in
 include pyproject.toml

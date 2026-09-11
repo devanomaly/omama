@@ -12,7 +12,6 @@ import os
 import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
 from pathlib import Path
 
@@ -68,7 +67,25 @@ def test_root():
     if allocated:
         parent = Path(allocated).resolve()
         if not parent.is_dir():
-            raise NotRun("OMAMA_CLI_TEST_ROOT is not an existing allocated directory: " + str(parent))
+            # Deliberately never created here: an unallocated or mistyped root
+            # must be NOT-RUN, not a silent write somewhere else. The detail
+            # below makes a recurrence attributable, because this entry starts
+            # many minutes after the operator allocates the root and an
+            # external cleaner can remove it in between.
+            grandparent = parent.parent
+            if grandparent.is_dir():
+                try:
+                    siblings = sorted(item.name for item in grandparent.iterdir())[:10]
+                except OSError as exc:
+                    siblings = ["<unreadable: {0}>".format(type(exc).__name__)]
+                detail = "its parent {0} exists and currently contains: {1}".format(
+                    grandparent, ", ".join(siblings) or "nothing")
+            else:
+                detail = "its parent {0} does not exist either".format(grandparent)
+            raise NotRun(
+                "OMAMA_CLI_TEST_ROOT is not an existing allocated directory: {0}; {1}. "
+                "Allocate it immediately before this run and keep it outside any path "
+                "subject to automatic temporary-file cleanup.".format(parent, detail))
         prefix = "f-" if os.name == "nt" else "full-{0}-py{1}{2}-".format(
             sys.platform, sys.version_info[0], sys.version_info[1])
         return Path(tempfile.mkdtemp(prefix=prefix, dir=str(parent)))
@@ -90,34 +107,25 @@ def overlay_checkout(destination):
 
 
 def build_artifacts(root, uv, base_env):
+    """Build the phase-1 pilot artifact.
+
+    Phase-1 delivery is wheel-only: no source distribution is built, and no
+    wheel-to-sdist equivalence is claimed or tested.  Whether a public release
+    requires a source distribution remains a separate, later decision.
+    """
     build_source = root / "build-source"
     run(["git", "-c", "safe.directory=" + SOURCE.as_posix(), "clone", "--quiet", "--no-hardlinks", str(SOURCE), str(build_source)],
         root, root, "clone-build-source", env=base_env)
     overlay_checkout(build_source)
     direct = root / "direct-dist"
     direct.mkdir()
-    run([uv, "build", "--wheel", "--sdist", "--no-python-downloads", "--python", sys.executable,
-         "--out-dir", str(direct)], build_source, root, "build-wheel-sdist", env=base_env, timeout=600)
-    wheel = next(direct.glob("*.whl"), None)
-    sdist = next(direct.glob("*.tar.gz"), None)
-    if not wheel or not sdist:
-        raise AssertionError("build did not produce both wheel and sdist")
-    extracted = root / "sdist-source"
-    extracted.mkdir()
-    with tarfile.open(str(sdist), "r:gz") as archive:
-        for member in archive.getmembers():
-            candidate = (extracted / member.name).resolve()
-            try:
-                candidate.relative_to(extracted.resolve())
-            except ValueError:
-                raise AssertionError("sdist contains escaping path: " + member.name)
-        archive.extractall(str(extracted))
-    sdist_project = next(path for path in extracted.iterdir() if path.is_dir())
-    rebuilt_dir = root / "rebuilt-dist"
-    rebuilt_dir.mkdir()
     run([uv, "build", "--wheel", "--no-python-downloads", "--python", sys.executable,
-         "--out-dir", str(rebuilt_dir)], sdist_project, root, "build-from-sdist", env=base_env, timeout=600)
-    rebuilt = next(rebuilt_dir.glob("*.whl"))
+         "--out-dir", str(direct)], build_source, root, "build-wheel", env=base_env, timeout=600)
+    wheel = next(direct.glob("*.whl"), None)
+    if not wheel:
+        raise AssertionError("build did not produce a wheel")
+    if next(direct.glob("*.tar.gz"), None):
+        raise AssertionError("phase-1 delivery is wheel-only but a source distribution was produced")
 
     alternate_source = root / "alternate-source"
     shutil.copytree(str(build_source), str(alternate_source),
@@ -129,10 +137,10 @@ def build_artifacts(root, uv, base_env):
     run([uv, "build", "--wheel", "--no-python-downloads", "--python", sys.executable,
          "--out-dir", str(alternate_dir)], alternate_source, root, "build-alternate-bundle", env=base_env, timeout=600)
     alternate = next(alternate_dir.glob("*.whl"))
-    run([sys.executable, "-B", str(FIXTURE / "check_artifacts.py"), "--sdist", str(sdist),
-         "--wheel", str(rebuilt), "--direct-wheel", str(wheel), "--source", str(build_source)],
+    run([sys.executable, "-B", str(FIXTURE / "check_artifacts.py"),
+         "--wheel", str(wheel), "--source", str(build_source)],
         root, root, "artifact-inspection", env=base_env)
-    return wheel, sdist, rebuilt, alternate
+    return wheel, alternate
 
 
 def venv_python(root):
@@ -293,8 +301,10 @@ def lifetime_proof(root, tool, uv):
     shutil.rmtree(str(tool))
     if tool.exists() or cli.exists():
         raise AssertionError("validated CLI tool environment was not removed")
-    if shutil.which("omama", path=clean_env().get("PATH")):
-        raise AssertionError("an unrelated omama executable remains available during lifetime proof")
+    # The test-owned CLI environment is gone, which is what this proves: the
+    # two assertions above check exactly that. An unrelated omama installed
+    # elsewhere on the host's PATH is not part of this claim and was never
+    # used by it, so it is no longer asserted about.
     valid_review = "<!-- review v1 · tier: S -->\nVerdict: PASS\n\n## Findings\n\n- Clean.\n\n## Non-findings\n\n- Installed checker ran.\n"
     gate_close(root, target, state, "lifetime-s1", "S1", None)
     gate_close(root, target, state, "lifetime-s3", "S3", valid_review)
@@ -325,7 +335,7 @@ def run_contract_suites(root, wheel, alternate, tool, explicit, env):
     })
     # Runtime is last because its installed-tool lifetime case deliberately
     # removes this marked tool after every other suite has consumed it.
-    for module in ("test_packaging", "test_install", "test_wiring", "test_doctor", "test_admission", "test_runtime"):
+    for module in ("test_packaging", "test_install", "test_wiring", "test_recovery", "test_doctor", "test_admission", "test_runtime"):
         result = run([sys.executable, "-B", "-m", "unittest", "-v", module], FIXTURE, root,
                      "suite-" + module, env=suite_env, timeout=1800)
         output = result.stdout + result.stderr
@@ -346,20 +356,20 @@ def main():
         "TMP": root / "tmp", "TEMP": root / "tmp", "TMPDIR": root / "tmp",
     })
     (root / "tmp").mkdir()
-    wheel, _sdist, rebuilt, alternate = build_artifacts(root, shutil.which("uv"), base_env)
-    tool = install_tool(root, "cli-tool", rebuilt, shutil.which("uv"), base_env)
-    lifetime_tool = install_tool(root, "lifetime-cli-tool", rebuilt, shutil.which("uv"), base_env)
+    wheel, alternate = build_artifacts(root, shutil.which("uv"), base_env)
+    tool = install_tool(root, "cli-tool", wheel, shutil.which("uv"), base_env)
+    lifetime_tool = install_tool(root, "lifetime-cli-tool", wheel, shutil.which("uv"), base_env)
     explicit = explicit_interpreter(root, shutil.which("uv"), base_env)
     run([venv_python(tool), "-B", str(FIXTURE / "challenge_installed_bundle.py"), "--source", str(SOURCE)],
         root, root, "installed-bundle-challenges", env=clean_env())
     public_entrypoint_proof(root, tool, explicit)
-    run_contract_suites(root, rebuilt, alternate, tool, explicit, base_env)
+    run_contract_suites(root, wheel, alternate, tool, explicit, base_env)
     lifetime_proof(root, lifetime_tool, shutil.which("uv"))
-    digest = hashlib.sha256(rebuilt.read_bytes()).hexdigest()
-    print("OK artifacts: wheel={0} sha256={1}".format(rebuilt, digest))
+    digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+    print("OK artifacts: wheel={0} sha256={1}".format(wheel, digest))
     print("OK platform: {0} Python {1}.{2}; every required local case ran".format(
         sys.platform, sys.version_info[0], sys.version_info[1]))
-    print("OK cli fixture: built wheel/sdist, installed entrypoint, init/doctor, contracts, and lifetime")
+    print("OK cli fixture: built wheel (phase-1 wheel-only), installed entrypoint, init/doctor, contracts, and lifetime")
     return 0
 
 

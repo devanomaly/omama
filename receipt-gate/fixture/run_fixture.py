@@ -80,7 +80,11 @@ def _rmtree(path):
 
 
 def git(repo, *args, check_rc=True):
-    r = subprocess.run(["git", "-C", str(repo)] + list(args),
+    # The maintenance pin is applied in this one helper so every fixture commit
+    # carries it, rather than at whichever call sites happened to remember it:
+    # background maintenance during a fixture run perturbs exactly the
+    # preservation measurements these cases make.
+    r = subprocess.run(["git", "-C", str(repo), "-c", "maintenance.auto=false"] + list(args),
                        capture_output=True, text=True, encoding="utf-8",
                        errors="replace", env=scrubbed_env())
     if check_rc and r.returncode != 0:
@@ -101,7 +105,7 @@ def make_repo(base, name="repo", commit=True):
         # commit returns. Preservation cases snapshot the complete synthetic
         # Git database, so keep that setup-owned writer out of their measured
         # interval without excluding any path from strict equality.
-        git(repo, "-c", "maintenance.auto=false", "commit", "-qm", "base")
+        git(repo, "commit", "-qm", "base")
     return repo
 
 
@@ -952,14 +956,60 @@ def a_tracked_receipt_recomputable(tmp):
     check(r.returncode == 0, f"expected exit 0, got {r.returncode}", r)
     rc = receipt(repo)
     check(rc and rc["verdict"] == "VERIFIED", f"bad receipt {rc}", r)
-    d = git(repo, "-c", "core.quotepath=false", "-c", "diff.noprefix=false",
-            "-c", "diff.mnemonicPrefix=false", "-c", "diff.interHunkContext=0",
-            "diff", "--no-ext-diff", "--no-color", "--no-textconv", "-U3",
-            "HEAD", "--", ".", ":(exclude)CARD.receipt.json")
+    # The gate hashes git's raw stdout bytes. Recomputing through Python text
+    # mode would apply universal-newline translation and silently drop CR
+    # bytes, so any diff carrying CRLF -- an ordinary Windows checkout -- would
+    # "fail" recomputation while the receipt binding was in fact correct.
+    # Recompute from the same bytes the gate hashed.
+    d = subprocess.run(
+        ["git", "-C", str(repo), "-c", "maintenance.auto=false",
+         "-c", "core.quotepath=false", "-c", "diff.noprefix=false",
+         "-c", "diff.mnemonicPrefix=false", "-c", "diff.interHunkContext=0",
+         "diff", "--no-ext-diff", "--no-color", "--no-textconv", "-U3",
+         "HEAD", "--", ".", ":(exclude)CARD.receipt.json"],
+        capture_output=True, env=scrubbed_env())
+    check(d.returncode == 0, f"could not recompute receipt diff: {d.stderr!r}", r)
     import hashlib
-    recomputed = hashlib.sha256(d.stdout.encode("utf-8")).hexdigest()
+    recomputed = hashlib.sha256(d.stdout).hexdigest()
     check(recomputed == rc["diff_sha"],
           f"diff_sha not recomputable: recorded {rc['diff_sha'][:12]} vs "
+          f"recomputed {recomputed[:12]}", r)
+
+
+def a_tracked_receipt_recomputable_crlf(tmp):
+    """PR #48 Phase B: the same binding must hold when the pinned diff carries
+    CR bytes. This reproduces, platform-independently, the mechanism behind the
+    retained Windows baseline red: the gate hashes raw bytes, so any
+    recomputation that reads git through text mode disagrees the moment a CRLF
+    working tree is diffed."""
+    repo = make_repo(tmp)
+    (repo / "CARD.receipt.json").write_text("{}", encoding="utf-8")
+    git(repo, "add", "CARD.receipt.json")
+    git(repo, "commit", "-qm", "track receipt")
+    (repo / "crlf.txt").write_bytes(b"first line\r\nsecond line\r\n")
+    git(repo, "-c", "core.autocrlf=false", "-c", "core.safecrlf=false", "add", "crlf.txt")
+    git(repo, "-c", "core.autocrlf=false", "commit", "-qm", "crlf base")
+    (repo / "crlf.txt").write_bytes(b"first line\r\nsecond line\r\nthird line\r\n")
+    write_card(repo)
+    (repo / "CARD.close").write_text("CLOSE", encoding="utf-8")
+    r = run_gate(repo)
+    check(r.returncode == 0, f"expected exit 0, got {r.returncode}", r)
+    rc = receipt(repo)
+    check(rc and rc["verdict"] == "VERIFIED", f"bad receipt {rc}", r)
+    d = subprocess.run(
+        ["git", "-C", str(repo), "-c", "maintenance.auto=false",
+         "-c", "core.quotepath=false", "-c", "diff.noprefix=false",
+         "-c", "diff.mnemonicPrefix=false", "-c", "diff.interHunkContext=0",
+         "diff", "--no-ext-diff", "--no-color", "--no-textconv", "-U3",
+         "HEAD", "--", ".", ":(exclude)CARD.receipt.json"],
+        capture_output=True, env=scrubbed_env())
+    check(d.returncode == 0, f"could not recompute receipt diff: {d.stderr!r}", r)
+    check(b"\r" in d.stdout,
+          "this case is inert unless the pinned diff actually carries CR bytes", r)
+    import hashlib
+    recomputed = hashlib.sha256(d.stdout).hexdigest()
+    check(recomputed == rc["diff_sha"],
+          f"CRLF diff_sha not recomputable: recorded {rc['diff_sha'][:12]} vs "
           f"recomputed {recomputed[:12]}", r)
 
 
@@ -1941,6 +1991,8 @@ CASES = [
     ("allow: honest close survives OMAMA_VERIFY_TIMEOUT typo", a_honest_bad_timeout),
     ("block: OMAMA_VERIFY_TIMEOUT typo blocks CLOSE-intent, named", b_bad_timeout_close),
     ("allow: tracked receipt stays diff_sha-recomputable", a_tracked_receipt_recomputable),
+    ("allow: tracked receipt stays diff_sha-recomputable with a CRLF diff",
+     a_tracked_receipt_recomputable_crlf),
     ("block: removed untracked file named in UNEXPECTED-CHANGE", b_unexpected_untracked_removed),
     ("block: mutate + --assume-unchanged mid-verify", b_assume_unchanged_mid),
     ("block: pre-seeded assume-unchanged at H1", b_assume_preseed),

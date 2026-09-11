@@ -1,10 +1,12 @@
 """PEP 517 backend that generates, validates, and then removes build payloads."""
 
+import contextlib
 import hashlib
 import json
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 from setuptools import build_meta as _setuptools
@@ -27,10 +29,30 @@ def _sha256(data):
     return hashlib.sha256(data).hexdigest()
 
 
+BUILD_LOCK = ROOT / ".omama-build.lock"
+
+
 def _git(*args):
     command = ["git", "-c", "safe.directory=" + ROOT.as_posix()] + list(args)
     result = subprocess.run(command, cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     return result.stdout.strip() if result.returncode == 0 else None
+
+
+def _git_owns_source_root():
+    """True only when Git's top level is this source root.
+
+    Git searches upwards, so building from a source tree that merely sits
+    inside some other repository -- an extracted archive, a vendored copy --
+    otherwise reports that unrelated repository's HEAD as Omama's own clean
+    revision.  A revision is claimed only when Git is describing this tree.
+    """
+    toplevel = _git("rev-parse", "--show-toplevel")
+    if not toplevel:
+        return False
+    try:
+        return Path(toplevel).resolve() == ROOT.resolve()
+    except OSError:
+        return False
 
 
 def _identity_inputs_digest():
@@ -59,9 +81,15 @@ def _identity():
                 "modified_after_identity_capture": True,
             })
             return value
-    revision = _git("rev-parse", "HEAD") or "unknown"
-    status = _git("status", "--porcelain=v1", "--untracked-files=all")
-    dirty = status is None or bool(status)
+    if _git_owns_source_root():
+        revision = _git("rev-parse", "HEAD") or "unknown"
+        status = _git("status", "--porcelain=v1", "--untracked-files=all")
+        dirty = status is None or bool(status)
+    else:
+        # Not a Git checkout of this project: the revision is unavailable, and
+        # an enclosing repository's revision is never borrowed.
+        revision = "unknown"
+        dirty = True
     return {
         "schema": 1,
         "url": UPSTREAM_URL,
@@ -183,24 +211,69 @@ def _cleanup_payload():
         shutil.rmtree(str(PAYLOAD))
 
 
-def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
-    _generate_payload()
+def _discard_stale_build_output():
+    """Remove this project's own setuptools staging before generating anew.
+
+    setuptools copies package files into ``build/lib`` and never removes files
+    that have since disappeared from the source, so a payload entry deleted or
+    renamed between builds would otherwise be carried into the next wheel.
+    Only this project's own gitignored build directory is removed, and only
+    while the build lock is held.
+    """
+    build_root = ROOT / "build"
+    if build_root.is_dir() and not build_root.is_symlink():
+        shutil.rmtree(str(build_root))
+
+
+@contextlib.contextmanager
+def _build_lock():
+    """Serialize payload generation and staging within one source tree.
+
+    Payload generation writes to a fixed location inside the package, so two
+    overlapping builds of the same checkout would otherwise interleave their
+    generation and cleanup.  The lock makes them sequential; neither observes
+    the other's partial state, and the source tree is unchanged afterwards.
+    """
+    deadline = time.monotonic() + 600
+    while True:
+        try:
+            descriptor = os.open(str(BUILD_LOCK), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            break
+        except FileExistsError:
+            if time.monotonic() > deadline:
+                raise RuntimeError(
+                    "another build of this source tree has held {0} for more than 600s; "
+                    "remove it only after confirming no build is running".format(BUILD_LOCK))
+            time.sleep(0.05)
     try:
-        return _setuptools.build_wheel(wheel_directory, config_settings, metadata_directory)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(json.dumps({"pid": os.getpid()}) + "\n")
+        yield
     finally:
-        _cleanup_payload()
+        try:
+            os.unlink(str(BUILD_LOCK))
+        except FileNotFoundError:
+            pass
+
+
+def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
+    with _build_lock():
+        _discard_stale_build_output()
+        _generate_payload()
+        try:
+            return _setuptools.build_wheel(wheel_directory, config_settings, metadata_directory)
+        finally:
+            _cleanup_payload()
 
 
 def build_sdist(sdist_directory, config_settings=None):
-    source = _generate_payload()
-    with IDENTITY_FILE.open("w", encoding="utf-8", newline="\n") as stream:
-        stream.write(json.dumps(source, indent=2, sort_keys=True) + "\n")
-    try:
-        return _setuptools.build_sdist(sdist_directory, config_settings)
-    finally:
-        _cleanup_payload()
-        if IDENTITY_FILE.exists():
-            IDENTITY_FILE.unlink()
+    # Phase-1 delivery is wheel-only.  No sdist is produced and no wheel/sdist
+    # equivalence is claimed; whether a public release requires a source
+    # distribution is a separate, later decision.
+    raise RuntimeError(
+        "phase-1 Omama delivery is wheel-only: no source distribution is built, and no "
+        "wheel-to-sdist equivalence is claimed. Build the wheel instead."
+    )
 
 
 def prepare_metadata_for_build_wheel(metadata_directory, config_settings=None):

@@ -70,8 +70,11 @@ fonte, versão do pacote, licença, identidade do bundle e hashes por arquivo. E
   work-order e templates inertes de starter/PLAN/REVIEW, preservando conteúdo existente;
 - acrescenta caminhos locais/de evidência ao `.gitignore` apenas quando o Git confirma que
   o ignore resultante é efetivo; e
-- ativa `core.hooksPath=.githooks` local por último e roda doctor mais admissão obrigatória
-  a partir dos bytes instalados antes de registrar estado completo.
+- roda **primeiro, em privado**, todas as verificações de inventário do doctor que não
+  dependem de ativação e a admissão obrigatória completa a partir dos bytes instalados;
+  em seguida ativa `core.hooksPath=.githooks` local; e só então roda o doctor completo,
+  ciente da ativação, antes de registrar o estado completo. Uma instalação que falha nunca
+  deixa hooks ativos.
 
 O init imprime instruções para adotar o starter e o bloco por operador de output-discipline;
 não cria `CLAUDE.md` nem grava esse bloco em configuração de usuário.

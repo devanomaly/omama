@@ -1,11 +1,11 @@
 """Conflict-safe project settings, privacy bootstrap, ignore, and Git activation."""
 
-import fnmatch
 import hashlib
 import json
 import os
 import stat
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -146,35 +146,75 @@ def _decode_gitignore(path):
         raise InstallError("gitignore-not-utf8", ".gitignore is not UTF-8 and cannot be merged safely")
 
 
-def _negation_may_match(base, line, target_relative):
-    pattern = line[1:].strip()
-    if not pattern or pattern.startswith("#"):
-        return False
-    relative = Path(target_relative).as_posix()
+# Git is the effective-ignore authority.  A second, independent matcher cannot
+# agree with Git in every case, and the one that used to live here produced
+# false refusals: it rejected an excluded parent directory, which Git accepts.
+IGNORE_CONTROL_CHARACTERS = tuple(chr(code) for code in list(range(0, 32)) + [127])
+# Characters Git reads as pattern syntax rather than as part of a path.  A
+# tokens_file value carrying any of them is refused before any write, so a
+# team-configured path can never inject an ignore rule or a filename.
+IGNORE_PATTERN_CHARACTERS = ("*", "?", "[", "]", "!", "#", "\\")
+
+
+def validate_ignore_token(token):
+    found = sorted({
+        char for char in token
+        if char in IGNORE_CONTROL_CHARACTERS or char in IGNORE_PATTERN_CHARACTERS
+    })
+    if found:
+        raise InstallError(
+            "unsafe-tokens-path",
+            "tokens_file contains character(s) Git reads as ignore-pattern syntax or control "
+            "characters ({0}); use a plain relative file path without wildcards, negation, "
+            "comment or control characters".format(", ".join(repr(char) for char in found)),
+        )
+    if token != token.strip() or token.endswith("/"):
+        raise InstallError(
+            "unsafe-tokens-path",
+            "tokens_file must be a plain relative file path without surrounding whitespace "
+            "or a trailing slash",
+        )
+    return token
+
+
+def _would_be_ignored(root, lines, relative):
+    """Ask Git whether ``relative`` is ignored when ``lines`` are in force.
+
+    The candidate patterns are supplied through ``core.excludesFile``, which
+    Git ranks below every ``.gitignore`` in the tree.  A path that is still not
+    ignored under that ranking is being re-included by a real negation, which
+    is exactly the conflict this refuses; an excluded parent directory answers
+    "ignored" here, as Git intends.
+    """
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".excludes", delete=False) as handle:
+        handle.write("\n".join(lines) + "\n")
+        candidate = handle.name
     try:
-        scoped = Path(relative).relative_to(base).as_posix() if str(base) != "." else relative
-    except ValueError:
-        return False
-    pattern = pattern.lstrip("/")
-    if pattern.endswith("/"):
-        return scoped == pattern[:-1] or scoped.startswith(pattern)
-    if "/" not in pattern:
-        return any(fnmatch.fnmatch(part, pattern) for part in Path(scoped).parts)
-    return fnmatch.fnmatch(scoped, pattern)
+        result = subprocess.run(
+            ["git", "-C", str(root), "-c", "core.excludesFile=" + candidate,
+             "check-ignore", "--no-index", "--quiet", "--", relative],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+    finally:
+        try:
+            os.unlink(candidate)
+        except OSError:
+            pass
+    if result.returncode not in (0, 1):
+        raise InstallError("git-inspection", "cannot evaluate effective ignore rules for {0}".format(relative))
+    return result.returncode == 0
 
 
-def _check_nested_negations(root, paths):
-    for relative in paths:
-        parent = (root / relative).parent
-        while parent != root and root in parent.parents:
-            ignore = parent / ".gitignore"
-            if ignore.is_file():
-                text = _decode_gitignore(ignore)
-                base = parent.relative_to(root)
-                for line in text.splitlines():
-                    if line.lstrip().startswith("!") and _negation_may_match(base, line.lstrip(), relative):
-                        raise InstallError("ignore-negation-conflict", "nested ignore negation may re-include sensitive path {0}: {1}".format(relative, ignore.relative_to(root).as_posix()))
-            parent = parent.parent
+def _check_effective_ignore(root, table):
+    lines = [line for line, _representative in table]
+    for line, representative in table:
+        if not _would_be_ignored(root, lines, representative):
+            raise InstallError(
+                "ignore-negation-conflict",
+                "a nested .gitignore negation re-includes the sensitive path {0}; Git would not "
+                "ignore it even with the rule {1!r} in force. Remove or scope that negation "
+                "before init.".format(representative, line),
+            )
 
 
 def _tracked(target, relative):
@@ -216,6 +256,10 @@ def _privacy_config(plan):
         return None
     if not isinstance(token, str) or not token.strip() or "\\" in token:
         raise InstallError("unsafe-tokens-path", "tokens_file must be null/omitted or a nonempty forward-slash relative path")
+    # Refused before any write: this value becomes both a .gitignore rule and a
+    # filesystem path, so ignore-pattern syntax and control characters in it
+    # would inject rules and filenames into the adopter's repository.
+    validate_ignore_token(token)
     try:
         safe_destination(root, token)
     except TargetError as exc:
@@ -250,21 +294,56 @@ def _effective_hooks_directory(target):
     return path.resolve()
 
 
+# githooks(5).  Only a real hook name can be executed by Git, so only a real
+# hook name can be displaced by activation or made live by it.
+GIT_HOOK_NAMES = frozenset((
+    "applypatch-msg", "pre-applypatch", "post-applypatch", "pre-commit",
+    "pre-merge-commit", "prepare-commit-msg", "commit-msg", "post-commit",
+    "pre-rebase", "post-checkout", "post-merge", "pre-push", "pre-receive",
+    "update", "proc-receive", "post-receive", "post-update",
+    "reference-transaction", "push-to-checkout", "pre-auto-gc", "post-rewrite",
+    "sendemail-validate", "fsmonitor-watchman", "p4-changelist",
+    "p4-prepare-changelist", "p4-post-changelist", "p4-pre-submit",
+    "post-index-change",
+))
+
+
 def _active_hooks(directory):
     if not directory.is_dir():
         return []
     active = []
     for path in directory.iterdir():
-        if path.name.endswith(".sample"):
+        if path.name.endswith(".sample") or path.name not in GIT_HOOK_NAMES:
             continue
         try:
             info = path.lstat()
         except OSError:
+            # An unreadable entry with a real hook name stays a caution.
             active.append(path.name)
             continue
         if path.is_symlink() or (stat.S_ISREG(info.st_mode) and info.st_size > 0 and (os.name == "nt" or info.st_mode & 0o111)):
             active.append(path.name)
     return sorted(active)
+
+
+def bundle_hook_names(bundle):
+    """Hook names this bundle owns in the destination ``.githooks``."""
+    return sorted(
+        Path(entry["destination"]).name
+        for entry in bundle.manifest["files"]
+        if str(entry["destination"]).startswith(".githooks/")
+    )
+
+
+def unknown_destination_hooks(target, bundle):
+    """Real hook names in ``.githooks`` that activation would make live.
+
+    Activation changes what Git executes.  A hook this bundle does not own must
+    not become live as a side effect of adopting omama: that is an expansion of
+    what the repository is authorized to run, and it requires a human decision.
+    """
+    owned = set(bundle_hook_names(bundle))
+    return [name for name in _active_hooks(target.root / ".githooks") if name not in owned]
 
 
 def _activation_plan(target):
@@ -300,6 +379,14 @@ def _activation_plan(target):
 
 def preflight_wiring(plan, interpreter, no_git_config=False):
     target = plan.target
+    unknown = unknown_destination_hooks(target, plan.bundle)
+    if unknown:
+        raise InstallError(
+            "unknown-destination-hook",
+            "activation would make hook(s) this bundle does not own live in .githooks: {0}; "
+            "review them and move or remove them deliberately before init"
+            .format(", ".join(unknown)),
+        )
     command = managed_command(interpreter)
     local, settings_changed = _settings_plan(target, command)
     token = _privacy_config(plan)
@@ -319,17 +406,23 @@ def preflight_wiring(plan, interpreter, no_git_config=False):
         if _tracked(target, relative):
             raise InstallError("tracked-local-state", "sensitive/local path is tracked: {0}".format(relative))
 
-    ignore_paths = [
-        "CARD.yaml", "CARD.close", "CARD.review.md", "CARD.receipt.json",
-        "fixture.receipt.json", LOCAL_SETTINGS, ".omama/state.json",
+    # One table: each rule and the exact path used to prove that rule is
+    # effective.  Two parallel lists cannot be kept in agreement, and the
+    # written rules are what Git is asked about.
+    ignore_table = [
+        ("CARD.yaml", "CARD.yaml"),
+        ("CARD.close", "CARD.close"),
+        ("CARD.review.md", "CARD.review.md"),
+        ("CARD.receipt.json", "CARD.receipt.json"),
+        ("*.receipt.json", "fixture.receipt.json"),
+        (LOCAL_SETTINGS, LOCAL_SETTINGS),
+        (".omama/", ".omama/state.json"),
     ]
     if token:
-        ignore_paths.append(token)
-    _check_nested_negations(target.root, ignore_paths)
-    ignore_lines = [
-        "CARD.yaml", "CARD.close", "CARD.review.md", "CARD.receipt.json",
-        "*.receipt.json", LOCAL_SETTINGS, ".omama/",
-    ] + ([token] if token else [])
+        ignore_table.append((token, token))
+    _check_effective_ignore(target.root, ignore_table)
+    ignore_paths = [representative for _line, representative in ignore_table]
+    ignore_lines = [line for line, _representative in ignore_table]
     current_ignore = _decode_gitignore(target.root / GITIGNORE)
     present = {line.strip() for line in current_ignore.splitlines() if line.strip() and not line.lstrip().startswith("#")}
     missing = [line for line in ignore_lines if line not in present]
@@ -394,11 +487,22 @@ def finish_wiring(transaction, wiring):
     for relative in (".githooks/pre-commit", ".githooks/pre-merge-commit", ".githooks/privacy-pre-commit"):
         if not (transaction.plan.target.root / relative).is_file():
             raise InstallError("privacy-wiring-incomplete", "required privacy hook is missing before activation: {0}".format(relative))
-    if wiring.activation_required and not wiring.no_git_config:
-        transaction.activate_hooks_path(wiring.config_before)
-        value = _git_config_value(transaction.plan.target)
-        candidate = Path(value) if value else None
-        if candidate is not None and not candidate.is_absolute():
-            candidate = transaction.plan.target.root / candidate
-        if candidate is None or candidate.resolve() != (transaction.plan.target.root / ".githooks").resolve():
-            raise InstallError("git-config-activation", "core.hooksPath is not effectively .githooks after activation")
+
+
+def activate_wiring(transaction, wiring):
+    """Publish repository-local activation.
+
+    Activation is deliberately separate from publication: it runs only after
+    private admission has passed, so a failing installation never makes hooks
+    live in the adopter's repository while its own state is still incomplete.
+    """
+    if not (wiring.activation_required and not wiring.no_git_config):
+        return False
+    transaction.activate_hooks_path(wiring.config_before)
+    value = _git_config_value(transaction.plan.target)
+    candidate = Path(value) if value else None
+    if candidate is not None and not candidate.is_absolute():
+        candidate = transaction.plan.target.root / candidate
+    if candidate is None or candidate.resolve() != (transaction.plan.target.root / ".githooks").resolve():
+        raise InstallError("git-config-activation", "core.hooksPath is not effectively .githooks after activation")
+    return True

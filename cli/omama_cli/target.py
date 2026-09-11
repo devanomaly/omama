@@ -57,6 +57,29 @@ def routing_names(environ=None):
     )
 
 
+# Per-command Git configuration for fixture-owned scratch repositories.  These
+# are passed as ``git -c`` arguments, never as environment variables: the
+# installed receipt gate refuses inherited ``GIT_CONFIG_*`` routing, and that
+# accepted guard is not weakened to make isolation pass.  Only Git reads them,
+# so the interpreter's HOME, XDG and user-site selection are untouched and the
+# dependency the gate imports is unchanged.
+GIT_SCRATCH_PINS = (
+    "commit.gpgsign=false",
+    "tag.gpgsign=false",
+    "core.autocrlf=false",
+    "core.safecrlf=false",
+    "init.templateDir=",
+)
+
+
+def git_scratch_command(repository, *arguments):
+    """``git`` argv for a scratch repository with adopter inputs neutralized."""
+    pinned = []
+    for pin in GIT_SCRATCH_PINS:
+        pinned.extend(["-c", pin])
+    return ["git", "-C", str(repository)] + pinned + list(arguments)
+
+
 def validate_command_path(path):
     text = Path(path).as_posix()
     found = [char for char in UNSAFE_SHELL_CHARS if char in text]
