@@ -7,24 +7,125 @@
 *In Yanomami cosmology, Omama is the demiurge who gave the world its shape and its rules — a
 fitting name for a toolkit whose job is to give shape and rules to agent behavior.*
 
-**Fastest path: [QUICKSTART.md](QUICKSTART.md)** — build and install the local wheel,
-initialize a synthetic or adopting repository, inspect it with doctor, then dispatch.
-
 **A rule without enforcement is a wish.**
+
+## The problem, and what Omama does about it
+
+You hand a coding agent a task. It comes back with "done — tests pass." Which tests? Run
+on which tree? Before or after the last edit? If nothing forces the answer, "done" is a
+sentence, and you either reread the whole diff or take the sentence on faith.
+
+Omama makes a declared completion carry inspectable verification evidence, per task:
+
+- **The task enters as a card.** A dozen lines of YAML: the goal, what the diff must not
+  touch, a risk tier, an observable done-when, and **one** shell command that proves it
+  (`verify`). A validator rejects a card whose `verify` cannot fail (`true`, `echo ok`),
+  and a bugfix card without an attached reproduction.
+- **A human ratifies the card before dispatch.** The agent may propose the tier and the
+  command; a person decides that the command actually proves the goal. Nothing in Omama
+  can make that call.
+- **The close is declared, and the gate re-runs the proof.** When the agent writes `CLOSE`
+  to `CARD.close` and stops, a Claude Code Stop hook re-runs the card's own `verify`
+  against the current tree, hashes the tree before and after, and writes
+  `CARD.receipt.json`: command, exit code, verdict, commit, diff hash, timestamp. A red
+  `verify` blocks the close with the failing output. Only the gate writes `VERIFIED`; an
+  honest `FAILED: <reason>` close is always allowed and leaves a receipt too.
+
+**What a receipt establishes.** The command you ratified exited 0 on the tree the receipt
+names. **What it does not establish:** that the command was the right proof for the goal,
+or that the diff is good — that stays your read of the card and the diff. Omama moves
+the question from "did the agent run something?" to "was this the right thing to run?",
+which is a question a human can answer.
+
+**Host scope, up front.** The per-task loop is built for **Claude Code** (a `Stop` hook for
+the receipt gate, a `PreToolUse` hook for the optional test guard) plus **Git** hooks for
+the secrets scan; the validators are plain Python scripts any pipeline can call. No other
+coding agent is integrated. Measured on Linux, macOS and Windows (Git Bash is the hook
+shell on Windows). The installer is a wheel you build from this checkout; there is no
+published package.
+
+| I want to… | Go to |
+|---|---|
+| Understand the workflow | [How a task closes](#how-a-task-closes), then [the seed loop](#the-seed-loop-card--receipt--structured-artifact) |
+| Install and run my first task | [QUICKSTART.md](QUICKSTART.md) — build the wheel, initialize a disposable repository, close one real card, read its receipt |
+| Inspect or troubleshoot an installation | [What doctor actually checks](QUICKSTART.md#r3-what-doctor-actually-checks) · [Exits and reruns](QUICKSTART.md#r2-read-exits-and-reruns-correctly) · [Manual recovery](cli/RECOVERY.md) |
+
+## How a task closes
+
+The whole per-task surface, on a two-file repository where `greet("World")` returns
+`Hello World` and the test expects `Hello, World!` (this is the card
+[QUICKSTART.md](QUICKSTART.md) walks through end to end):
+
+```yaml
+# CARD.yaml (gitignored; one per task, per machine)
+goal: greet("World") returns "Hello, World!" (comma and exclamation mark), as test_greet.py already expects.
+non_goals:
+  - editing test_greet.py
+  - adding any other file or function
+tier: S1
+task_type: bugfix
+done_when:
+  - test_greet.py passes
+verify: python3 -B -m unittest -q test_greet
+repro:
+  - "python3 -B -m unittest -q test_greet fails with AssertionError: 'Hello World' != 'Hello, World!'"
+```
+
+(On Windows the gate runs `verify` through `cmd.exe`, so the same card spells the launcher
+`py -3`; the quickstart says why.) A human runs the validator (`OK: CARD.yaml is a valid
+card`), ratifies `tier` and `verify`, and dispatches Claude Code with one instruction: *Implement CARD.yaml at the repository
+root. When its ratified work is complete, write CLOSE to CARD.close and stop.*
+
+If the agent closes while the test still fails, the Stop hook blocks and feeds the reason
+back to the agent:
+
+```text
+RECEIPT-GATE BLOCK[VERIFY-RED]: verify exited 1 on the current tree.
+--- verify output tail ---
+AssertionError: 'Hello World' != 'Hello, World!'
+...
+fix and re-close, or declare an honest FAILED in CARD.close ("FAILED: <reason>")
+```
+
+When the test passes, the gate consumes `CARD.close` and writes the receipt:
+
+```json
+{
+ "command": "python3 -B -m unittest -q test_greet",
+ "exit": 0,
+ "verdict": "VERIFIED",
+ "rev": "<commit the proof ran on>",
+ "patch_id": "<git patch-id of the uncommitted diff at close>",
+ "diff_sha": "<sha256 of that diff>",
+ "diff_hash": "<sha256 of the whole hash material>",
+ "timestamp": "<UTC>"
+}
+```
+
+`rev` and `diff_sha` are recomputable on the same checkout while the tree exists. The
+durable record for review is the command, the exit and the `rev`, pasted into the PR body;
+the receipt file itself never leaves the machine.
+
+**What stays yours.** Ratifying the tier. Deciding that `verify` proves `goal` — a real but
+irrelevant command validates and closes green. Reading the diff. Adopting the close rule
+into the repository's `CLAUDE.md` (the installer never writes it). And every residual each
+piece names in its "What it does NOT catch" section.
+
+## The smallest sufficient harness
 
 Omama is a small set of deterministic guardrails for working with coding agents: hooks,
 validators, and scripts with exit codes — not CLAUDE.md prose an agent can rationalize its way
 around under pressure. Every piece ships with a fixture that proves it fails red before it passes
 green, and every README documents its own known gaps instead of hiding them.
 
-**The smallest sufficient harness.** Omama bets that the best harness is the least harness
-that still holds: the common path per task is one slim card (a dozen lines of YAML), ONE
-`verify` command, and a receipt written at close — nothing else. Rigor is bought by tier, not
-paid by default: only S3 cards require a review artifact before VERIFIED. Verification is the
-cheapest sufficient proof for the risk, never a fixed ritual. This shape is subtractive by
-construction — an adversarial review killed most of what was originally built, and the cut
-pieces ([05, 06, 07](#piece-numbers-nn-legend)) are named, not hidden. If a piece here costs
-more attention than the failure it prevents, that's a bug in Omama — file it.
+Omama bets that the best harness is the least harness that still holds: the common path per
+task is one slim card (a dozen lines of YAML), ONE `verify` command, and a receipt written at
+close — nothing else. Rigor is bought by tier, not paid by default: only S3 cards require a
+review artifact before VERIFIED. Verification is the cheapest sufficient proof for the risk,
+never a fixed ritual. This shape is subtractive by construction — an adversarial review killed
+most of what was originally built, and the cut pieces ([05, 06, 07](#piece-numbers-nn-legend))
+are named, not hidden. If a piece here costs more attention than the failure it prevents,
+that's a bug in Omama — file it.
 
 **No efficacy claim is made here.** What's proven is the mechanics (red-green fixtures, an
 external adversarial review process that converged on what to measure) and nothing more. Where a
@@ -104,6 +205,15 @@ replace that privacy interpreter.
 The standalone pieces retain their documented prerequisites. In particular,
 **work-order** and **receipt-gate** need PyYAML, and **protect-tests** needs Node.js.
 
+**What lives where.** Per repository (committed, shared by the team): the vendored scripts
+under `tools/omama/`, the Git hook chainers under `.githooks/`, the deny policy, the card and
+artifact templates, and the close rule you adopt into `CLAUDE.md`. Per machine (per clone,
+ignored): `.omama/` runtime and state, the Stop wiring in `.claude/settings.local.json`,
+the repository-local `core.hooksPath`, the literal-tokens file, and every card, close token
+and receipt. Every clone and every linked worktree runs `omama init` for itself. Per
+operator: ratifying tiers and `verify`, and the optional output-discipline block you may copy
+into your own global `CLAUDE.md` — the installer prints it and never writes it.
+
 ## Principles (why these pieces)
 
 A rule without enforcement is a wish — every piece is a hook, a validator, or a script with an
@@ -159,11 +269,12 @@ counted built-artifact CLI integration, ran and passed. The measured platform/bu
 remaining limits are summarized in the Quickstart; synthetic shell admission is not evidence
 that a real Claude host loaded project settings.
 
-At frozen CLI source revision `efa675869f42ebcd8d9204dcfbc0f5b34c3babe7`, that runner
-reported `9 ok, 0 failed, 0 not-run` on Ubuntu/Python 3.8, Ubuntu/Python 3.11,
-macOS/Python 3.11, and Windows/Python 3.11. Its counted CLI entry contains six suites and
-74 tests at that revision, including nine runtime tests; CI exposes the nine-entry parent
-summary rather than a distinct artifact hash or log for each child suite.
+*Historical record, not a current count:* at frozen CLI source revision
+`efa675869f42ebcd8d9204dcfbc0f5b34c3babe7`, that runner reported `9 ok, 0 failed, 0 not-run`
+on Ubuntu/Python 3.8, Ubuntu/Python 3.11, macOS/Python 3.11, and Windows/Python 3.11. Its
+counted CLI entry contained six suites and 74 tests at that revision, including nine runtime
+tests; CI exposes the nine-entry parent summary rather than a distinct artifact hash or log
+for each child suite. The badge above reports the current default branch.
 
 ## License
 
