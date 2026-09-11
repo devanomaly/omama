@@ -5,7 +5,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"C:/Program Files/Python310/python.exe\" \"$CLAUDE_PROJECT_DIR/receipt-gate/receipt_gate.py\""
+            "command": "\"C:/Program Files/Python310/python.exe\" \"$CLAUDE_PROJECT_DIR/receipt-gate/receipt_gate.py\"",
+            "timeout": 3900
           }
         ]
       }
