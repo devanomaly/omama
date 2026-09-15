@@ -58,8 +58,12 @@ Plain git repo (no `pre-commit` framework):
    cp pre-commit <REPO_ROOT>/.git/hooks/pre-commit
    chmod +x <REPO_ROOT>/.git/hooks/pre-commit
    ```
-   On Windows, git for Windows already runs `.sh`-style hooks via its
-   bundled Git Bash — no `chmod` needed.
+   On Windows, `chmod` cannot set the bit on disk and Git for Windows runs
+   the hook regardless — for a hook under `.git/hooks/` that is the end of
+   it. For a *versioned* hook (the `.githooks` route above) it is not: a
+   plain `git add` records the file as `100644`, and Git on every POSIX
+   clone then skips it with only a `hint:` line. Stage it with the bit
+   stated: `git add --chmod=+x .githooks/pre-commit`.
 
    **(c) If `scan_staged.py` is not at the repo root**, point the hook
    at it with `PRIVACY_HOOK_SCANNER` instead of editing the wrapper.

@@ -160,6 +160,12 @@ configuração, nomeia cada linha dinâmica pulada e retorna incompleto/2, a men
 que uma violação conhecida faça o 1 dominar. Cobertura estática nunca se
 apresenta como aprovação dinâmica completa.
 
+O doctor também lê o modo que o Git registra para os três hooks em `.githooks/`, em todas as
+plataformas: no Windows o bit de execução não pode ser gravado no disco, e um hook
+registrado como `100644` é ignorado pelo Git em clones POSIX com apenas um `hint:`. Hook ainda
+não rastreado é `WARNING`; modo registrado errado é `VIOLATION`; ambos nomeiam o remédio
+(`git update-index --chmod=+x` nos três hooks, precedido de `chmod +x` em POSIX).
+
 ## Distribuição e proveniência
 
 A entrega piloto da fase 1 é **somente wheel**. O backend de build produz uma

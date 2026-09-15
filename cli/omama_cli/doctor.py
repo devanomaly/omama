@@ -447,6 +447,59 @@ def _probe_managed_gate(wiring_checker, expected_command, target, report):
         report.add("OK", "settings-execution", "trusted installed certified parser executed only the identified managed gate; BAD-INPUT response verified")
 
 
+HOOK_PATHS = (".githooks/pre-commit", ".githooks/pre-merge-commit", ".githooks/privacy-pre-commit")
+
+
+def hook_mode_remedy():
+    """The one-line fix for hooks Git records without the executable bit.
+
+    On Windows os.chmod cannot set the bit and core.fileMode is false, so the
+    index is the only place it can be stated; on POSIX the working file must
+    carry it too, or the tree stays mode-dirty after the index is fixed.
+    """
+    paths = " ".join(HOOK_PATHS)
+    if os.name == "nt":
+        return "git update-index --chmod=+x " + paths
+    return "chmod +x {0} && git update-index --chmod=+x {0}".format(paths)
+
+
+def _git_lines(target, *args):
+    result = subprocess.run(
+        ["git", "-C", str(target.root)] + list(args),
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", errors="replace", check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return [ln for ln in result.stdout.splitlines() if ln.strip()]
+
+
+def _index_mode(target, relative):
+    """Mode Git records for a path: "100755"-style; None when untracked;
+    "conflict" when the index holds merge stages instead of one stage-0 entry.
+
+    The index is what a clone receives, and on Windows it is the only place
+    the executable bit can be expressed at all -- os.chmod cannot set it and
+    core.fileMode is false, so the filesystem check says nothing there.
+    """
+    rows = _git_lines(target, "ls-files", "--stage", "--", relative)
+    if not rows:
+        return None
+    parsed = [r.split() for r in rows]
+    stage0 = [f for f in parsed if len(f) >= 4 and f[2] == "0"]
+    if len(stage0) != 1:
+        return "conflict"
+    return stage0[0][0]
+
+
+def _head_mode(target, relative):
+    """Mode HEAD records for a path, or None (unborn HEAD, or path absent)."""
+    rows = _git_lines(target, "ls-tree", "HEAD", "--", relative)
+    if not rows:
+        return None
+    return rows[0].split()[0]
+
+
 def _probe_validator(interpreter, validator, scratch, report):
     valid = scratch / "valid-card.yaml"
     invalid = scratch / "invalid-card.yaml"
@@ -537,6 +590,7 @@ def _privacy(target, by_destination, interpreter, static_only, scratch, report, 
         "tools/omama/privacy-hook/scan_staged.py": "immutable",
     }
     privacy_trusted = bool(base_trusted)
+    modes_verified = True
     for destination in required:
         path = _trusted_path(target, by_destination, destination)
         if path is None:
@@ -544,14 +598,47 @@ def _privacy(target, by_destination, interpreter, static_only, scratch, report, 
             report.add("VIOLATION", "privacy-component", "missing or drifted: {0}".format(destination))
             continue
         data = path.read_bytes()
-        if destination.startswith(".githooks/") and (b"\r\n" in data or not data.endswith(b"\n")):
-            privacy_trusted = False
-            report.add("VIOLATION", "privacy-mode", "hook is not LF/terminal-newline clean: {0}".format(destination))
-        elif os.name != "nt" and destination.startswith(".githooks/") and not (path.stat().st_mode & 0o111):
-            privacy_trusted = False
-            report.add("VIOLATION", "privacy-mode", "hook is not executable: {0}".format(destination))
+        if destination.startswith(".githooks/"):
+            if b"\r\n" in data or not data.endswith(b"\n"):
+                privacy_trusted = False
+                report.add("VIOLATION", "privacy-mode", "hook is not LF/terminal-newline clean: {0}".format(destination))
+            # Deliberately NOT chained to the LF check: a CRLF-dirty hook
+            # must not mask a hook Git will refuse to run.
+            index_mode = _index_mode(target, destination)
+            if index_mode is None:
+                modes_verified = False
+                report.add("WARNING", "privacy-mode",
+                           "hook is not yet tracked, so the mode a clone would receive is not "
+                           "recorded: {0}. When you commit the hooks, run: {1}".format(
+                               destination, hook_mode_remedy()))
+            elif index_mode == "conflict":
+                modes_verified = False
+                report.add("WARNING", "privacy-mode",
+                           "index holds an unresolved merge entry for {0}; resolve it and rerun".format(destination))
+            elif index_mode != "100755":
+                privacy_trusted = False
+                modes_verified = False
+                report.add(
+                    "VIOLATION", "privacy-mode",
+                    "hook is recorded in the Git index as {0}, not 100755: {1}. Git SKIPS a "
+                    "non-executable hook under core.hooksPath with only a hint, so a clone of "
+                    "this repository commits with the privacy guard inert. Remedy: {2}".format(
+                        index_mode, destination, hook_mode_remedy()))
+            else:
+                head_mode = _head_mode(target, destination)
+                if head_mode is not None and head_mode != "100755":
+                    modes_verified = False
+                    report.add("WARNING", "privacy-mode",
+                               "index records 100755 but HEAD still records {0}: {1}. Commit required, "
+                               "or every fresh clone keeps the inert mode".format(head_mode, destination))
+            if os.name != "nt" and not (path.stat().st_mode & 0o111):
+                privacy_trusted = False
+                report.add("VIOLATION", "privacy-mode", "hook is not executable: {0}. Remedy: {1}".format(destination, hook_mode_remedy()))
     if privacy_trusted:
-        report.add("OK", "privacy-components", "both chainers, wrapper and scanner match installed identity; LF/mode checks passed for this OS")
+        if modes_verified:
+            report.add("OK", "privacy-components", "both chainers, wrapper and scanner match installed identity; LF clean; Git index mode 100755 on every platform, and the filesystem executable bit additionally on POSIX")
+        else:
+            report.add("OK", "privacy-components", "both chainers, wrapper and scanner match installed identity and are LF clean; the committed mode is not yet proven -- see the privacy-mode WARNING rows")
 
     # Mirror the activation-time authorization safeguard: a real hook name in
     # .githooks that this bundle does not own is live under core.hooksPath.

@@ -146,7 +146,11 @@ installed wiring parser against only the identified managed gate, and performs r
 valid/invalid validator plus valid/malformed `--budgets-advisory` S3-checker probes in
 temporary synthetic files. Gate-like and ordinary sibling registrations are inspected but
 never executed. It also checks effective hooksPath, both chainers, wrapper/scanner identity,
-LF/executable behavior, privacy config/token state, and the wrapper-selected Python route.
+LF cleanliness, the executable bit — on disk on POSIX, and as recorded in the Git index on
+every platform, because a hook committed as `100644` is skipped by Git on POSIX clones with
+only a hint; an untracked hook is a `WARNING`, a wrong recorded mode a `VIOLATION`, and both
+name the remedy (`git update-index --chmod=+x` on the three hooks, preceded by `chmod +x` on
+POSIX) — privacy config/token state, and the wrapper-selected Python route.
 No token values are printed.
 
 Mandatory admission first requires the full dynamic doctor report under the current private

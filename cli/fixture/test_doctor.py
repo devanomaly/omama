@@ -241,6 +241,52 @@ class DoctorContractTests(unittest.TestCase):
         self.assertIn("VIOLATION[relocation]", result.stderr)
         self.assertIn("rerun init", result.stderr)
 
+    def test_hook_index_mode_is_checked_on_every_platform_and_names_the_remedy(self):
+        """#59: a hook Git records as 100644 is SKIPPED by Git on POSIX clones with
+        only a hint, so doctor must read the INDEX mode on every platform (Windows
+        cannot express the bit on disk) and name the one-line remedy."""
+        import tempfile
+        root = self.prepare(complete=True)
+        hooks = [".githooks/pre-commit", ".githooks/pre-merge-commit", ".githooks/privacy-pre-commit"]
+        no_hooks = ["-c", "core.hooksPath=" + tempfile.mkdtemp(prefix="nohooks-", dir=install_fixture._test_root())]
+
+        # Fresh init: hooks published but untracked -> a WARNING that carries the
+        # remedy, never a VIOLATION and never NOT-RUN (which would fail init itself).
+        result = self.run_cli(root, "doctor", str(root), "--static-only")
+        output = result.stdout + result.stderr
+        self.assertIn("WARNING[privacy-mode]", output)
+        self.assertIn("not yet tracked", output)
+        self.assertIn("update-index --chmod=+x", output)
+        self.assertNotIn("VIOLATION[privacy-mode]", output)
+        self.assertNotIn("NOT-RUN[privacy-mode]", output)
+
+        # Commit the hooks as 100644 -- exactly what a Windows-authored adoption
+        # produces -- and doctor must say so, on nt and POSIX alike.
+        subprocess.run(["git", "-C", str(root), "add", "--"] + hooks, check=True)
+        subprocess.run(["git", "-C", str(root), "update-index", "--chmod=-x", "--"] + hooks, check=True)
+        subprocess.run(["git", "-C", str(root)] + no_hooks + ["commit", "-q", "-m", "hooks at 100644"], check=True)
+        result = self.run_cli(root, "doctor", str(root), "--static-only")
+        output = result.stdout + result.stderr
+        self.assertEqual(1, result.returncode, output)
+        self.assertIn("VIOLATION[privacy-mode]", result.stderr)
+        self.assertIn("recorded in the Git index as 100644", result.stderr)
+        self.assertIn("update-index --chmod=+x .githooks/pre-commit .githooks/pre-merge-commit .githooks/privacy-pre-commit", result.stderr)
+
+        # Apply the remedy: the index is right, HEAD is not yet -> "commit required".
+        subprocess.run(["git", "-C", str(root), "update-index", "--chmod=+x", "--"] + hooks, check=True)
+        result = self.run_cli(root, "doctor", str(root), "--static-only")
+        output = result.stdout + result.stderr
+        self.assertNotIn("VIOLATION[privacy-mode]", output)
+        self.assertIn("Commit required", output)
+
+        # After the commit nothing about the mode remains to say.
+        subprocess.run(["git", "-C", str(root)] + no_hooks + ["commit", "-q", "-m", "hooks at 100755"], check=True)
+        result = self.run_cli(root, "doctor", str(root), "--static-only")
+        output = result.stdout + result.stderr
+        self.assertNotIn("VIOLATION[privacy-mode]", output)
+        self.assertNotIn("WARNING[privacy-mode]", output)
+        self.assertNotIn("Commit required", output)
+
     def test_standalone_partial_state_is_unhealthy_private_owner_is_allowed_and_foreign_is_not(self):
         root = self.prepare(complete=True)
         owner = "synthetic-owner"

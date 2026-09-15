@@ -6,7 +6,7 @@ import sys
 
 from . import __version__
 from .bundle import BundleError, load_bundle
-from .doctor import InternalDoctorContext, doctor
+from .doctor import InternalDoctorContext, doctor, hook_mode_remedy
 from .install import InstallError, preflight_bundle, recover, run_asset_transaction
 from .runtime import managed_runtime_interpreter, prepare_receipt_runtime, qualify_explicit
 from .selftest import admission
@@ -130,9 +130,13 @@ def main(argv=None):
             return 1
         if manual_activation:
             print("PREPARED: activation required; run exactly: {0}".format(wiring.activation_remedy))
+            if os.name == "nt":
+                print("HOOK MODE: on Windows the executable bit cannot be set on disk, so when you commit .githooks/* run: " + hook_mode_remedy())
             print("NOT-RUN: hooks are not active; mandatory admission was not attempted", file=sys.stderr)
             return 2
         print("INSTALLED: doctor and every mandatory installed-command admission check passed")
+        if os.name == "nt":
+            print("HOOK MODE: on Windows the executable bit cannot be set on disk, so when you commit .githooks/* run: " + hook_mode_remedy())
         print("ADOPT STARTER: copy docs/templates/omama/CLAUDE.starter.md to CLAUDE.md, remove its header comment, adjust every <ADJUST: ...> field, then validate the adjusted copy before committing.")
         print("PER-OPERATOR OUTPUT-DISCIPLINE BLOCK (copy deliberately to your global CLAUDE.md; omama did not write global configuration):")
         print("> **Output form.** Plans and reviews follow the templates in docs/templates/omama/: structure is mandatory -- severity tier declared; reviews open with the verdict within the first 3 non-empty lines, followed by Findings/Non-findings. Line budgets (XS <=5; S <=15; M <=40; L no ceiling) are advisory -- the checker warns, it does not fail. XS floor: one line in chat (`Plan (XS): goal; done when X; verify: cmd`). Spot-check: `<receipt-python> tools/omama/output-discipline/scripts/check_artifact.py --budgets-advisory <file>`.")
