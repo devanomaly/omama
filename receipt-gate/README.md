@@ -58,7 +58,7 @@ probe into a green that the actual hook environment could not reproduce.
 | Gate exit | Means |
 |---|---|
 | 0 | stop allowed: NO-CARD, WIP turn, honest close, or VERIFIED |
-| 2 | named BLOCK on stderr (fed back to the model): `GIT-ROUTING` · `BAD-INPUT` · `CARD-CONFIGURED-BUT-MISSING` · `CROSS-REPO` · `CLOSE-TOKEN` · `SCHEMA` · `GIT-ERROR` · `INDEX-FLAGS` · `UNEXPECTED-CHANGE` · `VERIFY-RED` · `TIMEOUT` · `S3-REVIEW` · `GATE-ERROR` |
+| 2 | named BLOCK on stderr (fed back to the model): `GIT-ROUTING` · `BAD-INPUT` · `CARD-CONFIGURED-BUT-MISSING` · `CROSS-REPO` · `CLOSE-TOKEN` · `SCHEMA` · `GIT-ERROR` · `INDEX-FLAGS` · `UNREADABLE-UNTRACKED` · `UNEXPECTED-CHANGE` · `VERIFY-RED` · `TIMEOUT` · `S3-REVIEW` · `GATE-ERROR` |
 
 `CROSS-REPO` is raised at card resolution — before the bookkeeping that
 unlinks a standing receipt — when the card's git toplevel and the session's
@@ -103,7 +103,12 @@ noise). Contents are hashed because `git diff HEAD` never reports them:
 names alone left a verify free to rewrite an untracked source and still
 close VERIFIED, while the same rewrite of a tracked file was caught. An
 untracked path that cannot be read is recorded as a named sentinel, not a
-crash. The status is read with `-z` (NUL-delimited) and decoded with
+crash, so an honest FAILED/UNVERIFIED close always completes — but that
+sentinel is the same on both attempts, so a verify could grant access,
+rewrite the file and restore mode `000` invisibly. A close intending
+VERIFIED therefore refuses on it by name (`UNREADABLE-UNTRACKED`, before
+verify runs, naming each path); only that branch refuses, which is why the
+honest closes are unaffected. The status is read with `-z` (NUL-delimited) and decoded with
 `os.fsdecode`, so every name is bound whatever it contains: plain
 `--porcelain` C-quotes a name that is not simple ASCII (`"caf\303\251.txt"`)
 and keeps quoting a name containing a space even under
@@ -263,5 +268,5 @@ costs no session.
 | Config-file selectors cannot blind admission | GLOBAL/SYSTEM select a real excludesFile config; populated and empty selectors refuse before verify/evidence writes; probe preconditions survive HOME/XDG overrides and NOSYSTEM while the gate receives the inherited environment | trusted configuration, including HOME/XDG lookup roots, remains outside this boundary | covered |
 | Scratch helpers ignore caller routing | all approved names poisoned; independent expected set checks every copy/prefix; decoy Git/index/card snapshots; admission case collection independent of setup tuple | does not certify real Claude session wiring or all possible Git options | covered by fixture/check_git_isolation.py |
 | Wiring diagnoses a routing refusal honestly | unsanitized probe for DIR/COUNT/GLOBAL/SYSTEM: named failure, no value disclosure, unchanged target, clean retry green | static-only does not execute or establish runtime environment health | covered |
-| Binding catches verify mutation | tracked, untracked names AND untracked contents (-uall, names read `-z`-raw so non-ASCII and spaced names bind too; type inspected before opening, so a retargeted symlink is caught and a FIFO cannot hang the close), CARD family, stash, assume-unchanged | non-git cp-restore; inside .git; an untracked file whose CONTENT is unreadable in both snapshots (mode `000`, ACL) binds as the same sentinel twice, so a verify that grants access, rewrites and restores it is invisible — closing that means refusing to close on unreadable content, which changes the close model and carries its own card | accepted limitation |
+| Binding catches verify mutation | tracked, untracked names AND untracked contents (-uall, names read `-z`-raw so non-ASCII and spaced names bind too; type inspected before opening, so a retargeted symlink is caught and a FIFO cannot hang the close), CARD family, stash, assume-unchanged; an untracked file whose CONTENT is unreadable (mode `000`, ACL) binds as the same sentinel twice and so refuses a VERIFIED close by name (`UNREADABLE-UNTRACKED`) rather than certify it, while the honest closes still complete beside it | non-git cp-restore; inside .git | covered |
 | Fail-closed | pyyaml absent, git absent, empty stdin, unborn HEAD, unreadable card ⇒ named exit 2 | broken wiring (shell exit≠2) — resolved by: adapt/check_wiring.py (+ self-test; reads settings.json AND settings.local.json, requires the interpreter's absolute path and a `receipt_gate.py` argument (a bare launcher, an interpreter alone or another script is a named VIOLATION in both modes), quote-aware sh CLAUDE_PROJECT_DIR expansion, rejects shell operators, rejects async / exec-form / non-bash-shell hooks, `disableAllHooks` and any leftover `$` expansion by name, warns on broken sibling hooks; `--static-only` non-execution sentinel-proven; Windows: NOT-RUN unless Git Bash is established); an interpreter that vanishes after install stays undetected until the check is re-run (detection, not prevention); `--static-only` mode does NOT prove the gate answers (script checked by name and existence only); user/managed/CLI settings are not inspected; the Git Bash probe is a proxy for Claude Code's detection (false NOT-RUN possible, false pass not) | accepted limitation |

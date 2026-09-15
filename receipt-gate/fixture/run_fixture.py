@@ -1199,6 +1199,92 @@ def a_honest_close_untracked_fifo(tmp):
     check((repo / "runtime" / "pipe").exists(), "the FIFO was consumed", r)
 
 
+def _mode_enforced(base):
+    """Probe, never assume: mode 000 makes a file unreadable only where the
+    filesystem enforces it. Windows chmod toggles the read-only bit alone,
+    and root ignores the mode on POSIX."""
+    probe = Path(base) / "_mode_probe"
+    try:
+        probe.write_text("x", encoding="utf-8")
+        os.chmod(str(probe), 0o000)
+        probe.read_bytes()
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    finally:
+        try:
+            os.chmod(str(probe), 0o600)
+        except OSError:
+            pass
+
+
+def b_close_unreadable_untracked(tmp):
+    """Review of #62, remaining P1: an untracked REGULAR file whose contents
+    cannot be read binds as the same 'unreadable:' sentinel on both
+    attempts, so a verify that granted access, rewrote the bytes and
+    restored mode 000 left H1 == H2 and the close ended VERIFIED over
+    changed source -- a durable receipt certifying bytes the gate never
+    bound, and one that later repair cannot reconstruct.
+
+    VERIFIED intent now refuses by name, BEFORE verify runs (the assertion
+    on the source's bytes is what pins that placement). The honest FAILED
+    and UNVERIFIED closes return before that check and must still complete
+    beside the same file -- that control is what makes this a rule about
+    binding and not a change to the close model.
+
+    Needs a filesystem that enforces the mode; probed, and the refusal is
+    ASSERTED rather than skipped in silence."""
+    if not _mode_enforced(tmp):
+        check(os.name == "nt"
+              or (hasattr(os, "geteuid") and os.geteuid() == 0),
+              "mode 000 stayed readable on a non-Windows, non-root host -- "
+              "this case must run wherever permissions are enforced, never "
+              "skip by accident")
+        return
+    mut = ('"%s" -c "import os,sys;'
+           'os.chmod(\'source.txt\',0o600);'
+           'v=open(\'source.txt\').read();'
+           'sys.exit(1) if \'VALUE = 1\' not in v else None;'
+           'open(\'source.txt\',\'w\').write(\'VALUE = 0\\n\');'
+           'os.chmod(\'source.txt\',0o000)"' % PY)
+    repo = make_repo(tmp, name="unreadable_close")
+    src = repo / "source.txt"
+    src.write_text("VALUE = 1\n", encoding="utf-8")
+    os.chmod(str(src), 0o000)
+    write_card(repo, verify=mut)
+    (repo / "CARD.close").write_text("CLOSE", encoding="utf-8")
+    r = run_gate(repo)
+    check(r.returncode == 2,
+          f"unreadable untracked content must refuse a VERIFIED close, "
+          f"got {r.returncode}", r)
+    check("UNREADABLE-UNTRACKED" in r.stderr,
+          "not named UNREADABLE-UNTRACKED", r)
+    check("source.txt" in r.stderr, "the unreadable path is not named", r)
+    check(not (repo / "CARD.receipt.json").exists(),
+          "receipt written over content the gate could not bind", r)
+    os.chmod(str(src), 0o600)
+    check(src.read_text(encoding="utf-8").strip() == "VALUE = 1",
+          "the source was rewritten: the refusal must land before verify "
+          "runs, not after", r)
+    for token, verdict in (("FAILED: honest stop", "FAILED"),
+                           ("UNVERIFIED: honest stop", "UNVERIFIED")):
+        rp = make_repo(tmp, name="unreadable_" + verdict.lower())
+        s = rp / "source.txt"
+        s.write_text("VALUE = 1\n", encoding="utf-8")
+        os.chmod(str(s), 0o000)
+        write_card(rp, verify=GREEN)
+        (rp / "CARD.close").write_text(token, encoding="utf-8")
+        r = run_gate(rp)
+        os.chmod(str(s), 0o600)
+        check(r.returncode == 0,
+              f"honest {verdict} close must still complete beside an "
+              f"unreadable untracked file, got {r.returncode}", r)
+        check((rp / "CARD.receipt.json").exists(),
+              f"no receipt written for an honest {verdict} close", r)
+
+
 def a_close_rename_from_prefixed_name(tmp):
     """Review of #62, P3: a -z rename record is TWO fields, "R  <new>\\0
     <old>\\0". The old-path field carries no XY prefix, so a file actually
@@ -2181,6 +2267,7 @@ CASES = [
     ("block: UNEXPECTED-CHANGE untracked rewrite, name with a space (quoted by porcelain)", b_unexpected_untracked_rewrite_space),
     ("block: UNEXPECTED-CHANGE untracked symlink retargeted mid-verify (tracked control)", b_unexpected_untracked_symlink_retarget),
     ("allow: honest FAILED close beside an untracked FIFO (never opened)", a_honest_close_untracked_fifo),
+    ("block: UNREADABLE-UNTRACKED content on CLOSE (honest FAILED/UNVERIFIED controls)", b_close_unreadable_untracked),
     ("allow: gitignored rewrite beside a staged rename from a '?? '-prefixed name", a_close_rename_from_prefixed_name),
     ("block: UNEXPECTED-CHANGE new file inside untracked dir (-uall)", b_unexpected_untracked_dir),
     ("block: UNEXPECTED-CHANGE CARD.review.md rewrite mid-verify", b_unexpected_review_rewrite),

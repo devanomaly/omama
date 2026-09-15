@@ -296,11 +296,14 @@ def main(state):
           it hung an honest FAILED close -- the one close that must always
           remain available.
 
-        Mode bits are deliberately NOT bound here: a permission flip that
-        hides a rewrite behind a stable 'unreadable:' sentinel is a real
-        residual, recorded in the README and carried by its own card, since
-        closing it means refusing to close on unreadable content and that
-        changes the close model for every adopter."""
+        An unreadable path still becomes a named sentinel rather than a
+        crash, so an honest FAILED/UNVERIFIED close can always complete --
+        but that sentinel is stable across a permission flip, so a verify
+        could grant access, rewrite and restore it invisibly. VERIFIED
+        intent therefore refuses on it by name (UNREADABLE-UNTRACKED,
+        beside the INDEX-FLAGS check); the refusal lives there and not
+        here so that the honest close, which never reaches it, is
+        untouched."""
         try:
             st = os.lstat(str(p))
         except FileNotFoundError:
@@ -695,6 +698,26 @@ def main(state):
                     f"{h1['index_flags']}\n"
                     "Clear them (git update-index --no-assume-unchanged / "
                     f"--no-skip-worktree <path>) and re-close. {HATCH}")
+    # Same shape as INDEX-FLAGS, one step further out: a path whose bytes
+    # cannot be read binds as the SAME 'unreadable:' sentinel on both
+    # attempts, so a verify that grants access, rewrites and restores it
+    # (mode 000, an ACL) left H1 == H2 and the close ended VERIFIED over
+    # changed source. Only VERIFIED intent refuses -- the honest branch
+    # returned above, so FAILED/UNVERIFIED still close beside such a path,
+    # which is what keeps this a binding rule rather than a close-model
+    # change. h2 needs no twin check: a path readable at H1 and unreadable
+    # at H2 has two different tokens, which is UNEXPECTED-CHANGE by name.
+    blind = sorted(nm for nm, tok in h1["untracked_content"].items()
+                   if tok.startswith("unreadable:"))
+    if blind:
+        raise Block("UNREADABLE-UNTRACKED",
+                    "close intends VERIFIED but the contents of these "
+                    "untracked paths cannot be read, so the receipt would "
+                    "certify bytes the gate never bound:\n"
+                    + "\n".join(f"  {nm}  ({h1['untracked_content'][nm]})"
+                                for nm in blind)
+                    + "\nMake them readable, gitignore them, or remove them, "
+                      f"then re-close. {HATCH}")
 
     try:
         v_exit, v_out = run_verify(command, card_repo, timeout)
