@@ -537,6 +537,43 @@ def b_unexpected_untracked_rewrite(tmp):
           "receipt written for a tree that changed under verify", r)
 
 
+def _untracked_rewrite_quoted(tmp, name, label):
+    """Shared body for the names Git does not print verbatim under plain
+    --porcelain. The verify rebuilds the filename from a hex-escaped literal
+    so the mutation never depends on the encoding of the shell that runs it;
+    what is under test is the GATE's parse of the name, not the fixture's."""
+    repo = make_repo(tmp, name=label)
+    (repo / name).write_text("VALUE = 1\n", encoding="utf-8")
+    esc = name.encode("unicode_escape").decode("ascii").replace("'", "\\'")
+    mut = ('"%s" -c "import io;io.open(u\'%s\',\'w\',encoding=\'utf-8\')'
+           '.write(u\'VALUE = 0\')"' % (PY, esc))
+    write_card(repo, verify=mut)
+    (repo / "CARD.close").write_text("CLOSE", encoding="utf-8")
+    r = run_gate(repo)
+    check(r.returncode == 2,
+          f"rewrite of {name!r} must trip the binding, got {r.returncode}", r)
+    check("UNEXPECTED-CHANGE" in r.stderr, "not named UNEXPECTED-CHANGE", r)
+    check(not (repo / "CARD.receipt.json").exists(),
+          "receipt written for a tree that changed under verify", r)
+
+
+def b_unexpected_untracked_rewrite_unicode(tmp):
+    """Review of #62: plain --porcelain renders a non-ASCII name as a C-quoted
+    escape ("caf\\303\\251.txt"). The old parser stripped the quotes and kept
+    the escape, so the gate read a path that does not exist, got the same
+    `absent` sentinel twice, and a rewrite of the real file closed VERIFIED --
+    the very hole b_unexpected_untracked_rewrite was added to close, reopened
+    by one non-ASCII character in the name."""
+    _untracked_rewrite_quoted(tmp, u"café.txt", "repo_unicode")
+
+
+def b_unexpected_untracked_rewrite_space(tmp):
+    """A name with a space is quoted by --porcelain too, and stays quoted even
+    under core.quotepath=false -- so it pins that the parse is -z-raw and not
+    merely quotepath-corrected."""
+    _untracked_rewrite_quoted(tmp, "with space.txt", "repo_space")
+
+
 def b_unexpected_untracked_dir(tmp):
     repo = make_repo(tmp)
     (repo / "udir").mkdir()
@@ -2013,6 +2050,8 @@ CASES = [
     ("block: planted-red, output tail + hatch text", b_planted_red),
     ("block: UNEXPECTED-CHANGE tracked mutation", b_unexpected_tracked),
     ("block: UNEXPECTED-CHANGE untracked source rewritten mid-verify", b_unexpected_untracked_rewrite),
+    ("block: UNEXPECTED-CHANGE untracked rewrite, non-ASCII name (quoted by porcelain)", b_unexpected_untracked_rewrite_unicode),
+    ("block: UNEXPECTED-CHANGE untracked rewrite, name with a space (quoted by porcelain)", b_unexpected_untracked_rewrite_space),
     ("block: UNEXPECTED-CHANGE new file inside untracked dir (-uall)", b_unexpected_untracked_dir),
     ("block: UNEXPECTED-CHANGE CARD.review.md rewrite mid-verify", b_unexpected_review_rewrite),
     ("block: UNEXPECTED-CHANGE stash round-trip (reflog tripwire)", b_unexpected_stash),

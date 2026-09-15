@@ -288,14 +288,24 @@ def main(state):
         comps["rev"] = rev.strip()
         diff_bytes = pinned_diff(repo)
         comps["diff_sha"] = sha(diff_bytes)
-        _, status = run_git(repo, ["status", "--porcelain",
-                                   "--untracked-files=all"])
+        # -z, read as bytes: porcelain WITHOUT -z renders a name that is not
+        # plain ASCII as a C-quoted escape ("caf\303\251.txt"), and stripping
+        # the quotes yields a path that does not exist -- read_family() then
+        # returns the same `absent` sentinel on both attempts, so a rewrite of
+        # that file is invisible and the close ends VERIFIED. core.quotepath
+        # =false is NOT enough: a name containing a space stays quoted. -z is
+        # the only form that is raw and unambiguous, and fsdecode (not the
+        # errors="replace" of text mode, which corrupts a name into U+FFFD)
+        # is what round-trips those bytes back to an openable path.
+        _, status_b = run_git(repo, ["status", "--porcelain",
+                                     "--untracked-files=all", "-z"],
+                              binary=True)
         rel = receipt_rel(repo)
         untracked = []
-        for ln in status.splitlines():
-            if not ln.startswith("??"):
+        for rec in status_b.split(b"\0"):
+            if not rec.startswith(b"?? "):
                 continue
-            name = ln[3:].strip().strip('"')
+            name = os.fsdecode(rec[3:])
             if rel and name == rel:
                 continue  # the gate's own output: excluded entirely
             untracked.append(name)
@@ -308,9 +318,14 @@ def main(state):
         # common case at close, not an edge. Contents go through the same
         # reader the CARD family uses: an unreadable path becomes a named
         # sentinel rather than a crash, so an honest close can complete.
-        comps["untracked_content"] = "\n".join(
-            "{0} {1}".format(family_token(read_family(repo / name)), name)
-            for name in untracked)
+        # Keyed by name rather than "<token> <name>" lines: with -z the names
+        # are raw, and a POSIX filename may contain a newline, which a
+        # line-oriented component cannot represent unambiguously. comps is
+        # already serialized through json.dumps(sort_keys=True) for the
+        # digest, so a mapping costs nothing and cannot be mis-split.
+        comps["untracked_content"] = {
+            name: family_token(read_family(repo / name))
+            for name in untracked}
         _, reflog = run_git(repo, ["reflog", "--format=%H %gs"])
         if not reflog.strip():
             print("WARNING: empty HEAD reflog -- the stash/checkout tripwire "
@@ -648,14 +663,8 @@ def main(state):
             if removed:
                 detail.append("removed untracked names: " + ", ".join(removed))
         if "untracked_content" in changed:
-            def _by_name(blob):
-                out = {}
-                for ln in blob.splitlines():
-                    token, _, nm = ln.partition(" ")
-                    out[nm] = token
-                return out
-            b = _by_name(h1["untracked_content"])
-            a = _by_name(h2["untracked_content"])
+            b = h1["untracked_content"]
+            a = h2["untracked_content"]
             rewritten = sorted(nm for nm in set(b) & set(a)
                                if b[nm] != a[nm])
             if rewritten:
