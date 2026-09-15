@@ -299,7 +299,18 @@ def main(state):
             if rel and name == rel:
                 continue  # the gate's own output: excluded entirely
             untracked.append(name)
-        comps["untracked"] = "\n".join(sorted(untracked))
+        untracked.sort()
+        comps["untracked"] = "\n".join(untracked)
+        # Names alone let a verify rewrite an untracked source and still
+        # close VERIFIED: `git diff HEAD` never reports untracked contents,
+        # so the name set is identical across the rewrite and H1 == H2. A
+        # new file is what a card most often produces, so untracked is the
+        # common case at close, not an edge. Contents go through the same
+        # reader the CARD family uses: an unreadable path becomes a named
+        # sentinel rather than a crash, so an honest close can complete.
+        comps["untracked_content"] = "\n".join(
+            "{0} {1}".format(family_token(read_family(repo / name)), name)
+            for name in untracked)
         _, reflog = run_git(repo, ["reflog", "--format=%H %gs"])
         if not reflog.strip():
             print("WARNING: empty HEAD reflog -- the stash/checkout tripwire "
@@ -636,6 +647,21 @@ def main(state):
                 detail.append("new untracked names: " + ", ".join(added))
             if removed:
                 detail.append("removed untracked names: " + ", ".join(removed))
+        if "untracked_content" in changed:
+            def _by_name(blob):
+                out = {}
+                for ln in blob.splitlines():
+                    token, _, nm = ln.partition(" ")
+                    out[nm] = token
+                return out
+            b = _by_name(h1["untracked_content"])
+            a = _by_name(h2["untracked_content"])
+            rewritten = sorted(nm for nm in set(b) & set(a)
+                               if b[nm] != a[nm])
+            if rewritten:
+                detail.append("rewritten untracked files: "
+                              + ", ".join(rewritten))
+        if detail:
             detail.append("remediation: gitignore run-unique artifacts and "
                           "re-close (a .gitignore edit between attempts "
                           "exits the loop in one edit, no commit needed)")

@@ -97,8 +97,14 @@ of a failed command is never hashed.
 Pinned diff command (single source for the material and `diff_sha`):
 `git -c core.quotepath=false -c diff.noprefix=false -c diff.mnemonicPrefix=false
 -c diff.interHunkContext=0 diff --no-ext-diff --no-color --no-textconv -U3 HEAD`.
-Components: `rev` · pinned diff bytes · untracked file names
-(`--untracked-files=all`; gitignore still excludes side-effect noise) ·
+Components: `rev` · pinned diff bytes · untracked file names AND their
+contents (`--untracked-files=all`; gitignore still excludes side-effect
+noise). Contents are hashed because `git diff HEAD` never reports them:
+names alone left a verify free to rewrite an untracked source and still
+close VERIFIED, while the same rewrite of a tracked file was caught. An
+untracked path that cannot be read is recorded as a named sentinel, not a
+crash. The cost is one read per untracked path per attempt, which is the
+reason to gitignore run-unique artifacts rather than let them accumulate ·
 reflog tripwire (`git reflog --format='%H %gs'` — count+subjects; the tip
 alone is byte-identical across a stash round-trip, proven) · `refs/stash` ·
 index flags (`ls-files -v` outside `H `) · content of the CARD family
@@ -242,5 +248,5 @@ costs no session.
 | Config-file selectors cannot blind admission | GLOBAL/SYSTEM select a real excludesFile config; populated and empty selectors refuse before verify/evidence writes; probe preconditions survive HOME/XDG overrides and NOSYSTEM while the gate receives the inherited environment | trusted configuration, including HOME/XDG lookup roots, remains outside this boundary | covered |
 | Scratch helpers ignore caller routing | all approved names poisoned; independent expected set checks every copy/prefix; decoy Git/index/card snapshots; admission case collection independent of setup tuple | does not certify real Claude session wiring or all possible Git options | covered by fixture/check_git_isolation.py |
 | Wiring diagnoses a routing refusal honestly | unsanitized probe for DIR/COUNT/GLOBAL/SYSTEM: named failure, no value disclosure, unchanged target, clean retry green | static-only does not execute or establish runtime environment health | covered |
-| Binding catches verify mutation | tracked, untracked-dir (-uall), CARD family, stash, assume-unchanged | non-git cp-restore; inside .git | accepted limitation |
+| Binding catches verify mutation | tracked, untracked names AND untracked contents (-uall), CARD family, stash, assume-unchanged | non-git cp-restore; inside .git | accepted limitation |
 | Fail-closed | pyyaml absent, git absent, empty stdin, unborn HEAD, unreadable card ⇒ named exit 2 | broken wiring (shell exit≠2) — resolved by: adapt/check_wiring.py (+ self-test; reads settings.json AND settings.local.json, requires the interpreter's absolute path and a `receipt_gate.py` argument (a bare launcher, an interpreter alone or another script is a named VIOLATION in both modes), quote-aware sh CLAUDE_PROJECT_DIR expansion, rejects shell operators, rejects async / exec-form / non-bash-shell hooks, `disableAllHooks` and any leftover `$` expansion by name, warns on broken sibling hooks; `--static-only` non-execution sentinel-proven; Windows: NOT-RUN unless Git Bash is established); an interpreter that vanishes after install stays undetected until the check is re-run (detection, not prevention); `--static-only` mode does NOT prove the gate answers (script checked by name and existence only); user/managed/CLI settings are not inspected; the Git Bash probe is a proxy for Claude Code's detection (false NOT-RUN possible, false pass not) | accepted limitation |

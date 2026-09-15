@@ -516,6 +516,27 @@ def b_unexpected_tracked(tmp):
     check("UNEXPECTED-CHANGE" in r.stderr, "not named UNEXPECTED-CHANGE", r)
 
 
+def b_unexpected_untracked_rewrite(tmp):
+    """#58: a verify that REWRITES an untracked source must be caught the
+    same way b_unexpected_tracked catches the tracked rewrite. The name set
+    is identical across a rewrite and `git diff HEAD` never reports
+    untracked contents, so names alone left this open -- and a new file is
+    what a card most often produces, making untracked the common case at
+    close rather than an edge."""
+    repo = make_repo(tmp)
+    (repo / "src.txt").write_text("VALUE = 1\n", encoding="utf-8")
+    mut = f'"{PY}" -c "open(\'src.txt\',\'w\').write(\'VALUE = 0\')"'
+    write_card(repo, verify=mut)
+    (repo / "CARD.close").write_text("CLOSE", encoding="utf-8")
+    r = run_gate(repo)
+    check(r.returncode == 2,
+          f"untracked rewrite must trip the binding, got {r.returncode}", r)
+    check("UNEXPECTED-CHANGE" in r.stderr, "not named UNEXPECTED-CHANGE", r)
+    check("src.txt" in r.stderr, "rewritten untracked file not named", r)
+    check(not (repo / "CARD.receipt.json").exists(),
+          "receipt written for a tree that changed under verify", r)
+
+
 def b_unexpected_untracked_dir(tmp):
     repo = make_repo(tmp)
     (repo / "udir").mkdir()
@@ -1991,6 +2012,7 @@ CASES = [
     ("allow: honest close on undecodable card", a_honest_undecodable),
     ("block: planted-red, output tail + hatch text", b_planted_red),
     ("block: UNEXPECTED-CHANGE tracked mutation", b_unexpected_tracked),
+    ("block: UNEXPECTED-CHANGE untracked source rewritten mid-verify", b_unexpected_untracked_rewrite),
     ("block: UNEXPECTED-CHANGE new file inside untracked dir (-uall)", b_unexpected_untracked_dir),
     ("block: UNEXPECTED-CHANGE CARD.review.md rewrite mid-verify", b_unexpected_review_rewrite),
     ("block: UNEXPECTED-CHANGE stash round-trip (reflog tripwire)", b_unexpected_stash),
