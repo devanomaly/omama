@@ -310,7 +310,12 @@ def main(state):
                 continue  # the gate's own output: excluded entirely
             untracked.append(name)
         untracked.sort()
-        comps["untracked"] = "\n".join(untracked)
+        # A list, not "\n".join: the names are -z-raw, and a POSIX filename
+        # may contain a newline, which a line-oriented component splits into
+        # two phantom names in the added/removed report. Same reason
+        # untracked_content is a mapping; json.dumps(sort_keys=True) already
+        # serializes comps for the digest, so the sequence costs nothing.
+        comps["untracked"] = untracked
         # Names alone let a verify rewrite an untracked source and still
         # close VERIFIED: `git diff HEAD` never reports untracked contents,
         # so the name set is identical across the rewrite and H1 == H2. A
@@ -655,8 +660,8 @@ def main(state):
         changed = sorted(k for k in h1 if h1.get(k) != h2.get(k))
         detail = []
         if "untracked" in changed:
-            before = set(h1["untracked"].splitlines())
-            after = set(h2["untracked"].splitlines())
+            before = set(h1["untracked"])
+            after = set(h2["untracked"])
             added, removed = sorted(after - before), sorted(before - after)
             if added:
                 detail.append("new untracked names: " + ", ".join(added))
