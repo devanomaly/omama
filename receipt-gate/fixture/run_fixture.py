@@ -136,13 +136,41 @@ def write_card(repo, verify=GREEN, tier="S1", **kw):
                                     encoding="utf-8")
 
 
+_GITLESS_DIR = None
+
+
+def gitless_path():
+    """A PATH value on which `git` genuinely does not resolve.
+
+    The git-less cases used dirname(PY) directly. On a host where the
+    interpreter and git share a bin directory (stock Debian/Ubuntu: both in
+    /usr/bin) that PATH still resolves git, so the cases took the normal
+    route and reported green while never reaching the degraded/refusal
+    behaviour they name. CI never caught it because setup-python installs the
+    interpreter into a tool cache that holds no git.
+
+    dirname(PY) is kept whenever it carries no git -- on Windows that entry
+    is the one worth leaving in place. Otherwise the PATH is an empty
+    directory: the gate is launched with an absolute interpreter path and
+    shells out through an absolute /bin/sh (POSIX) or COMSPEC (Windows), so
+    no case needs anything else resolvable.
+    """
+    global _GITLESS_DIR
+    candidate = os.path.dirname(PY)
+    if shutil.which("git", path=candidate) is None:
+        return candidate
+    if _GITLESS_DIR is None:
+        _GITLESS_DIR = tempfile.mkdtemp(prefix="rgate-gitless-")
+    return _GITLESS_DIR
+
+
 def gate_env(extra=None, strip_path=False):
     env = scrubbed_env()
     env.pop("OMAMA_CARD", None)
     env["OMAMA_VALIDATOR"] = str(VALIDATOR)
     env["OMAMA_CHECK_ARTIFACT"] = str(CHECKER)
     if strip_path:
-        env["PATH"] = os.path.dirname(PY)
+        env["PATH"] = gitless_path()
     if extra:
         env.update(extra)
     return env
@@ -1718,7 +1746,7 @@ def b_discovery_refusal(tmp):
 
 def b_external_gitless_refusal(tmp):
     external, session, env, _ = _cross_repo_pair(tmp, "FAILED: git missing")
-    env["PATH"] = os.path.dirname(PY)
+    env["PATH"] = gitless_path()
     before = (_binding_snapshot(external), _binding_snapshot(session))
     r = run_gate(session, env=env)
     check(r.returncode == 2 and "BLOCK[GIT-ERROR]" in r.stderr,
@@ -2079,6 +2107,8 @@ def main(argv):
                 print(f"[FAIL] {label} [runner crash: {type(e).__name__}: {e}]")
     finally:
         _rmtree(base)
+        if _GITLESS_DIR is not None:
+            _rmtree(_GITLESS_DIR)
     print()
     if ran == 0:
         print("FIXTURE RESULT: no case matched the filter")
