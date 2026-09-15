@@ -100,6 +100,7 @@ def main(state):
     import json
     import os
     import re
+    import stat
     import subprocess
     from datetime import datetime, timezone
     from pathlib import Path
@@ -278,6 +279,45 @@ def main(state):
         kind = entry[0]
         return entry[1] if kind == "sha" else kind
 
+    def read_untracked(p):
+        """Token for ONE untracked path. Unlike read_family this never
+        follows a link and never opens a non-regular file, because an
+        untracked path is attacker-shaped in a way the CARD family is not:
+
+        - a symlink is bound as 'link:<target>', not as its target's bytes.
+          read_bytes() follows the link, so an untracked dir-symlink raised
+          IsADirectoryError and recorded the SAME 'unreadable:' sentinel on
+          both attempts -- a verify could retarget the link permanently and
+          still close VERIFIED. The target's own contents are bound too when
+          they are tracked (pinned diff) or themselves untracked (their own
+          entry), so binding the link's target STRING is what was missing.
+        - a FIFO/device is bound by type alone. Opening one blocks forever
+          waiting for a writer, and this runs OUTSIDE the verify timeout, so
+          it hung an honest FAILED close -- the one close that must always
+          remain available.
+
+        Mode bits are deliberately NOT bound here: a permission flip that
+        hides a rewrite behind a stable 'unreadable:' sentinel is a real
+        residual, recorded in the README and carried by its own card, since
+        closing it means refusing to close on unreadable content and that
+        changes the close model for every adopter."""
+        try:
+            st = os.lstat(str(p))
+        except FileNotFoundError:
+            return ("absent", None, None)
+        except OSError as e:
+            return ("unreadable:" + type(e).__name__, None, None)
+        if stat.S_ISLNK(st.st_mode):
+            try:
+                return ("link:" + os.readlink(str(p)), None, None)
+            except OSError as e:
+                return ("unreadable:" + type(e).__name__, None, None)
+        if stat.S_ISDIR(st.st_mode):
+            return ("dir", None, None)      # -uall lists files, not dirs
+        if not stat.S_ISREG(st.st_mode):
+            return ("special:" + str(stat.S_IFMT(st.st_mode)), None, None)
+        return read_family(p)
+
     def material(repo, preread=None):
         """(digest, comps, diff_bytes). Any git failure raises GitError.
         preread maps family labels to read_family() entries captured at
@@ -302,7 +342,22 @@ def main(state):
                               binary=True)
         rel = receipt_rel(repo)
         untracked = []
-        for rec in status_b.split(b"\0"):
+        # A -z rename/copy record is TWO NUL-terminated fields: "R  <new>\0
+        # <old>\0". The old-path field carries no XY prefix, so a file
+        # actually NAMED "?? ignored.txt" made the second field look like an
+        # untracked record and produced a phantom entry for "ignored.txt" --
+        # a gitignored path the gate then refused to see rewritten. Consume
+        # the continuation field with the record that owns it.
+        recs = status_b.split(b"\0")
+        i = 0
+        while i < len(recs):
+            rec = recs[i]
+            i += 1
+            if len(rec) < 3 or rec[2:3] != b" ":
+                continue        # not a status record (trailing empty split)
+            if rec[0:1] in (b"R", b"C") or rec[1:2] in (b"R", b"C"):
+                i += 1          # skip this record's old-path field
+                continue
             if not rec.startswith(b"?? "):
                 continue
             name = os.fsdecode(rec[3:])
@@ -329,7 +384,7 @@ def main(state):
         # already serialized through json.dumps(sort_keys=True) for the
         # digest, so a mapping costs nothing and cannot be mis-split.
         comps["untracked_content"] = {
-            name: family_token(read_family(repo / name))
+            name: family_token(read_untracked(repo / name))
             for name in untracked}
         _, reflog = run_git(repo, ["reflog", "--format=%H %gs"])
         if not reflog.strip():
