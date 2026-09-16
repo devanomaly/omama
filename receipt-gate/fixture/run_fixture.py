@@ -79,6 +79,23 @@ def _rmtree(path):
         shutil.rmtree(path, onerror=onerr)
 
 
+def _symlinks_available(base):
+    """Probe, never assume: Windows grants symlink creation only under
+    Developer Mode or an elevated shell, and the cases that need one say so
+    loudly rather than passing vacuously on a host that cannot make them."""
+    probe = Path(base) / "_symlink_probe"
+    try:
+        probe.mkdir(parents=True, exist_ok=True)
+        (probe / "t").mkdir(exist_ok=True)
+        link = probe / "l"
+        if link.exists() or link.is_symlink():
+            return True
+        os.symlink("t", str(link), target_is_directory=True)
+        return True
+    except (OSError, NotImplementedError, AttributeError):
+        return False
+
+
 def git(repo, *args, check_rc=True):
     # The maintenance pin is applied in this one helper so every fixture commit
     # carries it, rather than at whichever call sites happened to remember it:
@@ -514,6 +531,64 @@ def b_unexpected_tracked(tmp):
     r = run_gate(repo)
     check(r.returncode == 2, f"expected exit 2, got {r.returncode}", r)
     check("UNEXPECTED-CHANGE" in r.stderr, "not named UNEXPECTED-CHANGE", r)
+
+
+def b_unexpected_untracked_rewrite(tmp):
+    """#58: a verify that REWRITES an untracked source must be caught the
+    same way b_unexpected_tracked catches the tracked rewrite. The name set
+    is identical across a rewrite and `git diff HEAD` never reports
+    untracked contents, so names alone left this open -- and a new file is
+    what a card most often produces, making untracked the common case at
+    close rather than an edge."""
+    repo = make_repo(tmp)
+    (repo / "src.txt").write_text("VALUE = 1\n", encoding="utf-8")
+    mut = f'"{PY}" -c "open(\'src.txt\',\'w\').write(\'VALUE = 0\')"'
+    write_card(repo, verify=mut)
+    (repo / "CARD.close").write_text("CLOSE", encoding="utf-8")
+    r = run_gate(repo)
+    check(r.returncode == 2,
+          f"untracked rewrite must trip the binding, got {r.returncode}", r)
+    check("UNEXPECTED-CHANGE" in r.stderr, "not named UNEXPECTED-CHANGE", r)
+    check("src.txt" in r.stderr, "rewritten untracked file not named", r)
+    check(not (repo / "CARD.receipt.json").exists(),
+          "receipt written for a tree that changed under verify", r)
+
+
+def _untracked_rewrite_quoted(tmp, name, label):
+    """Shared body for the names Git does not print verbatim under plain
+    --porcelain. The verify rebuilds the filename from a hex-escaped literal
+    so the mutation never depends on the encoding of the shell that runs it;
+    what is under test is the GATE's parse of the name, not the fixture's."""
+    repo = make_repo(tmp, name=label)
+    (repo / name).write_text("VALUE = 1\n", encoding="utf-8")
+    esc = name.encode("unicode_escape").decode("ascii").replace("'", "\\'")
+    mut = ('"%s" -c "import io;io.open(u\'%s\',\'w\',encoding=\'utf-8\')'
+           '.write(u\'VALUE = 0\')"' % (PY, esc))
+    write_card(repo, verify=mut)
+    (repo / "CARD.close").write_text("CLOSE", encoding="utf-8")
+    r = run_gate(repo)
+    check(r.returncode == 2,
+          f"rewrite of {name!r} must trip the binding, got {r.returncode}", r)
+    check("UNEXPECTED-CHANGE" in r.stderr, "not named UNEXPECTED-CHANGE", r)
+    check(not (repo / "CARD.receipt.json").exists(),
+          "receipt written for a tree that changed under verify", r)
+
+
+def b_unexpected_untracked_rewrite_unicode(tmp):
+    """Review of #62: plain --porcelain renders a non-ASCII name as a C-quoted
+    escape ("caf\\303\\251.txt"). The old parser stripped the quotes and kept
+    the escape, so the gate read a path that does not exist, got the same
+    `absent` sentinel twice, and a rewrite of the real file closed VERIFIED --
+    the very hole b_unexpected_untracked_rewrite was added to close, reopened
+    by one non-ASCII character in the name."""
+    _untracked_rewrite_quoted(tmp, u"café.txt", "repo_unicode")
+
+
+def b_unexpected_untracked_rewrite_space(tmp):
+    """A name with a space is quoted by --porcelain too, and stays quoted even
+    under core.quotepath=false -- so it pins that the parse is -z-raw and not
+    merely quotepath-corrected."""
+    _untracked_rewrite_quoted(tmp, "with space.txt", "repo_space")
 
 
 def b_unexpected_untracked_dir(tmp):
@@ -1053,6 +1128,202 @@ def b_unexpected_untracked_removed(tmp):
     check(r.returncode == 2, f"expected exit 2, got {r.returncode}", r)
     check("removed untracked names" in r.stderr and "u.txt" in r.stderr,
           "removed untracked file not named in the block detail", r)
+
+
+def b_unexpected_untracked_symlink_retarget(tmp):
+    """Review of #62, P1: an UNTRACKED symlink to a directory. Reading it
+    followed the link and raised IsADirectoryError, recording the same
+    'unreadable:' sentinel on both attempts -- so a verify could retarget
+    the link PERMANENTLY and still close VERIFIED, while the identical
+    mutation of a TRACKED link blocked. The link's target is now bound as a
+    string without following it. Both targets stay tracked and unchanged;
+    only the link moves."""
+    if not _symlinks_available(tmp):
+        raise CaseFail("symlink creation unavailable -- this case cannot be "
+                       "skipped silently; enable Developer Mode (Windows) "
+                       "or run on POSIX")
+    for tracked in (False, True):
+        label = "tracked" if tracked else "untracked"
+        repo = make_repo(tmp, name="link_" + label)
+        (repo / "good").mkdir()
+        (repo / "bad").mkdir()
+        (repo / "good" / "source.txt").write_text("VALUE = 1\n", encoding="utf-8")
+        (repo / "bad" / "source.txt").write_text("VALUE = 0\n", encoding="utf-8")
+        git(repo, "add", "good", "bad")
+        git(repo, "commit", "-qm", "targets")
+        os.symlink("good", str(repo / "source"), target_is_directory=True)
+        if tracked:
+            git(repo, "add", "source")
+            git(repo, "commit", "-qm", "link")
+        mut = ('"%s" -c "import os,sys;'
+               'v=open(os.path.join(\'source\',\'source.txt\')).read();'
+               'sys.exit(1) if \'VALUE = 1\' not in v else None;'
+               'os.remove(\'source\') if os.path.islink(\'source\') else None;'
+               'os.symlink(\'bad\',\'source\',target_is_directory=True)"' % PY)
+        write_card(repo, verify=mut)
+        (repo / "CARD.close").write_text("CLOSE", encoding="utf-8")
+        r = run_gate(repo)
+        check(r.returncode == 2,
+              f"{label} symlink retarget must trip the binding, "
+              f"got {r.returncode}", r)
+        check("UNEXPECTED-CHANGE" in r.stderr, "not named UNEXPECTED-CHANGE", r)
+        check(not (repo / "CARD.receipt.json").exists(),
+              f"receipt written for a retargeted {label} symlink", r)
+
+
+def a_honest_close_untracked_fifo(tmp):
+    """Review of #62, P2: an untracked symlink to a FIFO. The content read
+    opened it and blocked forever waiting for a writer -- and the hash runs
+    OUTSIDE the verify timeout, so an honest FAILED close, the close that
+    must ALWAYS remain available, hung with no exit at all. A non-regular
+    file is now bound by type, never opened. POSIX-only (no os.mkfifo on
+    Windows) -- asserted, never silently skipped."""
+    if not hasattr(os, "mkfifo"):
+        check(os.name == "nt",
+              "os.mkfifo missing on a non-Windows host -- this case must run "
+              "wherever FIFOs exist, never skip by accident")
+        return
+    repo = make_repo(tmp)
+    (repo / "runtime").mkdir()
+    os.mkfifo(str(repo / "runtime" / "pipe"))
+    (repo / ".gitignore").write_text("runtime/\n", encoding="utf-8")
+    os.symlink("runtime/pipe", str(repo / "channel"))
+    write_card(repo, verify=GREEN)
+    (repo / "CARD.close").write_text("FAILED: honest stop", encoding="utf-8")
+    r = run_gate(repo)          # run_gate's own timeout is the hang detector
+    check(r.returncode == 0,
+          f"honest FAILED close must complete beside a FIFO, "
+          f"got {r.returncode}", r)
+    check((repo / "CARD.receipt.json").exists(),
+          "no receipt written for an honest close", r)
+    check((repo / "runtime" / "pipe").exists(), "the FIFO was consumed", r)
+
+
+def _mode_enforced(base):
+    """Probe, never assume: mode 000 makes a file unreadable only where the
+    filesystem enforces it. Windows chmod toggles the read-only bit alone,
+    and root ignores the mode on POSIX."""
+    probe = Path(base) / "_mode_probe"
+    try:
+        probe.write_text("x", encoding="utf-8")
+        os.chmod(str(probe), 0o000)
+        probe.read_bytes()
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    finally:
+        try:
+            os.chmod(str(probe), 0o600)
+        except OSError:
+            pass
+
+
+def b_close_unreadable_untracked(tmp):
+    """Review of #62, remaining P1: an untracked REGULAR file whose contents
+    cannot be read binds as the same 'unreadable:' sentinel on both
+    attempts, so a verify that granted access, rewrote the bytes and
+    restored mode 000 left H1 == H2 and the close ended VERIFIED over
+    changed source -- a durable receipt certifying bytes the gate never
+    bound, and one that later repair cannot reconstruct.
+
+    VERIFIED intent now refuses by name, BEFORE verify runs (the assertion
+    on the source's bytes is what pins that placement). The honest FAILED
+    and UNVERIFIED closes return before that check and must still complete
+    beside the same file -- that control is what makes this a rule about
+    binding and not a change to the close model.
+
+    Needs a filesystem that enforces the mode; probed, and the refusal is
+    ASSERTED rather than skipped in silence."""
+    if not _mode_enforced(tmp):
+        check(os.name == "nt"
+              or (hasattr(os, "geteuid") and os.geteuid() == 0),
+              "mode 000 stayed readable on a non-Windows, non-root host -- "
+              "this case must run wherever permissions are enforced, never "
+              "skip by accident")
+        return
+    mut = ('"%s" -c "import os,sys;'
+           'os.chmod(\'source.txt\',0o600);'
+           'v=open(\'source.txt\').read();'
+           'sys.exit(1) if \'VALUE = 1\' not in v else None;'
+           'open(\'source.txt\',\'w\').write(\'VALUE = 0\\n\');'
+           'os.chmod(\'source.txt\',0o000)"' % PY)
+    repo = make_repo(tmp, name="unreadable_close")
+    src = repo / "source.txt"
+    src.write_text("VALUE = 1\n", encoding="utf-8")
+    os.chmod(str(src), 0o000)
+    write_card(repo, verify=mut)
+    (repo / "CARD.close").write_text("CLOSE", encoding="utf-8")
+    r = run_gate(repo)
+    check(r.returncode == 2,
+          f"unreadable untracked content must refuse a VERIFIED close, "
+          f"got {r.returncode}", r)
+    check("UNREADABLE-UNTRACKED" in r.stderr,
+          "not named UNREADABLE-UNTRACKED", r)
+    check("source.txt" in r.stderr, "the unreadable path is not named", r)
+    check(not (repo / "CARD.receipt.json").exists(),
+          "receipt written over content the gate could not bind", r)
+    os.chmod(str(src), 0o600)
+    check(src.read_text(encoding="utf-8").strip() == "VALUE = 1",
+          "the source was rewritten: the refusal must land before verify "
+          "runs, not after", r)
+    for token, verdict in (("FAILED: honest stop", "FAILED"),
+                           ("UNVERIFIED: honest stop", "UNVERIFIED")):
+        rp = make_repo(tmp, name="unreadable_" + verdict.lower())
+        s = rp / "source.txt"
+        s.write_text("VALUE = 1\n", encoding="utf-8")
+        os.chmod(str(s), 0o000)
+        write_card(rp, verify=GREEN)
+        (rp / "CARD.close").write_text(token, encoding="utf-8")
+        r = run_gate(rp)
+        os.chmod(str(s), 0o600)
+        check(r.returncode == 0,
+              f"honest {verdict} close must still complete beside an "
+              f"unreadable untracked file, got {r.returncode}", r)
+        check((rp / "CARD.receipt.json").exists(),
+              f"no receipt written for an honest {verdict} close", r)
+
+
+def a_close_rename_from_prefixed_name(tmp):
+    """Review of #62, P3: a -z rename record is TWO fields, "R  <new>\\0
+    <old>\\0". The old-path field carries no XY prefix, so a file actually
+    NAMED '?? ignored.txt' made that field parse as an untracked record and
+    invented an entry for the gitignored 'ignored.txt' -- which the gate
+    then refused to see verify rewrite, blocking a legitimate close over a
+    path the README excludes.
+
+    The trigger needs a file NAMED '?? ignored.txt'; Windows forbids '?' in
+    a filename, so the case asserts that refusal rather than skipping -- the
+    parser is shared, and the POSIX run is what covers it."""
+    if os.name == "nt":
+        probe = Path(tmp) / "?? probe.txt"
+        try:
+            probe.write_text("x", encoding="utf-8")
+        except OSError:
+            return          # '?' is genuinely illegal here: covered on POSIX
+        raise CaseFail("Windows accepted '?' in a filename -- this case must "
+                       "then run here too, never skip by accident")
+    repo = make_repo(tmp)
+    (repo / ".gitignore").write_text("ignored.txt\n", encoding="utf-8")
+    git(repo, "add", ".gitignore")
+    (repo / "?? ignored.txt").write_text("A\nB\nC\nD\n", encoding="utf-8")
+    git(repo, "add", "-f", "?? ignored.txt")
+    git(repo, "commit", "-qm", "add")
+    git(repo, "mv", "?? ignored.txt", "renamed.txt")
+    (repo / "ignored.txt").write_text("before\n", encoding="utf-8")
+    mut = f'"{PY}" -c "open(\'ignored.txt\',\'w\').write(\'after\')"'
+    write_card(repo, verify=mut)
+    (repo / "CARD.close").write_text("CLOSE", encoding="utf-8")
+    r = run_gate(repo)
+    check(r.returncode == 0,
+          f"a gitignored rewrite beside a staged rename must close, "
+          f"got {r.returncode}", r)
+    check((repo / "CARD.receipt.json").exists(), "no receipt written", r)
+    # porcelain renders a rename as `R  "<old>" -> <new>`, old path first
+    st = git(repo, "status", "--porcelain").stdout
+    check(st.lstrip().startswith("R ") and "-> renamed.txt" in st,
+          f"the staged rename was not preserved: {st!r}", r)
 
 
 # ------------------------------------------------- wiring check (adapt/)
@@ -1991,6 +2262,13 @@ CASES = [
     ("allow: honest close on undecodable card", a_honest_undecodable),
     ("block: planted-red, output tail + hatch text", b_planted_red),
     ("block: UNEXPECTED-CHANGE tracked mutation", b_unexpected_tracked),
+    ("block: UNEXPECTED-CHANGE untracked source rewritten mid-verify", b_unexpected_untracked_rewrite),
+    ("block: UNEXPECTED-CHANGE untracked rewrite, non-ASCII name (quoted by porcelain)", b_unexpected_untracked_rewrite_unicode),
+    ("block: UNEXPECTED-CHANGE untracked rewrite, name with a space (quoted by porcelain)", b_unexpected_untracked_rewrite_space),
+    ("block: UNEXPECTED-CHANGE untracked symlink retargeted mid-verify (tracked control)", b_unexpected_untracked_symlink_retarget),
+    ("allow: honest FAILED close beside an untracked FIFO (never opened)", a_honest_close_untracked_fifo),
+    ("block: UNREADABLE-UNTRACKED content on CLOSE (honest FAILED/UNVERIFIED controls)", b_close_unreadable_untracked),
+    ("allow: gitignored rewrite beside a staged rename from a '?? '-prefixed name", a_close_rename_from_prefixed_name),
     ("block: UNEXPECTED-CHANGE new file inside untracked dir (-uall)", b_unexpected_untracked_dir),
     ("block: UNEXPECTED-CHANGE CARD.review.md rewrite mid-verify", b_unexpected_review_rewrite),
     ("block: UNEXPECTED-CHANGE stash round-trip (reflog tripwire)", b_unexpected_stash),

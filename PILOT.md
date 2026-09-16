@@ -56,7 +56,7 @@ One row per card that reaches a receipt, plus one row per card that is abandoned
 | `t2` | ISO timestamp — receipt written | `timestamp` in `CARD.receipt.json` (the gate writes it offset-aware, UTC) | yes |
 | `minutes_card_to_receipt` | `t2 − t0`, minutes | derived by the export command in §3 (b), which refuses an offset-naive `t0` rather than guessing a zone | derived |
 | `minutes_close_loop` | `t2 − t1`, minutes | derived by the export command in §3 (b), same refusal on `t1` | derived |
-| `blocks` | count + the **named** reasons, in order | gate stderr: `BAD-INPUT` · `CARD-CONFIGURED-BUT-MISSING` · `CLOSE-TOKEN` · `SCHEMA` · `GIT-ERROR` · `INDEX-FLAGS` · `UNEXPECTED-CHANGE` · `VERIFY-RED` · `TIMEOUT` · `S3-REVIEW` · `GATE-ERROR` | by hand — see §6 |
+| `blocks` | count + the **named** reasons, in order | gate stderr: `BAD-INPUT` · `CARD-CONFIGURED-BUT-MISSING` · `CLOSE-TOKEN` · `SCHEMA` · `GIT-ERROR` · `INDEX-FLAGS` · `UNREADABLE-UNTRACKED` · `UNEXPECTED-CHANGE` · `VERIFY-RED` · `TIMEOUT` · `S3-REVIEW` · `GATE-ERROR` | by hand — see §6 |
 | `verdict` | `VERIFIED` \| `FAILED` \| `UNVERIFIED` | `verdict` in the receipt | yes |
 | `close_reason` | free text, present on FAILED/UNVERIFIED | `reason` in the receipt | yes |
 | `close_reason_class` | `work` \| `harness` \| `external` | classified by the developer at close — the sixth argument to the export command; **required** on FAILED/UNVERIFIED, refused on VERIFIED | by hand |
@@ -87,6 +87,11 @@ because collapsing it would let the harness's successes and its friction cancel 
   the task. The tie-breaker, recorded so it binds later disputes: ambiguity resolves *against* the
   thesis, because the pre-registration author is also the thesis author — misclassifying friction
   as signal could produce a false survival, which is the expensive error.
+- **Decided by the maintainer, 2026-09-15, when the code was added:** `UNREADABLE-UNTRACKED` counts
+  as **friction**. It has the shape of `INDEX-FLAGS` — a tree condition that hides mutations from
+  the binding — but unlike a skip-worktree flag it is usually not the developer's doing, and the
+  next action it demands is plumbing (chmod, gitignore, remove), not the work. That ambiguity is
+  resolved by the tie-breaker above, against the thesis.
 
 **Abandoned cards are measured too.** A card written, worked, and never closed leaves no receipt
 and would silently vanish from a receipt-only dataset — which would bias the pilot toward exactly

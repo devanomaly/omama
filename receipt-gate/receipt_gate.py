@@ -100,6 +100,7 @@ def main(state):
     import json
     import os
     import re
+    import stat
     import subprocess
     from datetime import datetime, timezone
     from pathlib import Path
@@ -278,6 +279,48 @@ def main(state):
         kind = entry[0]
         return entry[1] if kind == "sha" else kind
 
+    def read_untracked(p):
+        """Token for ONE untracked path. Unlike read_family this never
+        follows a link and never opens a non-regular file, because an
+        untracked path is attacker-shaped in a way the CARD family is not:
+
+        - a symlink is bound as 'link:<target>', not as its target's bytes.
+          read_bytes() follows the link, so an untracked dir-symlink raised
+          IsADirectoryError and recorded the SAME 'unreadable:' sentinel on
+          both attempts -- a verify could retarget the link permanently and
+          still close VERIFIED. The target's own contents are bound too when
+          they are tracked (pinned diff) or themselves untracked (their own
+          entry), so binding the link's target STRING is what was missing.
+        - a FIFO/device is bound by type alone. Opening one blocks forever
+          waiting for a writer, and this runs OUTSIDE the verify timeout, so
+          it hung an honest FAILED close -- the one close that must always
+          remain available.
+
+        An unreadable path still becomes a named sentinel rather than a
+        crash, so an honest FAILED/UNVERIFIED close can always complete --
+        but that sentinel is stable across a permission flip, so a verify
+        could grant access, rewrite and restore it invisibly. VERIFIED
+        intent therefore refuses on it by name (UNREADABLE-UNTRACKED,
+        beside the INDEX-FLAGS check); the refusal lives there and not
+        here so that the honest close, which never reaches it, is
+        untouched."""
+        try:
+            st = os.lstat(str(p))
+        except FileNotFoundError:
+            return ("absent", None, None)
+        except OSError as e:
+            return ("unreadable:" + type(e).__name__, None, None)
+        if stat.S_ISLNK(st.st_mode):
+            try:
+                return ("link:" + os.readlink(str(p)), None, None)
+            except OSError as e:
+                return ("unreadable:" + type(e).__name__, None, None)
+        if stat.S_ISDIR(st.st_mode):
+            return ("dir", None, None)      # -uall lists files, not dirs
+        if not stat.S_ISREG(st.st_mode):
+            return ("special:" + str(stat.S_IFMT(st.st_mode)), None, None)
+        return read_family(p)
+
     def material(repo, preread=None):
         """(digest, comps, diff_bytes). Any git failure raises GitError.
         preread maps family labels to read_family() entries captured at
@@ -288,18 +331,64 @@ def main(state):
         comps["rev"] = rev.strip()
         diff_bytes = pinned_diff(repo)
         comps["diff_sha"] = sha(diff_bytes)
-        _, status = run_git(repo, ["status", "--porcelain",
-                                   "--untracked-files=all"])
+        # -z, read as bytes: porcelain WITHOUT -z renders a name that is not
+        # plain ASCII as a C-quoted escape ("caf\303\251.txt"), and stripping
+        # the quotes yields a path that does not exist -- read_family() then
+        # returns the same `absent` sentinel on both attempts, so a rewrite of
+        # that file is invisible and the close ends VERIFIED. core.quotepath
+        # =false is NOT enough: a name containing a space stays quoted. -z is
+        # the only form that is raw and unambiguous, and fsdecode (not the
+        # errors="replace" of text mode, which corrupts a name into U+FFFD)
+        # is what round-trips those bytes back to an openable path.
+        _, status_b = run_git(repo, ["status", "--porcelain",
+                                     "--untracked-files=all", "-z"],
+                              binary=True)
         rel = receipt_rel(repo)
         untracked = []
-        for ln in status.splitlines():
-            if not ln.startswith("??"):
+        # A -z rename/copy record is TWO NUL-terminated fields: "R  <new>\0
+        # <old>\0". The old-path field carries no XY prefix, so a file
+        # actually NAMED "?? ignored.txt" made the second field look like an
+        # untracked record and produced a phantom entry for "ignored.txt" --
+        # a gitignored path the gate then refused to see rewritten. Consume
+        # the continuation field with the record that owns it.
+        recs = status_b.split(b"\0")
+        i = 0
+        while i < len(recs):
+            rec = recs[i]
+            i += 1
+            if len(rec) < 3 or rec[2:3] != b" ":
+                continue        # not a status record (trailing empty split)
+            if rec[0:1] in (b"R", b"C") or rec[1:2] in (b"R", b"C"):
+                i += 1          # skip this record's old-path field
                 continue
-            name = ln[3:].strip().strip('"')
+            if not rec.startswith(b"?? "):
+                continue
+            name = os.fsdecode(rec[3:])
             if rel and name == rel:
                 continue  # the gate's own output: excluded entirely
             untracked.append(name)
-        comps["untracked"] = "\n".join(sorted(untracked))
+        untracked.sort()
+        # A list, not "\n".join: the names are -z-raw, and a POSIX filename
+        # may contain a newline, which a line-oriented component splits into
+        # two phantom names in the added/removed report. Same reason
+        # untracked_content is a mapping; json.dumps(sort_keys=True) already
+        # serializes comps for the digest, so the sequence costs nothing.
+        comps["untracked"] = untracked
+        # Names alone let a verify rewrite an untracked source and still
+        # close VERIFIED: `git diff HEAD` never reports untracked contents,
+        # so the name set is identical across the rewrite and H1 == H2. A
+        # new file is what a card most often produces, so untracked is the
+        # common case at close, not an edge. Contents go through the same
+        # reader the CARD family uses: an unreadable path becomes a named
+        # sentinel rather than a crash, so an honest close can complete.
+        # Keyed by name rather than "<token> <name>" lines: with -z the names
+        # are raw, and a POSIX filename may contain a newline, which a
+        # line-oriented component cannot represent unambiguously. comps is
+        # already serialized through json.dumps(sort_keys=True) for the
+        # digest, so a mapping costs nothing and cannot be mis-split.
+        comps["untracked_content"] = {
+            name: family_token(read_untracked(repo / name))
+            for name in untracked}
         _, reflog = run_git(repo, ["reflog", "--format=%H %gs"])
         if not reflog.strip():
             print("WARNING: empty HEAD reflog -- the stash/checkout tripwire "
@@ -609,6 +698,26 @@ def main(state):
                     f"{h1['index_flags']}\n"
                     "Clear them (git update-index --no-assume-unchanged / "
                     f"--no-skip-worktree <path>) and re-close. {HATCH}")
+    # Same shape as INDEX-FLAGS, one step further out: a path whose bytes
+    # cannot be read binds as the SAME 'unreadable:' sentinel on both
+    # attempts, so a verify that grants access, rewrites and restores it
+    # (mode 000, an ACL) left H1 == H2 and the close ended VERIFIED over
+    # changed source. Only VERIFIED intent refuses -- the honest branch
+    # returned above, so FAILED/UNVERIFIED still close beside such a path,
+    # which is what keeps this a binding rule rather than a close-model
+    # change. h2 needs no twin check: a path readable at H1 and unreadable
+    # at H2 has two different tokens, which is UNEXPECTED-CHANGE by name.
+    blind = sorted(nm for nm, tok in h1["untracked_content"].items()
+                   if tok.startswith("unreadable:"))
+    if blind:
+        raise Block("UNREADABLE-UNTRACKED",
+                    "close intends VERIFIED but the contents of these "
+                    "untracked paths cannot be read, so the receipt would "
+                    "certify bytes the gate never bound:\n"
+                    + "\n".join(f"  {nm}  ({h1['untracked_content'][nm]})"
+                                for nm in blind)
+                    + "\nMake them readable, gitignore them, or remove them, "
+                      f"then re-close. {HATCH}")
 
     try:
         v_exit, v_out = run_verify(command, card_repo, timeout)
@@ -629,13 +738,22 @@ def main(state):
         changed = sorted(k for k in h1 if h1.get(k) != h2.get(k))
         detail = []
         if "untracked" in changed:
-            before = set(h1["untracked"].splitlines())
-            after = set(h2["untracked"].splitlines())
+            before = set(h1["untracked"])
+            after = set(h2["untracked"])
             added, removed = sorted(after - before), sorted(before - after)
             if added:
                 detail.append("new untracked names: " + ", ".join(added))
             if removed:
                 detail.append("removed untracked names: " + ", ".join(removed))
+        if "untracked_content" in changed:
+            b = h1["untracked_content"]
+            a = h2["untracked_content"]
+            rewritten = sorted(nm for nm in set(b) & set(a)
+                               if b[nm] != a[nm])
+            if rewritten:
+                detail.append("rewritten untracked files: "
+                              + ", ".join(rewritten))
+        if detail:
             detail.append("remediation: gitignore run-unique artifacts and "
                           "re-close (a .gitignore edit between attempts "
                           "exits the loop in one edit, no commit needed)")
