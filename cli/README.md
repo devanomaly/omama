@@ -151,8 +151,10 @@ every platform, because a hook committed as `100644` is skipped by Git on POSIX 
 only a hint; an untracked hook is a `WARNING`, a wrong recorded mode a `VIOLATION`, and both
 name the remedy (`git update-index --chmod=+x` on the three hooks, preceded by `chmod +x` on
 POSIX), printed with `git -C "<inspected repository>"` so it acts on the repository doctor
-read and not on the directory it is pasted into; an index Git cannot read is `NOT-RUN`, never
-"untracked" — privacy config/token state, and the wrapper-selected Python route.
+read and not on the directory it is pasted into (shell-quoted on POSIX; on Windows a path
+holding `%`, `!`, `$`, a backtick or a typographic double quote gets a manual step and no
+repository-bound line, because no quoting is common to CMD, PowerShell and Git Bash); an index
+or HEAD Git cannot read is `NOT-RUN`, never "untracked" or "unborn" — privacy config/token state, and the wrapper-selected Python route.
 No token values are printed.
 
 Mandatory admission first requires the full dynamic doctor report under the current private

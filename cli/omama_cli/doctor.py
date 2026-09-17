@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -450,8 +451,16 @@ def _probe_managed_gate(wiring_checker, expected_command, target, report):
 HOOK_PATHS = (".githooks/pre-commit", ".githooks/pre-merge-commit", ".githooks/privacy-pre-commit")
 
 
+# Inside the double quotes every Windows shell needs for a path with spaces,
+# each of these is rewritten by at least one of them: CMD expands %NAME% (and
+# !NAME! under delayed expansion, as interactive Git Bash does history), and
+# PowerShell closes the string at a typographic double quote. `$`, the
+# backtick and newlines never get here: resolve_target refuses such a root.
+_WINDOWS_SHELL_ACTIVE = '%!"\u201c\u201d\u201e'
+
+
 def hook_mode_remedy(target):
-    """The one-line fix for hooks Git records without the executable bit.
+    """The fix for hooks Git records without the executable bit.
 
     On Windows os.chmod cannot set the bit and core.fileMode is false, so the
     index is the only place it can be stated; on POSIX the working file must
@@ -459,14 +468,28 @@ def hook_mode_remedy(target):
 
     Bound to the inspected repository, as every check here is: `--chmod` also
     re-stages the working-tree content, so the same line run from another
-    repository would replace that repository's staging selection instead.
+    repository would replace that repository's staging selection instead. The
+    binding has to survive the operator's shell: POSIX sh has one literal
+    quoting (shlex.quote); Windows has three shells and no quoting common to
+    them, so a root any of them would rewrite gets no repository-bound line at
+    all -- a line that succeeds against a different repository is worse than
+    a manual step.
     """
     root = target.root.as_posix()
-    update = 'git -C "{0}" update-index --chmod=+x {1}'.format(root, " ".join(HOOK_PATHS))
+    paths = " ".join(HOOK_PATHS)
+    unprintable = any(ord(ch) < 0x20 or ord(ch) == 0x7f for ch in root)
     if os.name == "nt":
-        return update
-    files = " ".join('"{0}/{1}"'.format(root, path) for path in HOOK_PATHS)
-    return "chmod +x {0} && {1}".format(files, update)
+        if not unprintable and not any(ch in _WINDOWS_SHELL_ACTIVE for ch in root):
+            return 'git -C "{0}" update-index --chmod=+x {1}'.format(root, paths)
+        manual = "git update-index --chmod=+x " + paths
+    else:
+        if not unprintable:
+            return "chmod +x {0} && git -C {1} update-index --chmod=+x {2}".format(
+                " ".join(shlex.quote(root + "/" + path) for path in HOOK_PATHS), shlex.quote(root), paths)
+        manual = "chmod +x {0} && git update-index --chmod=+x {0}".format(paths)
+    return ("no repository-bound line can be printed, because this repository's path holds a "
+            "character a shell would expand or unquote. With THAT repository as the shell's "
+            "current directory, run: " + manual)
 
 
 def _git_lines(target, *args):
@@ -478,6 +501,12 @@ def _git_lines(target, *args):
     if result.returncode != 0:
         return None
     return [ln for ln in result.stdout.splitlines() if ln.strip()]
+
+
+def _exact_rows(rows, relative):
+    """Rows of `<fields><TAB><path>` output whose path IS `relative`: a pathspec
+    also matches every entry beneath it, and a child is not the hook."""
+    return [r.split("\t", 1)[0].split() for r in rows if r.split("\t", 1)[-1] == relative]
 
 
 def _index_mode(target, relative):
@@ -493,25 +522,33 @@ def _index_mode(target, relative):
     rows = _git_lines(target, "ls-files", "--stage", "--", relative)
     if rows is None:
         return "unreadable"
-    if not rows:
+    parsed = _exact_rows(rows, relative)
+    if not parsed:
         return None
-    parsed = [r.split() for r in rows]
-    stage0 = [f for f in parsed if len(f) >= 4 and f[2] == "0"]
-    if len(stage0) != 1:
+    if len(parsed) != 1 or len(parsed[0]) != 3 or parsed[0][2] != "0":
         return "conflict"
-    return stage0[0][0]
+    return parsed[0][0]
+
+
+def _head_is_unborn(target):
+    """Affirmative evidence only: a symbolic HEAD Git can read, naming a branch
+    that does not exist. A ref Git cannot resolve is not an unborn one."""
+    ref = _git_lines(target, "symbolic-ref", "-q", "HEAD")
+    if not ref:
+        return False
+    return _git_lines(target, "show-ref", "--verify", "--quiet", ref[0]) is None
 
 
 def _head_mode(target, relative):
     """Mode HEAD records for a path; None (unborn HEAD, or path absent);
-    "unreadable" when HEAD exists but Git could not list it."""
+    "unreadable" when Git could not list HEAD and it is not provably unborn."""
     rows = _git_lines(target, "ls-tree", "HEAD", "--", relative)
     if rows is None:
-        born = _git_lines(target, "rev-parse", "--verify", "--quiet", "HEAD")
-        return "unreadable" if born else None
-    if not rows:
+        return None if _head_is_unborn(target) else "unreadable"
+    parsed = _exact_rows(rows, relative)
+    if not parsed:
         return None
-    return rows[0].split()[0]
+    return parsed[0][0]
 
 
 def _probe_validator(interpreter, validator, scratch, report):
