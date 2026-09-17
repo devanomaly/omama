@@ -164,7 +164,10 @@ O doctor também lê o modo que o Git registra para os três hooks em `.githooks
 plataformas: no Windows o bit de execução não pode ser gravado no disco, e um hook
 registrado como `100644` é ignorado pelo Git em clones POSIX com apenas um `hint:`. Hook ainda
 não rastreado é `WARNING`; modo registrado errado é `VIOLATION`; ambos nomeiam o remédio
-(`git update-index --chmod=+x` nos três hooks, precedido de `chmod +x` em POSIX).
+(`git update-index --chmod=+x` nos três hooks, precedido de `chmod +x` em POSIX), impresso com
+`git -C "<repositório inspecionado>"` para agir no repositório que o doctor leu, e não no
+diretório onde a linha for colada. Índice que o Git não consegue ler é `NOT-RUN`, nunca
+"não rastreado".
 
 ## Distribuição e proveniência
 

@@ -287,6 +287,84 @@ class DoctorContractTests(unittest.TestCase):
         self.assertNotIn("WARNING[privacy-mode]", output)
         self.assertNotIn("Commit required", output)
 
+    def test_hook_mode_remedy_is_bound_to_the_inspected_repository(self):
+        """PR #63 review P1: doctor inspects `git -C <target>`, so the remedy it
+        prints must act there too. `update-index --chmod` also re-stages the
+        working-tree content, so run from another repository it would silently
+        replace that repository's staging selection and leave the target inert."""
+        root = self.prepare(complete=True)
+        hooks = [".githooks/pre-commit", ".githooks/pre-merge-commit", ".githooks/privacy-pre-commit"]
+        subprocess.run(["git", "-C", str(root), "add", "--"] + hooks, check=True)
+        subprocess.run(["git", "-C", str(root), "update-index", "--chmod=-x", "--"] + hooks, check=True)
+
+        # A bystander repository holding the same hook names, partially staged.
+        other = Path(tempfile.mkdtemp(prefix="bystander-", dir=install_fixture._test_root()))
+        subprocess.run(["git", "init", "-q", str(other)], check=True)
+        (other / ".githooks").mkdir()
+        for name in hooks:
+            (other / name).write_bytes(b"# staged content\n")
+        subprocess.run(["git", "-C", str(other), "add", "--"] + hooks, check=True)
+        subprocess.run(["git", "-C", str(other), "update-index", "--chmod=-x", "--"] + hooks, check=True)
+        for name in hooks:
+            (other / name).write_bytes(b"# unstaged content\n")
+
+        def staged(repo):
+            return subprocess.run(
+                ["git", "-C", str(repo), "ls-files", "--stage"], check=True,
+                stdout=subprocess.PIPE, text=True, encoding="utf-8",
+            ).stdout
+
+        bystander_before = staged(other)
+        result = self.run_cli(other, "doctor", str(root), "--static-only")
+        self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+        remedies = [ln.split("Remedy: ", 1)[1] for ln in result.stderr.splitlines()
+                    if "VIOLATION[privacy-mode]" in ln and "Remedy: " in ln]
+        self.assertTrue(remedies, result.stderr)
+
+        # Execute the line exactly as printed, from the bystander's directory.
+        applied = subprocess.run(
+            remedies[0], shell=True, cwd=str(other),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            encoding="utf-8", errors="replace", check=False,
+        )
+        self.assertEqual(0, applied.returncode, remedies[0] + "\n" + applied.stdout + applied.stderr)
+        self.assertEqual(bystander_before, staged(other))
+        target_modes = {ln.split()[0] for ln in staged(root).splitlines() if ln.split()[3] in hooks}
+        self.assertEqual({"100755"}, target_modes)
+
+    def test_crlf_drift_does_not_mask_the_recorded_mode(self):
+        """PR #63 review P3: ordinary CRLF drift changes the hook's bytes, so it
+        fails installed identity -- and that must not hide the 100644 the index
+        records, or the operator repairs the bytes and ships the inert mode."""
+        root = self.prepare(complete=True)
+        hooks = [".githooks/pre-commit", ".githooks/pre-merge-commit", ".githooks/privacy-pre-commit"]
+        subprocess.run(["git", "-C", str(root), "add", "--"] + hooks, check=True)
+        subprocess.run(["git", "-C", str(root), "update-index", "--chmod=-x", "--"] + hooks, check=True)
+        for name in hooks:
+            data = (root / name).read_bytes()
+            (root / name).write_bytes(data.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+        result = self.run_cli(root, "doctor", str(root), "--static-only")
+        self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+        for name in hooks:
+            self.assertIn("missing or drifted: " + name, result.stderr)
+            self.assertIn("recorded in the Git index as 100644, not 100755: " + name, result.stderr)
+
+    def test_failed_index_inspection_is_not_reported_as_untracked(self):
+        """PR #63 review P2: `git ls-files --stage` failing is not the same as it
+        finding no entry; doctor must name the incomplete coverage, not hand
+        out the untracked-hook WARNING over an index it could not read."""
+        root = self.prepare(complete=True)
+        git_dir = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--absolute-git-dir"], check=True,
+            stdout=subprocess.PIPE, text=True, encoding="utf-8",
+        ).stdout.strip()
+        (Path(git_dir) / "index").write_bytes(b"broken index\n")
+        result = self.run_cli(root, "doctor", str(root), "--static-only")
+        output = result.stdout + result.stderr
+        self.assertIn("NOT-RUN[privacy-mode]", result.stderr)
+        self.assertNotIn("not yet tracked", output)
+        self.assertNotIn("DOCTOR-OK", output)
+
     def test_standalone_partial_state_is_unhealthy_private_owner_is_allowed_and_foreign_is_not(self):
         root = self.prepare(complete=True)
         owner = "synthetic-owner"

@@ -450,17 +450,23 @@ def _probe_managed_gate(wiring_checker, expected_command, target, report):
 HOOK_PATHS = (".githooks/pre-commit", ".githooks/pre-merge-commit", ".githooks/privacy-pre-commit")
 
 
-def hook_mode_remedy():
+def hook_mode_remedy(target):
     """The one-line fix for hooks Git records without the executable bit.
 
     On Windows os.chmod cannot set the bit and core.fileMode is false, so the
     index is the only place it can be stated; on POSIX the working file must
     carry it too, or the tree stays mode-dirty after the index is fixed.
+
+    Bound to the inspected repository, as every check here is: `--chmod` also
+    re-stages the working-tree content, so the same line run from another
+    repository would replace that repository's staging selection instead.
     """
-    paths = " ".join(HOOK_PATHS)
+    root = target.root.as_posix()
+    update = 'git -C "{0}" update-index --chmod=+x {1}'.format(root, " ".join(HOOK_PATHS))
     if os.name == "nt":
-        return "git update-index --chmod=+x " + paths
-    return "chmod +x {0} && git update-index --chmod=+x {0}".format(paths)
+        return update
+    files = " ".join('"{0}/{1}"'.format(root, path) for path in HOOK_PATHS)
+    return "chmod +x {0} && {1}".format(files, update)
 
 
 def _git_lines(target, *args):
@@ -476,13 +482,17 @@ def _git_lines(target, *args):
 
 def _index_mode(target, relative):
     """Mode Git records for a path: "100755"-style; None when untracked;
-    "conflict" when the index holds merge stages instead of one stage-0 entry.
+    "conflict" when the index holds merge stages instead of one stage-0 entry;
+    "unreadable" when Git could not inspect the index at all, which is not
+    the same finding as an index that holds no entry.
 
     The index is what a clone receives, and on Windows it is the only place
     the executable bit can be expressed at all -- os.chmod cannot set it and
     core.fileMode is false, so the filesystem check says nothing there.
     """
     rows = _git_lines(target, "ls-files", "--stage", "--", relative)
+    if rows is None:
+        return "unreadable"
     if not rows:
         return None
     parsed = [r.split() for r in rows]
@@ -493,8 +503,12 @@ def _index_mode(target, relative):
 
 
 def _head_mode(target, relative):
-    """Mode HEAD records for a path, or None (unborn HEAD, or path absent)."""
+    """Mode HEAD records for a path; None (unborn HEAD, or path absent);
+    "unreadable" when HEAD exists but Git could not list it."""
     rows = _git_lines(target, "ls-tree", "HEAD", "--", relative)
+    if rows is None:
+        born = _git_lines(target, "rev-parse", "--verify", "--quiet", "HEAD")
+        return "unreadable" if born else None
     if not rows:
         return None
     return rows[0].split()[0]
@@ -592,25 +606,22 @@ def _privacy(target, by_destination, interpreter, static_only, scratch, report, 
     privacy_trusted = bool(base_trusted)
     modes_verified = True
     for destination in required:
-        path = _trusted_path(target, by_destination, destination)
-        if path is None:
-            privacy_trusted = False
-            report.add("VIOLATION", "privacy-component", "missing or drifted: {0}".format(destination))
-            continue
-        data = path.read_bytes()
+        # The recorded mode is read before, and independently of, the byte
+        # checks: neither a drifted hook (CRLF drift fails installed identity)
+        # nor a trusted CRLF-dirty one may mask a hook Git will refuse to run.
         if destination.startswith(".githooks/"):
-            if b"\r\n" in data or not data.endswith(b"\n"):
-                privacy_trusted = False
-                report.add("VIOLATION", "privacy-mode", "hook is not LF/terminal-newline clean: {0}".format(destination))
-            # Deliberately NOT chained to the LF check: a CRLF-dirty hook
-            # must not mask a hook Git will refuse to run.
             index_mode = _index_mode(target, destination)
-            if index_mode is None:
+            if index_mode == "unreadable":
+                modes_verified = False
+                report.add("NOT-RUN", "privacy-mode",
+                           "git ls-files --stage failed, so the recorded mode could not be "
+                           "inspected: {0}. Repair the Git index and rerun".format(destination))
+            elif index_mode is None:
                 modes_verified = False
                 report.add("WARNING", "privacy-mode",
                            "hook is not yet tracked, so the mode a clone would receive is not "
                            "recorded: {0}. When you commit the hooks, run: {1}".format(
-                               destination, hook_mode_remedy()))
+                               destination, hook_mode_remedy(target)))
             elif index_mode == "conflict":
                 modes_verified = False
                 report.add("WARNING", "privacy-mode",
@@ -623,17 +634,32 @@ def _privacy(target, by_destination, interpreter, static_only, scratch, report, 
                     "hook is recorded in the Git index as {0}, not 100755: {1}. Git SKIPS a "
                     "non-executable hook under core.hooksPath with only a hint, so a clone of "
                     "this repository commits with the privacy guard inert. Remedy: {2}".format(
-                        index_mode, destination, hook_mode_remedy()))
+                        index_mode, destination, hook_mode_remedy(target)))
             else:
                 head_mode = _head_mode(target, destination)
-                if head_mode is not None and head_mode != "100755":
+                if head_mode == "unreadable":
+                    modes_verified = False
+                    report.add("NOT-RUN", "privacy-mode",
+                               "git ls-tree HEAD failed, so the committed mode could not be "
+                               "inspected: {0}".format(destination))
+                elif head_mode is not None and head_mode != "100755":
                     modes_verified = False
                     report.add("WARNING", "privacy-mode",
                                "index records 100755 but HEAD still records {0}: {1}. Commit required, "
                                "or every fresh clone keeps the inert mode".format(head_mode, destination))
+        path = _trusted_path(target, by_destination, destination)
+        if path is None:
+            privacy_trusted = False
+            report.add("VIOLATION", "privacy-component", "missing or drifted: {0}".format(destination))
+            continue
+        data = path.read_bytes()
+        if destination.startswith(".githooks/"):
+            if b"\r\n" in data or not data.endswith(b"\n"):
+                privacy_trusted = False
+                report.add("VIOLATION", "privacy-mode", "hook is not LF/terminal-newline clean: {0}".format(destination))
             if os.name != "nt" and not (path.stat().st_mode & 0o111):
                 privacy_trusted = False
-                report.add("VIOLATION", "privacy-mode", "hook is not executable: {0}. Remedy: {1}".format(destination, hook_mode_remedy()))
+                report.add("VIOLATION", "privacy-mode", "hook is not executable: {0}. Remedy: {1}".format(destination, hook_mode_remedy(target)))
     if privacy_trusted:
         if modes_verified:
             report.add("OK", "privacy-components", "both chainers, wrapper and scanner match installed identity; LF clean; Git index mode 100755 on every platform, and the filesystem executable bit additionally on POSIX")
