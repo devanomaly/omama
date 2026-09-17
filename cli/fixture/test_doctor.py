@@ -241,6 +241,259 @@ class DoctorContractTests(unittest.TestCase):
         self.assertIn("VIOLATION[relocation]", result.stderr)
         self.assertIn("rerun init", result.stderr)
 
+    def test_hook_index_mode_is_checked_on_every_platform_and_names_the_remedy(self):
+        """#59: a hook Git records as 100644 is SKIPPED by Git on POSIX clones with
+        only a hint, so doctor must read the INDEX mode on every platform (Windows
+        cannot express the bit on disk) and name the one-line remedy."""
+        import tempfile
+        root = self.prepare(complete=True)
+        hooks = [".githooks/pre-commit", ".githooks/pre-merge-commit", ".githooks/privacy-pre-commit"]
+        no_hooks = ["-c", "core.hooksPath=" + tempfile.mkdtemp(prefix="nohooks-", dir=install_fixture._test_root())]
+
+        # Fresh init: hooks published but untracked -> a WARNING that carries the
+        # remedy, never a VIOLATION and never NOT-RUN (which would fail init itself).
+        result = self.run_cli(root, "doctor", str(root), "--static-only")
+        output = result.stdout + result.stderr
+        self.assertIn("WARNING[privacy-mode]", output)
+        self.assertIn("not yet tracked", output)
+        self.assertIn("update-index --chmod=+x", output)
+        self.assertNotIn("VIOLATION[privacy-mode]", output)
+        self.assertNotIn("NOT-RUN[privacy-mode]", output)
+
+        # Commit the hooks as 100644 -- exactly what a Windows-authored adoption
+        # produces -- and doctor must say so, on nt and POSIX alike.
+        subprocess.run(["git", "-C", str(root), "add", "--"] + hooks, check=True)
+        subprocess.run(["git", "-C", str(root), "update-index", "--chmod=-x", "--"] + hooks, check=True)
+        subprocess.run(["git", "-C", str(root)] + no_hooks + ["commit", "-q", "-m", "hooks at 100644"], check=True)
+        result = self.run_cli(root, "doctor", str(root), "--static-only")
+        output = result.stdout + result.stderr
+        self.assertEqual(1, result.returncode, output)
+        self.assertIn("VIOLATION[privacy-mode]", result.stderr)
+        self.assertIn("recorded in the Git index as 100644", result.stderr)
+        self.assertIn("update-index --chmod=+x .githooks/pre-commit .githooks/pre-merge-commit .githooks/privacy-pre-commit", result.stderr)
+
+        # Apply the remedy: the index is right, HEAD is not yet -> "commit required".
+        subprocess.run(["git", "-C", str(root), "update-index", "--chmod=+x", "--"] + hooks, check=True)
+        result = self.run_cli(root, "doctor", str(root), "--static-only")
+        output = result.stdout + result.stderr
+        self.assertNotIn("VIOLATION[privacy-mode]", output)
+        self.assertIn("Commit required", output)
+
+        # After the commit nothing about the mode remains to say.
+        subprocess.run(["git", "-C", str(root)] + no_hooks + ["commit", "-q", "-m", "hooks at 100755"], check=True)
+        result = self.run_cli(root, "doctor", str(root), "--static-only")
+        output = result.stdout + result.stderr
+        self.assertNotIn("VIOLATION[privacy-mode]", output)
+        self.assertNotIn("WARNING[privacy-mode]", output)
+        self.assertNotIn("Commit required", output)
+
+    def test_hook_mode_remedy_is_bound_to_the_inspected_repository(self):
+        """PR #63 review P1: doctor inspects `git -C <target>`, so the remedy it
+        prints must act there too. `update-index --chmod` also re-stages the
+        working-tree content, so run from another repository it would silently
+        replace that repository's staging selection and leave the target inert."""
+        root = self.prepare(complete=True)
+        hooks = [".githooks/pre-commit", ".githooks/pre-merge-commit", ".githooks/privacy-pre-commit"]
+        subprocess.run(["git", "-C", str(root), "add", "--"] + hooks, check=True)
+        subprocess.run(["git", "-C", str(root), "update-index", "--chmod=-x", "--"] + hooks, check=True)
+
+        # A bystander repository holding the same hook names, partially staged.
+        other = Path(tempfile.mkdtemp(prefix="bystander-", dir=install_fixture._test_root()))
+        subprocess.run(["git", "init", "-q", str(other)], check=True)
+        (other / ".githooks").mkdir()
+        for name in hooks:
+            (other / name).write_bytes(b"# staged content\n")
+        subprocess.run(["git", "-C", str(other), "add", "--"] + hooks, check=True)
+        subprocess.run(["git", "-C", str(other), "update-index", "--chmod=-x", "--"] + hooks, check=True)
+        for name in hooks:
+            (other / name).write_bytes(b"# unstaged content\n")
+
+        def staged(repo):
+            return subprocess.run(
+                ["git", "-C", str(repo), "ls-files", "--stage"], check=True,
+                stdout=subprocess.PIPE, text=True, encoding="utf-8",
+            ).stdout
+
+        bystander_before = staged(other)
+        result = self.run_cli(other, "doctor", str(root), "--static-only")
+        self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+        remedies = [ln.split("Remedy: ", 1)[1] for ln in result.stderr.splitlines()
+                    if "VIOLATION[privacy-mode]" in ln and "Remedy: " in ln]
+        self.assertTrue(remedies, result.stderr)
+
+        # Execute the line exactly as printed, from the bystander's directory.
+        applied = subprocess.run(
+            remedies[0], shell=True, cwd=str(other),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            encoding="utf-8", errors="replace", check=False,
+        )
+        self.assertEqual(0, applied.returncode, remedies[0] + "\n" + applied.stdout + applied.stderr)
+        self.assertEqual(bystander_before, staged(other))
+        target_modes = {ln.split()[0] for ln in staged(root).splitlines() if ln.split()[3] in hooks}
+        self.assertEqual({"100755"}, target_modes)
+
+    HOOKS = [".githooks/pre-commit", ".githooks/pre-merge-commit", ".githooks/privacy-pre-commit"]
+
+    def _staged(self, repo):
+        return subprocess.run(
+            ["git", "-C", str(repo), "ls-files", "--stage"], check=True,
+            stdout=subprocess.PIPE, text=True, encoding="utf-8",
+        ).stdout
+
+    def _named_target_with_bystander(self, name, bystander_name):
+        """A prepared target at <parent>/<name> whose hooks are staged 100644,
+        beside a bystander holding partially staged hooks of the same names."""
+        parent = Path(tempfile.mkdtemp(prefix="roots-", dir=install_fixture._test_root()))
+        root = parent / name
+        root.mkdir()
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        # --no-git-config: the prepared route accepts every root this test
+        # names, and standalone doctor still emits the remedy for it.
+        result = self.run_cli(parent, "init", str(root), "--python", self.explicit, "--no-git-config")
+        self.assertEqual(2, result.returncode, result.stdout + result.stderr)
+        subprocess.run(["git", "-C", str(root), "add", "--"] + self.HOOKS, check=True)
+        subprocess.run(["git", "-C", str(root), "update-index", "--chmod=-x", "--"] + self.HOOKS, check=True)
+        other = parent / bystander_name
+        other.mkdir()
+        subprocess.run(["git", "init", "-q", str(other)], check=True)
+        (other / ".githooks").mkdir()
+        for hook in self.HOOKS:
+            (other / hook).write_bytes(b"# staged content\n")
+        subprocess.run(["git", "-C", str(other), "add", "--"] + self.HOOKS, check=True)
+        subprocess.run(["git", "-C", str(other), "update-index", "--chmod=-x", "--"] + self.HOOKS, check=True)
+        for hook in self.HOOKS:
+            (other / hook).write_bytes(b"# unstaged content\n")
+            os.chmod(str(other / hook), 0o644)
+        return parent, root, other, result
+
+    def _mode_lines(self, text):
+        return [ln for ln in text.splitlines() if "privacy-mode" in ln or "HOOK MODE" in ln]
+
+    def test_hook_mode_remedy_keeps_the_literal_root_through_the_shell(self):
+        """PR #63 review round 3 P1: the root was interpolated into double quotes,
+        so a shell could rewrite it -- `tar""get` unquotes to a sibling `target`
+        under sh, `%NAME%` expands under CMD -- and the line then succeeded
+        against a different repository. Either the literal root survives the
+        shell or no repository-bound line is printed at all."""
+        # utf-8 on the child's pipe: run_cli decodes utf-8, and a root that is
+        # not ASCII must reach this test as the bytes doctor meant.
+        extra = {"PR63_SEGMENT": "bystander", "PYTHONIOENCODING": "utf-8"}
+        if os.name == "nt":
+            # No quoting survives CMD, PowerShell and Git Bash alike: refuse.
+            for name in ("%PR63_SEGMENT%", "!PR63_SEGMENT!"):
+                parent, root, other, init = self._named_target_with_bystander(name, "bystander")
+                result = self.run_cli(parent, "doctor", str(root), "--static-only", extra_env=extra)
+                lines = self._mode_lines(result.stdout + result.stderr + init.stdout + init.stderr)
+                self.assertTrue(any("HOOK MODE" in ln for ln in lines), name)
+                self.assertTrue(any("VIOLATION[privacy-mode]" in ln for ln in lines), name)
+                for line in lines:
+                    self.assertNotIn("git -C", line, name)
+                    self.assertIn("no repository-bound line", line, name)
+            cases = [("sp ace's ü", "bystander")]
+        else:
+            cases = [('tar""get', "target"), ("%PR63_SEGMENT%!x!", "bystander"), ("sp ace's ü", "bystander")]
+        for name, bystander_name in cases:
+            parent, root, other, _ = self._named_target_with_bystander(name, bystander_name)
+            before = self._staged(other)
+            fs_before = [(other / hook).stat().st_mode for hook in self.HOOKS]
+            result = self.run_cli(parent, "doctor", str(root), "--static-only", extra_env=extra)
+            remedies = [ln.split("Remedy: ", 1)[1] for ln in result.stderr.splitlines()
+                        if "VIOLATION[privacy-mode]" in ln and "Remedy: " in ln]
+            self.assertTrue(remedies, name + "\n" + result.stderr)
+            env = os.environ.copy()
+            env.update(extra)
+            applied = subprocess.run(
+                remedies[0], shell=True, cwd=str(other), env=env,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            )
+            self.assertEqual(0, applied.returncode, repr((name, remedies[0], applied.stdout, applied.stderr)))
+            self.assertEqual(before, self._staged(other), name)
+            self.assertEqual(fs_before, [(other / hook).stat().st_mode for hook in self.HOOKS], name)
+            for hook in self.HOOKS:
+                self.assertEqual(b"# unstaged content\n", (other / hook).read_bytes(), name)
+            modes = {ln.split()[0] for ln in self._staged(root).splitlines() if ln.split("\t", 1)[1] in self.HOOKS}
+            self.assertEqual({"100755"}, modes, name)
+
+    def _committed_clean(self):
+        root = self.prepare(complete=True)
+        no_hooks = ["-c", "core.hooksPath=" + tempfile.mkdtemp(prefix="nohooks-", dir=install_fixture._test_root())]
+        # Unborn HEAD is an ordinary state and stays excused.
+        subprocess.run(["git", "-C", str(root), "add", "--"] + self.HOOKS, check=True)
+        subprocess.run(["git", "-C", str(root), "update-index", "--chmod=+x", "--"] + self.HOOKS, check=True)
+        result = self.run_cli(root, "doctor", str(root), "--static-only")
+        self.assertNotIn("[privacy-mode]", result.stdout + result.stderr)
+        subprocess.run(["git", "-C", str(root)] + no_hooks + ["commit", "-q", "-m", "hooks at 100755"], check=True)
+        result = self.run_cli(root, "doctor", str(root), "--static-only")
+        self.assertNotIn("[privacy-mode]", result.stdout + result.stderr)
+        return root
+
+    def test_malformed_head_is_not_excused_as_unborn(self):
+        """PR #63 review round 3 P2: HEAD failing to resolve is not evidence of an
+        unborn branch; only a readable symbolic HEAD naming an absent branch is."""
+        root = self._committed_clean()
+        branch = subprocess.run(
+            ["git", "-C", str(root), "symbolic-ref", "HEAD"], check=True,
+            stdout=subprocess.PIPE, text=True, encoding="utf-8",
+        ).stdout.strip()
+        ref = Path(subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--absolute-git-dir"], check=True,
+            stdout=subprocess.PIPE, text=True, encoding="utf-8",
+        ).stdout.strip()) / branch
+        self.assertTrue(ref.is_file(), str(ref))
+        ref.write_bytes(b"not-an-object-id\n")
+        result = self.run_cli(root, "doctor", str(root), "--static-only")
+        self.assertIn("NOT-RUN[privacy-mode]", result.stderr)
+        self.assertIn("ls-tree HEAD failed", result.stderr)
+
+    def test_indexed_descendant_does_not_certify_the_hook(self):
+        """PR #63 review round 3 P3: `ls-files -- <hook>` also returns entries
+        BENEATH that path; a child at 100755 is not the hook, and two children
+        are not a merge conflict."""
+        root = self._committed_clean()
+        hook = ".githooks/pre-commit"
+        blob = [ln.split()[1] for ln in self._staged(root).splitlines() if ln.endswith("\t" + hook)][0]
+        subprocess.run(["git", "-C", str(root), "rm", "-q", "--cached", "--", hook], check=True)
+        for child in ("child", "other"):
+            subprocess.run(["git", "-C", str(root), "update-index", "--add", "--cacheinfo",
+                            "100755,{0},{1}/{2}".format(blob, hook, child)], check=True)
+            result = self.run_cli(root, "doctor", str(root), "--static-only")
+            output = result.stdout + result.stderr
+            self.assertIn("not yet tracked, so the mode a clone would receive is not recorded: " + hook + ".", output)
+            self.assertNotIn("unresolved merge entry", output)
+
+    def test_crlf_drift_does_not_mask_the_recorded_mode(self):
+        """PR #63 review P3: ordinary CRLF drift changes the hook's bytes, so it
+        fails installed identity -- and that must not hide the 100644 the index
+        records, or the operator repairs the bytes and ships the inert mode."""
+        root = self.prepare(complete=True)
+        hooks = [".githooks/pre-commit", ".githooks/pre-merge-commit", ".githooks/privacy-pre-commit"]
+        subprocess.run(["git", "-C", str(root), "add", "--"] + hooks, check=True)
+        subprocess.run(["git", "-C", str(root), "update-index", "--chmod=-x", "--"] + hooks, check=True)
+        for name in hooks:
+            data = (root / name).read_bytes()
+            (root / name).write_bytes(data.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+        result = self.run_cli(root, "doctor", str(root), "--static-only")
+        self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+        for name in hooks:
+            self.assertIn("missing or drifted: " + name, result.stderr)
+            self.assertIn("recorded in the Git index as 100644, not 100755: " + name, result.stderr)
+
+    def test_failed_index_inspection_is_not_reported_as_untracked(self):
+        """PR #63 review P2: `git ls-files --stage` failing is not the same as it
+        finding no entry; doctor must name the incomplete coverage, not hand
+        out the untracked-hook WARNING over an index it could not read."""
+        root = self.prepare(complete=True)
+        git_dir = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--absolute-git-dir"], check=True,
+            stdout=subprocess.PIPE, text=True, encoding="utf-8",
+        ).stdout.strip()
+        (Path(git_dir) / "index").write_bytes(b"broken index\n")
+        result = self.run_cli(root, "doctor", str(root), "--static-only")
+        output = result.stdout + result.stderr
+        self.assertIn("NOT-RUN[privacy-mode]", result.stderr)
+        self.assertNotIn("not yet tracked", output)
+        self.assertNotIn("DOCTOR-OK", output)
+
     def test_standalone_partial_state_is_unhealthy_private_owner_is_allowed_and_foreign_is_not(self):
         root = self.prepare(complete=True)
         owner = "synthetic-owner"

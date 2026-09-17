@@ -193,6 +193,22 @@ preencha-o ou desative-o depois, veja [R3](#r3-o-que-doctor-realmente-verifica))
 O `init` imprimiu instruções para adotar `CLAUDE.starter.md`; ele não criou `CLAUDE.md` e
 nunca escreve configuração de usuário ou global. Essa adoção é o primeiro item do passo 8.
 
+**Faça o commit da coluna da esquerda agora**, com o bit de execução declarado explicitamente
+para os três hooks. No Windows o bit não pode ser gravado no disco, então um `git add` comum
+registra os hooks como `100644`; o Git em um clone POSIX então *ignora* um hook não executável
+com apenas uma linha `hint:`, e a guarda de privacidade fica inerte naquele clone. O `doctor`
+nomeia isso na máquina de origem (linha `privacy-mode`) e o `init` imprime o mesmo remédio no
+Windows; o commit abaixo o torna desnecessário:
+
+```sh
+git add --chmod=+x .githooks/pre-commit .githooks/pre-merge-commit .githooks/privacy-pre-commit
+git add tools/omama privacy-deny.json work-order.template.yaml docs/templates/omama .gitignore
+git commit -m "omama: vendor the phase-1 bundle"
+```
+
+Este também é o seu primeiro commit através do hook de privacidade instalado: ele imprime um
+`notice` sobre o arquivo de tokens vazio e deixa o commit limpo passar.
+
 `omama doctor` relê tudo isso (poucos segundos) e termina com `DOCTOR-OK`. O
 doctor dinâmico executa o gate, o validador e o checker instalados com entradas sintéticas
 pelo comando registrado exato, então sua linha `settings-execution` certifica que a string de

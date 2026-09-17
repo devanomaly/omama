@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -447,6 +448,109 @@ def _probe_managed_gate(wiring_checker, expected_command, target, report):
         report.add("OK", "settings-execution", "trusted installed certified parser executed only the identified managed gate; BAD-INPUT response verified")
 
 
+HOOK_PATHS = (".githooks/pre-commit", ".githooks/pre-merge-commit", ".githooks/privacy-pre-commit")
+
+
+# Inside the double quotes every Windows shell needs for a path with spaces,
+# each of these is rewritten by at least one of them: CMD expands %NAME% (and
+# !NAME! under delayed expansion, as interactive Git Bash does history), and
+# PowerShell closes the string at a typographic double quote. `$`, the
+# backtick and newlines never get here: resolve_target refuses such a root.
+_WINDOWS_SHELL_ACTIVE = '%!"\u201c\u201d\u201e'
+
+
+def hook_mode_remedy(target):
+    """The fix for hooks Git records without the executable bit.
+
+    On Windows os.chmod cannot set the bit and core.fileMode is false, so the
+    index is the only place it can be stated; on POSIX the working file must
+    carry it too, or the tree stays mode-dirty after the index is fixed.
+
+    Bound to the inspected repository, as every check here is: `--chmod` also
+    re-stages the working-tree content, so the same line run from another
+    repository would replace that repository's staging selection instead. The
+    binding has to survive the operator's shell: POSIX sh has one literal
+    quoting (shlex.quote); Windows has three shells and no quoting common to
+    them, so a root any of them would rewrite gets no repository-bound line at
+    all -- a line that succeeds against a different repository is worse than
+    a manual step.
+    """
+    root = target.root.as_posix()
+    paths = " ".join(HOOK_PATHS)
+    unprintable = any(ord(ch) < 0x20 or ord(ch) == 0x7f for ch in root)
+    if os.name == "nt":
+        if not unprintable and not any(ch in _WINDOWS_SHELL_ACTIVE for ch in root):
+            return 'git -C "{0}" update-index --chmod=+x {1}'.format(root, paths)
+        manual = "git update-index --chmod=+x " + paths
+    else:
+        if not unprintable:
+            return "chmod +x {0} && git -C {1} update-index --chmod=+x {2}".format(
+                " ".join(shlex.quote(root + "/" + path) for path in HOOK_PATHS), shlex.quote(root), paths)
+        manual = "chmod +x {0} && git update-index --chmod=+x {0}".format(paths)
+    return ("no repository-bound line can be printed, because this repository's path holds a "
+            "character a shell would expand or unquote. With THAT repository as the shell's "
+            "current directory, run: " + manual)
+
+
+def _git_lines(target, *args):
+    result = subprocess.run(
+        ["git", "-C", str(target.root)] + list(args),
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", errors="replace", check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return [ln for ln in result.stdout.splitlines() if ln.strip()]
+
+
+def _exact_rows(rows, relative):
+    """Rows of `<fields><TAB><path>` output whose path IS `relative`: a pathspec
+    also matches every entry beneath it, and a child is not the hook."""
+    return [r.split("\t", 1)[0].split() for r in rows if r.split("\t", 1)[-1] == relative]
+
+
+def _index_mode(target, relative):
+    """Mode Git records for a path: "100755"-style; None when untracked;
+    "conflict" when the index holds merge stages instead of one stage-0 entry;
+    "unreadable" when Git could not inspect the index at all, which is not
+    the same finding as an index that holds no entry.
+
+    The index is what a clone receives, and on Windows it is the only place
+    the executable bit can be expressed at all -- os.chmod cannot set it and
+    core.fileMode is false, so the filesystem check says nothing there.
+    """
+    rows = _git_lines(target, "ls-files", "--stage", "--", relative)
+    if rows is None:
+        return "unreadable"
+    parsed = _exact_rows(rows, relative)
+    if not parsed:
+        return None
+    if len(parsed) != 1 or len(parsed[0]) != 3 or parsed[0][2] != "0":
+        return "conflict"
+    return parsed[0][0]
+
+
+def _head_is_unborn(target):
+    """Affirmative evidence only: a symbolic HEAD Git can read, naming a branch
+    that does not exist. A ref Git cannot resolve is not an unborn one."""
+    ref = _git_lines(target, "symbolic-ref", "-q", "HEAD")
+    if not ref:
+        return False
+    return _git_lines(target, "show-ref", "--verify", "--quiet", ref[0]) is None
+
+
+def _head_mode(target, relative):
+    """Mode HEAD records for a path; None (unborn HEAD, or path absent);
+    "unreadable" when Git could not list HEAD and it is not provably unborn."""
+    rows = _git_lines(target, "ls-tree", "HEAD", "--", relative)
+    if rows is None:
+        return None if _head_is_unborn(target) else "unreadable"
+    parsed = _exact_rows(rows, relative)
+    if not parsed:
+        return None
+    return parsed[0][0]
+
+
 def _probe_validator(interpreter, validator, scratch, report):
     valid = scratch / "valid-card.yaml"
     invalid = scratch / "invalid-card.yaml"
@@ -537,21 +641,67 @@ def _privacy(target, by_destination, interpreter, static_only, scratch, report, 
         "tools/omama/privacy-hook/scan_staged.py": "immutable",
     }
     privacy_trusted = bool(base_trusted)
+    modes_verified = True
     for destination in required:
+        # The recorded mode is read before, and independently of, the byte
+        # checks: neither a drifted hook (CRLF drift fails installed identity)
+        # nor a trusted CRLF-dirty one may mask a hook Git will refuse to run.
+        if destination.startswith(".githooks/"):
+            index_mode = _index_mode(target, destination)
+            if index_mode == "unreadable":
+                modes_verified = False
+                report.add("NOT-RUN", "privacy-mode",
+                           "git ls-files --stage failed, so the recorded mode could not be "
+                           "inspected: {0}. Repair the Git index and rerun".format(destination))
+            elif index_mode is None:
+                modes_verified = False
+                report.add("WARNING", "privacy-mode",
+                           "hook is not yet tracked, so the mode a clone would receive is not "
+                           "recorded: {0}. When you commit the hooks, run: {1}".format(
+                               destination, hook_mode_remedy(target)))
+            elif index_mode == "conflict":
+                modes_verified = False
+                report.add("WARNING", "privacy-mode",
+                           "index holds an unresolved merge entry for {0}; resolve it and rerun".format(destination))
+            elif index_mode != "100755":
+                privacy_trusted = False
+                modes_verified = False
+                report.add(
+                    "VIOLATION", "privacy-mode",
+                    "hook is recorded in the Git index as {0}, not 100755: {1}. Git SKIPS a "
+                    "non-executable hook under core.hooksPath with only a hint, so a clone of "
+                    "this repository commits with the privacy guard inert. Remedy: {2}".format(
+                        index_mode, destination, hook_mode_remedy(target)))
+            else:
+                head_mode = _head_mode(target, destination)
+                if head_mode == "unreadable":
+                    modes_verified = False
+                    report.add("NOT-RUN", "privacy-mode",
+                               "git ls-tree HEAD failed, so the committed mode could not be "
+                               "inspected: {0}".format(destination))
+                elif head_mode is not None and head_mode != "100755":
+                    modes_verified = False
+                    report.add("WARNING", "privacy-mode",
+                               "index records 100755 but HEAD still records {0}: {1}. Commit required, "
+                               "or every fresh clone keeps the inert mode".format(head_mode, destination))
         path = _trusted_path(target, by_destination, destination)
         if path is None:
             privacy_trusted = False
             report.add("VIOLATION", "privacy-component", "missing or drifted: {0}".format(destination))
             continue
         data = path.read_bytes()
-        if destination.startswith(".githooks/") and (b"\r\n" in data or not data.endswith(b"\n")):
-            privacy_trusted = False
-            report.add("VIOLATION", "privacy-mode", "hook is not LF/terminal-newline clean: {0}".format(destination))
-        elif os.name != "nt" and destination.startswith(".githooks/") and not (path.stat().st_mode & 0o111):
-            privacy_trusted = False
-            report.add("VIOLATION", "privacy-mode", "hook is not executable: {0}".format(destination))
+        if destination.startswith(".githooks/"):
+            if b"\r\n" in data or not data.endswith(b"\n"):
+                privacy_trusted = False
+                report.add("VIOLATION", "privacy-mode", "hook is not LF/terminal-newline clean: {0}".format(destination))
+            if os.name != "nt" and not (path.stat().st_mode & 0o111):
+                privacy_trusted = False
+                report.add("VIOLATION", "privacy-mode", "hook is not executable: {0}. Remedy: {1}".format(destination, hook_mode_remedy(target)))
     if privacy_trusted:
-        report.add("OK", "privacy-components", "both chainers, wrapper and scanner match installed identity; LF/mode checks passed for this OS")
+        if modes_verified:
+            report.add("OK", "privacy-components", "both chainers, wrapper and scanner match installed identity; LF clean; Git index mode 100755 on every platform, and the filesystem executable bit additionally on POSIX")
+        else:
+            report.add("OK", "privacy-components", "both chainers, wrapper and scanner match installed identity and are LF clean; the committed mode is not yet proven -- see the privacy-mode WARNING rows")
 
     # Mirror the activation-time authorization safeguard: a real hook name in
     # .githooks that this bundle does not own is live under core.hooksPath.

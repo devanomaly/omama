@@ -190,6 +190,22 @@ see [R3](#r3-what-doctor-actually-checks)).
 `init` printed instructions to adopt `CLAUDE.starter.md`; it did not create `CLAUDE.md`
 and never writes user or global configuration. That adoption is step 8's first item.
 
+**Commit the left-hand column now**, with the executable bit stated explicitly for the three
+hooks. On Windows the bit cannot be set on disk, so a plain `git add` records the hooks as
+`100644`; Git on a POSIX clone then *skips* a non-executable hook with only a `hint:` line,
+and the privacy guard is inert on that clone. `doctor` names this on the authoring machine
+(`privacy-mode` row) and `init` prints the same remedy on Windows; the commit below makes it
+unnecessary:
+
+```sh
+git add --chmod=+x .githooks/pre-commit .githooks/pre-merge-commit .githooks/privacy-pre-commit
+git add tools/omama privacy-deny.json work-order.template.yaml docs/templates/omama .gitignore
+git commit -m "omama: vendor the phase-1 bundle"
+```
+
+This is also your first commit through the installed privacy hook: it prints a `notice` about
+the empty tokens file and lets the clean commit through.
+
 `omama doctor` re-reads all of it (a few seconds) and ends with `DOCTOR-OK`.
 Dynamic doctor executes the installed gate, validator and checker with synthetic inputs
 through the exact registered command, so its `settings-execution` row certifies that the
@@ -385,8 +401,8 @@ hash is forged on its face. Never create or edit the receipt yourself; the gate 
 receipt it finds at the start of every close attempt.
 
 Commit the fix now (`git add greet.py && git commit -m "greet: add comma and exclamation
-mark"`) — your first commit through the installed privacy hook, which prints a `notice`
-about the empty tokens file and lets a clean commit through. Then rerun the step-5 command
+mark"`) — your first commit of your own work through the installed privacy hook, which
+prints the same `notice` and lets a clean commit through. Then rerun the step-5 command
 with no `CARD.close` present: the gate answers a WIP line that ends in
 `receipt: VERIFIED @ 7e1a581c… …, tree has moved since`. The receipt still names the tree it
 verified; the tree is now a different one. That is the binding doing its job.
