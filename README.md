@@ -49,6 +49,7 @@ published package.
 | Understand the workflow | [How a task closes](#how-a-task-closes), then [the seed loop](#the-seed-loop-card--receipt--structured-artifact) |
 | Install and run my first task | [QUICKSTART.md](QUICKSTART.md) — build the wheel, initialize a disposable repository, close one real card, read its receipt |
 | Inspect or troubleshoot an installation | [What doctor actually checks](QUICKSTART.md#r3-what-doctor-actually-checks) · [Exits and reruns](QUICKSTART.md#r2-read-exits-and-reruns-correctly) · [Manual recovery](cli/RECOVERY.md) |
+| Understand the rules every piece obeys | [DESIGN-RULES.md](DESIGN-RULES.md) — the cross-cutting invariants, each with the failure it prevents, the incident that taught it, and the line that enforces it |
 
 ## How a task closes
 

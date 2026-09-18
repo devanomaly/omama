@@ -53,7 +53,8 @@ python3 scripts/check_artifact.py [--budgets-advisory] <artifact.md>
 
 `--budgets-advisory` (seed loop mode, 2026-08-19 — panel: structure 5/5,
 line budgets killed 4/5): STRUCTURE stays mandatory (buried/missing verdict,
-tier, non-findings, done-when/verify ⇒ exit 1); going over budget becomes a
+non-findings, done-when/verify ⇒ exit 1; a missing type/tier declaration is
+NOT-RUN, exit 2, in either mode); going over budget becomes a
 `WARNING: over-budget…` + exit 0 + a `warnings` list in the JSON.
 Without the flag, behavior is byte-for-byte identical to before.
 
