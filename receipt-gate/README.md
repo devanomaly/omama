@@ -259,6 +259,10 @@ costs no session.
 
 ## Coverage
 
+A fixture that simulates a missing dependency proves the dependency is absent in the
+environment that runs it — a PATH built from the interpreter's own directory still resolves
+git on hosts where both share a bin directory.
+
 | Promised | Mechanically covered | Not covered / known bypass | Classification |
 |---|---|---|---|
 | VERIFIED without backing impossible via close | named red blocks, stale blocks, planted receipts deleted (start, block-exit, guard route) | forgery on a WIP turn persists | fixed KNOWN-LIMITATION |

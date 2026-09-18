@@ -51,6 +51,7 @@ constrói a partir deste checkout; não existe pacote publicado.
 | Entender o fluxo | [Como uma tarefa fecha](#como-uma-tarefa-fecha), depois [o seed loop](#o-seed-loop-card--recibo--artefato-estruturado) |
 | Instalar e rodar minha primeira tarefa | [QUICKSTART.pt-BR.md](QUICKSTART.pt-BR.md) — construa o wheel, inicialize um repositório descartável, feche um card real, leia o recibo |
 | Inspecionar ou diagnosticar uma instalação | [O que doctor realmente verifica](QUICKSTART.pt-BR.md#r3-o-que-doctor-realmente-verifica) · [Exits e repetições](QUICKSTART.pt-BR.md#r2-leia-corretamente-os-exits-e-as-repetições) · [Recovery manual](cli/RECOVERY.pt-BR.md) |
+| Entender as regras que toda peça obedece | [DESIGN-RULES.md](DESIGN-RULES.md) — os invariantes transversais, cada um com a falha que evita, o incidente que o ensinou e a linha que o aplica |
 
 ## Como uma tarefa fecha
 
